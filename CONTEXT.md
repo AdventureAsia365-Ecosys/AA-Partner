@@ -1540,7 +1540,10 @@ Design v3 §6.3 CRM-18 (M4 base, M7 manual, M11 base, M12 v0); migration crm-016
     airport, R33), a write-only passport scan (`document` kind `passport_scan`, `uploaded_by_kind = traveler`, never
     readable here: 403 `document_write_only`, card R), the documents the agency shared with this traveller or the
     whole trip (another traveller's: 403 `document_not_yours`), the trip's lines shown to travellers without prices
-    or cancelled ones, the accepted proposal's days. The lead also sees the group with names and each person's way in
+    or cancelled ones, the accepted proposal's days. AA-1086: a confirmed AA line is shown by default (the Booking
+    sync sets `visible_to_travelers` when it confirms the line: `BOOKED_SQL` on the move to confirmed, `line.confirmed`;
+    crm-065 backfilled the older ones), so its voucher is released too; a dated day the accepted version leaves
+    without a title or place takes the AA tour day of a shown AA tour line on that date (`aa_days.portal_days`). The lead also sees the group with names and each person's way in
     and gives a companion without an address one at the invite (`POST /companions`: only for a companion on this trip
     alone (409 `ask_your_agent`: the address lands on the agency-wide client record), never over an address on file,
     409 `email_in_use` for another client's address without naming them; refusals audited as denied and capped at
@@ -2068,6 +2071,10 @@ migration crm-019; code in `app/proposals/` (`builder.py`, `rules.py` pure, `aa_
   owner / agent to price it (`aa_item_unpriced`). "Refresh AA prices" re-quotes with the same nights, the oldest quote
   first, 40 a run; an item left over is reported `refresh_limit` (`refresh.skipped`), an undated one
   `day_has_no_date`. No hold, no AA line, no money row: those come after the client accepts (CRM-21b).
+  AA-1086 (S279 rehearsal): a whole tour (`trip_plan`) also copies the tour's days from the catalog cache
+  (`aa_catalog_tour.body` `days`: title, place names, zone) into the block's day and the following ones
+  (`app/proposals/aa_days.py` `fill_days`): only empty titles / places (the zone goes with a copied place), never the
+  Before you go day, never a new day; the agency edits the copied text like its own (drawer hint `builder.aa.daysHint`).
 - **Roles**: every role builds; sell / net / deposit share need `MONEY_FIELDS_EDIT`; net and margin are built only for
   owner / agent (and stripped by the serializer).
 - **Web**: `/pipeline/<trip>/proposal/<proposal>` (`components/proposals/BuilderPage.tsx`, the drawer

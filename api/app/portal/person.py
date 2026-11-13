@@ -17,10 +17,13 @@ that acted as them through the old address ends at its next request, whatever li
 travellers that belong to the trip as a whole or to this traveller; :func:`open_document` refuses (403) a write-only
 document (a passport scan: card R), a document not shared with travellers, and another traveller's document.
 :func:`services` lists the trip's lines the agency shows to travellers, never a cancelled one (the database refuses a
-visible cancelled line too, ``booking_line_cancelled_hidden_chk``) and never a price. :func:`itinerary` is the
-accepted proposal's days (titles, places, IANA zones). :func:`flights` / :func:`save_flights` keep this traveller's
-arrival and departure flight (R33: local time at the airport and its zone, so an overnight flight shows the day it
-lands). :func:`upload_passport_scan` stores a write-only passport scan (never shown back).
+visible cancelled line too, ``booking_line_cancelled_hidden_chk``) and never a price; a confirmed AA line is shown by
+default (AA-1086: the Booking sync sets the flag when it confirms the line, crm-065 for the older ones).
+:func:`itinerary` is the accepted proposal's days (titles, places, IANA zones); a dated day the version leaves without
+a title or place takes the AA tour's day of a shown AA tour line on that date. :func:`flights` /
+:func:`save_flights` keep this traveller's arrival and departure flight (R33: local time at the airport and its zone,
+so an overnight flight shows the day it lands). :func:`upload_passport_scan` stores a write-only passport scan (never
+shown back).
 """
 
 from __future__ import annotations
@@ -37,7 +40,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from app.documents import service as documents
 from app.documents.store import DocumentStore
 from app.errors import Conflict, Forbidden, Invalid, NotFound, RateLimited, Unavailable
-from app.proposals import rules
+from app.proposals import aa_days, rules
 from app.tenancy import AnyContext
 from app.travellers.fields import clean_f1
 from app.vault import Vault
@@ -322,16 +325,21 @@ async def services(ctx: AnyContext, trip_id: uuid.UUID) -> list[dict[str, Any]]:
 
 
 async def itinerary(ctx: AnyContext, trip_id: uuid.UUID) -> list[dict[str, Any]]:
+    """The accepted version's days. A dated day without a title or place takes them from the AA tour day of a live AA
+    tour line shown to travellers on that date (AA-1086: :func:`app.proposals.aa_days.portal_days`)."""
+    rows = await ctx.conn.fetch(ITINERARY_SQL, trip_id)
+    tour = await aa_days.portal_days(ctx, trip_id) if rows else {}
     out = []
-    for r in await ctx.conn.fetch(ITINERARY_SQL, trip_id):
+    for r in rows:
         day = r["starts_on"] + dt.timedelta(days=r["day_no"] - 1) if r["starts_on"] and r["day_no"] >= 1 else None
+        aa = tour.get(day) if day is not None else None
         out.append(
             {
                 "day_no": r["day_no"],
                 "before_you_go": r["day_no"] == 0,
                 "date": _iso(day),
-                "title": r["title"],
-                "place": r["place"],
+                "title": r["title"] or (aa.title if aa else None),
+                "place": r["place"] or (aa.place if aa else None),
                 "tz": r["tz"],
                 "utc_offset": rules.utc_offset(r["tz"], day or r["starts_on"]),
             }

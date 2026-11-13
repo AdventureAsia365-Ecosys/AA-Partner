@@ -6,6 +6,7 @@
 // drawer says so and AA adds stay disabled (WF-4). Sold-out items cannot be added (the API answers 409).
 // AA-1030: owner and agent get a link to the agency's AA prices (opens in a new tab, the draft stays as it is).
 // AA-1069: a third source, "From catalogue": a service of the agency's own catalogue, priced for the party (a copy).
+// AA-1086: a whole AA tour fills the empty day titles and places from the tour's days (the hint says so; editable).
 import Link from "next/link";
 import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
@@ -266,6 +267,7 @@ export function BuilderAaDrawer({
                 </p>
               )}
               <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{tr("builder.aa.quoteHint")}</p>
+              <p style={{ margin: 0, fontSize: 12.5, color: K.muted }} data-testid="builder-aa-days-hint">{tr("builder.aa.daysHint")}</p>
             </>
           )}
           {tierSelect}

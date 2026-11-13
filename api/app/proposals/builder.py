@@ -56,7 +56,7 @@ from app.esign import terms as esign_terms
 from app.intake import completeness, stage2
 from app.margin import sees_margin
 from app.payments import schedule_plan
-from app.proposals import discount, inclusions, prep_packs, pricing, retail, rules
+from app.proposals import aa_days, discount, inclusions, prep_packs, pricing, retail, rules
 from app.proposals.service import (
     ACCEPTED_EXISTS_SQL,
     DRAFTABLE_STAGES,
@@ -1602,8 +1602,7 @@ async def add_aa_option(
     stays 0 (never the b2b price: the assistant reads the sell, §4.6) and Publish waits for an owner / agent to set it
     (``aa_item_unpriced``). AA-1030: an owner or agent who sends no sell gets the suggested retail price
     (:mod:`app.proposals.retail`: the agency markup on the B2B price, else AA's RRP for a tour), when there is one."""
-    proposal_id = uuid.UUID(plan["proposal_id"])
-    block_id = uuid.UUID(plan["block_id"])
+    proposal_id, block_id = uuid.UUID(plan["proposal_id"]), uuid.UUID(plan["block_id"])
     row = await _lock(ctx, proposal_id, int(plan["seq"]))
     if quote.availability == "sold_out":
         raise Conflict("aa_sold_out", "AA has no space for this item on that date")
@@ -1639,6 +1638,7 @@ async def add_aa_option(
     )  # fmt: skip
     await _settle_default(ctx, proposal_id, block_id, await _tier(ctx, vault, row))
     _raise_conflicts(_conflicts(await _structure(ctx, proposal_id)), s)
+    await aa_days.fill_days(ctx, block_id, plan["tour_source_id"], plan["component_kind"])  # AA-1086
     return await _done(ctx, vault, proposal_id, "aa_option_add")
 
 
