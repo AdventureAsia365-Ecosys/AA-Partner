@@ -12,12 +12,6 @@ AA-964 (crm.ops.v1 1.6, root ADR 0009 §8): ``GET /llm/calls?from&to&tenant_id&s
 ledger rows (``crm.llm_call``, scrubbed fields only) newest first, for the CIS admin Calls tab
 (:func:`console.platform_llm_calls`; one ``ops_read`` event in each agency whose rows were returned). crm.ops.v1 1.7
 (S263 F1, crm-037): ``status`` adds the ledger v2 values ``billed_unusable`` and ``truncated``.
-AA-1096 L4 (crm.ops.v1 1.13, crm-064): ``GET /settings`` and ``GET /settings/{key}/history`` (any full OPS reader) and
-``POST /settings/{key}/changes`` / ``POST /settings/changes/{id}/approve|reject`` (``crm-platform-admin``): the
-admin-editable CRM settings (thresholds, limits, caps, the platform defaults and ranges of the agency-owner settings,
-the retention dry-run switches), relayed by the CIS admin Platform > Settings page (CRM tab); service
-:mod:`app.platform_settings.service`; 503 ``settings_unavailable`` before crm-064.
-
 AA-1025 H1c (crm.ops.v1 1.10, root ADR 0009 §4): ``GET /llm/app-profile`` (any OPS reader) and ``PUT /llm/app-profile``
 (``crm-platform-admin``), the CRM app profile (``crm.llm_app_profile``, crm-041: AI switch, bulk pause, default daily
 budget, degrade mode; :mod:`app.llm.app_profile`). The CIS admin relays the PUT when it edits the ``crm`` row of its
@@ -78,9 +72,9 @@ import logging
 import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from typing import Annotated, Any, Literal
+from typing import Annotated, Literal
 
-from fastapi import Depends, HTTPException, Path, Query, Request
+from fastapi import Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.auth import e2e_staff
@@ -93,7 +87,6 @@ from app.llm.usage import MAX_DAYS, llm_usage
 from app.members import recovery, studio
 from app.members.mail import require_mailer
 from app.ops import console, staff_scope
-from app.platform_settings import service as settings_service
 from app.reports import insights
 from app.vault.provider import require_keys
 
@@ -933,142 +926,4 @@ async def complete_recovery(
     pool = await request_pool(request)
     return await recovery.complete_request(
         pool, tenant_id, request_id, staff_sub=caller.sub, ticket_ref=body.ticket_ref if body else None
-    )
-
-
-# ── AA-1096 L4: the admin-editable CRM settings (crm.ops.v1 1.13, crm-064; the CIS Platform > Settings CRM tab) ─────
-SettingKey = Annotated[str, Path(pattern=r"^crm(\.[a-z0-9_]+){2,}$", max_length=120)]
-SettingValue = bool | int | float | str | list[Any] | dict[str, Any]
-
-
-class SettingRowOut(_Out):
-    id: str
-    key: str
-    tenant_id: str | None
-    value: SettingValue
-    version: int
-    status: Literal["proposed", "approved", "rejected", "superseded"]
-    effective_from: str | None
-    proposed_by: str
-    proposed_at: str | None
-    reason: str
-    evidence_ref: str | None
-    self_approved: bool
-    decided_by: str | None
-    decided_at: str | None
-    decision_note: str | None
-    previous_value: SettingValue | None = None
-
-
-class SettingDefinitionOut(_Out):
-    key: str
-    app: Literal["crm"]
-    area: str
-    label: str
-    description: str
-    value_type: Literal["int", "numeric", "bool", "enum", "duration_s", "usd", "pct", "list", "json"]
-    unit: str | None
-    min_value: float | None
-    max_value: float | None
-    allowed_values: list[Any] | None
-    default_value: SettingValue
-    scope_kind: Literal["platform", "platform+tenant"]
-    impact: Literal["high", "medium", "low"]
-    approval: Literal["single", "maker_checker"]
-    evidence_required: bool
-    env_override: str | None
-    cache_s: int
-    enforced: bool
-
-
-class SettingOut(SettingDefinitionOut):
-    value: SettingValue
-    source: Literal["env", "tenant", "platform", "default"]
-    version: int | None
-    overridden_by_env: bool
-    env_ignored: str | None
-    refused: str | None
-    last_change: SettingRowOut | None
-    pending: list[SettingRowOut]
-
-
-class SettingsOut(_Out):
-    app: Literal["crm"]
-    areas: list[str]
-    settings: list[SettingOut]
-    two_person_approval: bool
-    reader_error: str | None
-
-
-class SettingHistoryOut(_Out):
-    key: str
-    tenant_id: str | None
-    definition: SettingDefinitionOut
-    history: list[SettingRowOut]
-
-
-class SettingChangeIn(_In):
-    """A new value of one setting. ``tenant_id``: one agency's own value (a platform+tenant key); ``base_version``: the
-    approved version the person saw (409 when it moved); ``apply``: approve in the same step (a maker-checker key then
-    records a self-approval while two-person approval is off)."""
-
-    value: SettingValue
-    reason: Annotated[str, Field(min_length=1, max_length=2000)]
-    evidence_ref: Annotated[str | None, Field(max_length=500)] = None
-    effective_from: datetime | None = None
-    tenant_id: uuid.UUID | None = None
-    base_version: Annotated[int | None, Field(ge=0)] = None
-    apply: bool = False
-
-
-class SettingDecisionIn(_In):
-    note: Annotated[str | None, Field(max_length=2000)] = None
-    tenant_id: uuid.UUID | None = None  # the agency of an agency's own change (its rows are seen only in its context)
-
-
-@router.get("/settings", response_model=SettingsOut)
-async def get_settings(
-    request: Request, caller: FullReader, area: Annotated[str | None, Query(pattern=r"^[a-z][a-z0-9_]{0,39}$")] = None
-) -> dict:
-    pool = await request_pool(request)
-    return await settings_service.list_settings(pool, area=area)
-
-
-@router.get("/settings/{key}/history", response_model=SettingHistoryOut)
-async def get_setting_history(
-    request: Request, key: SettingKey, caller: FullReader, tenant_id: Annotated[uuid.UUID | None, Query()] = None
-) -> dict:
-    pool = await request_pool(request)
-    return await settings_service.history(pool, key, tenant_id, staff_sub=caller.sub)
-
-
-@router.post("/settings/{key}/changes", response_model=SettingRowOut, status_code=201)
-async def post_setting_change(request: Request, key: SettingKey, body: SettingChangeIn, caller: PlatformAdmin) -> dict:
-    pool = await request_pool(request)
-    return await settings_service.propose(
-        pool,
-        key,
-        value=body.value,
-        reason=body.reason,
-        staff_sub=caller.sub,
-        base_version=body.base_version,
-        evidence_ref=body.evidence_ref,
-        effective_from=body.effective_from,
-        tenant_id=body.tenant_id,
-        apply=body.apply,
-    )
-
-
-@router.post("/settings/changes/{value_id}/{decision}", response_model=SettingRowOut)
-async def post_setting_decision(
-    request: Request,
-    value_id: uuid.UUID,
-    decision: Literal["approve", "reject"],
-    caller: PlatformAdmin,
-    body: SettingDecisionIn | None = None,
-) -> dict:
-    pool = await request_pool(request)
-    body = body or SettingDecisionIn()
-    return await settings_service.decide(
-        pool, value_id, staff_sub=caller.sub, approve=decision == "approve", note=body.note, tenant_id=body.tenant_id
     )

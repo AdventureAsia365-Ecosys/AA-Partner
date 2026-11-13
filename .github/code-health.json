@@ -8,7 +8,8 @@
   "include": ["*.py"],
   "exclude": [
    {"glob": "api/tests/*", "reason": "tests: complexity ratchet covers product code; tests still count for file size"},
-   {"glob": "api/app/auth/identity_verifier.py", "reason": "vendored byte copy of AA-CIS-App (Vendored CIS copies); CIS ratchets the original"}
+   {"glob": "api/app/auth/identity_verifier.py", "reason": "vendored byte copy of AA-CIS-App (Vendored CIS copies); CIS ratchets the original"},
+   {"glob": "api/app/platform_settings/reader.py", "reason": "vendored byte copy of AA-CIS-App shared/settings/reader.py (settings_reader.lock.json); CIS ratchets the original"}
   ]
  },
  "typescript": {

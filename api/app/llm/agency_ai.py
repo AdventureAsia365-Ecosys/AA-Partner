@@ -33,13 +33,12 @@ from typing import Any
 
 from app.errors import Conflict, Invalid, NotFound
 from app.llm import ai_drafts
+from app.llm.budget_limits import agency_budget, default_budget_usd
 from app.llm.gateway import (
     MONTH_SPEND_SQL,
     CallMeta,
     LlmGateway,
-    agency_budget,
     alert_level,
-    default_budget_usd,
     month_start,
 )
 from app.privacy.known import known_values_for_trip

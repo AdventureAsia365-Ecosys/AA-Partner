@@ -15,7 +15,7 @@ from app import platform_settings as ps
 from app.errors import Invalid
 from app.intake import booking_settings
 from app.lifecycle import policy, rules, window
-from app.llm import gateway
+from app.llm import budget_limits
 from app.llm.providers.bedrock import BedrockConverseProvider
 from app.payments import reminders
 from app.payments import service as payments
@@ -53,7 +53,7 @@ def test_agency_defaults_without_a_settings_row() -> None:
     approved(ps.AI_BUDGET_DEFAULT, 1.5)
     assert payments.default_threshold() == Decimal("2500")
     assert booking_settings.default_price_checks() == 90
-    assert gateway.default_budget_usd() == Decimal("1.5")
+    assert budget_limits.default_budget_usd() == Decimal("1.5")
 
 
 @pytest.mark.asyncio
@@ -106,11 +106,13 @@ async def test_a_markup_above_the_platform_ceiling_is_refused() -> None:
 async def test_an_agency_budget_never_passes_its_ceiling() -> None:
     conn = ScriptedConn().on("WHERE v.tenant_id = $1", [])
     ctx = tenant_ctx(conn)
-    assert await gateway.agency_budget(ctx, {"ai_budget_usd": Decimal("1.25")}) == Decimal("1.25")
-    assert await gateway.agency_budget(ctx, {"ai_budget_usd": Decimal("5")}) == Decimal("2")  # the platform ceiling
+    assert await budget_limits.agency_budget(ctx, {"ai_budget_usd": Decimal("1.25")}) == Decimal("1.25")
+    assert await budget_limits.agency_budget(ctx, {"ai_budget_usd": Decimal("5")}) == Decimal(
+        "2"
+    )  # the platform ceiling
     ps.forget_tenant()
     own = ScriptedConn().on("WHERE v.tenant_id = $1", [{"key": ps.AI_BUDGET_MAX, "value_text": "8", "version": 1}])
-    assert await gateway.agency_budget(tenant_ctx(own), {"ai_budget_usd": Decimal("5")}) == Decimal("5")
+    assert await budget_limits.agency_budget(tenant_ctx(own), {"ai_budget_usd": Decimal("5")}) == Decimal("5")
 
 
 def test_the_draft_token_cap_is_read_at_each_call() -> None:

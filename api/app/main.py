@@ -89,6 +89,7 @@ from app.routers import (
     onboarding,
     ops,
     ops_release,
+    ops_settings,
     partner_pages,
     partners,
     payments,
@@ -361,6 +362,7 @@ def create_app(
     app.include_router(messaging.router)
     app.include_router(ai.router)
     app.include_router(ops.router)
+    app.include_router(ops_settings.router)  # AA-1096 L4: crm.ops.v1 1.13 /settings
     app.include_router(support_access.router)
     app.include_router(staff.router)
     app.include_router(staff_ops.router)

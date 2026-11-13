@@ -30,6 +30,7 @@ from app.main import create_app
 from app.ops import console
 from app.ops.serializer import OpsAllowListRoute, bad_keys, key_allowed
 from app.routers import ops as ops_router
+from app.routers import ops_settings as ops_settings_router
 from app.vault.wrapping import LocalKeyWrapper
 from tests.tokens import LocalPools
 from tests.unit.fakes import ScriptedConn
@@ -301,6 +302,7 @@ def ops_app(pools: LocalPools, monkeypatch: pytest.MonkeyPatch) -> Iterator[tupl
         return state["conn"]
 
     monkeypatch.setattr(ops_router, "request_pool", pool)
+    monkeypatch.setattr(ops_settings_router, "request_pool", pool)  # AA-1096 L4: /settings
     monkeypatch.setattr(console, "Vault", lambda keys, ctx: FakeVault())
     with TestClient(app) as client:
         state["app"] = app

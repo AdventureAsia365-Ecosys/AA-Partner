@@ -34,7 +34,7 @@ from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
 from app.llm import agency_ai, ai_drafts
-from app.llm.gateway import budget_ceiling
+from app.llm.budget_limits import budget_ceiling
 from app.permissions import Action
 from app.privacy.guardrails import guardrail_billed
 from app.routers.agency import tenant_header

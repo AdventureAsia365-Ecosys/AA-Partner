@@ -2924,7 +2924,7 @@ or an env var alone. The CRM keeps its own registry in `crm` (root ADR 0008a: no
   and `POST /settings/changes/{id}/approve|reject` (`crm-platform-admin`); maker-checker self-approval only while
   `crm.settings.two_person_approval` is off (dev phase, tech lead Q2; a high-impact one e-mails AA ops,
   `setting_self_approved`). An agency's own value is written in its `platform_tx` (one `setting_change` event in its
-  audit). Service: `app/platform_settings/service.py`.
+  audit). Routes `app/routers/ops_settings.py`, service `app/platform_settings/service.py`.
 - **Guard**: `tests/unit/test_aa1096_settings_lint.py` (no new policy-looking constant in the governed modules, a
   baseline that only shrinks, every enforced key read by code).
 

@@ -45,7 +45,7 @@ from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.jobs import queue
 from app.lifecycle import offboarding
 from app.lifecycle.rules import BACKUP_PURGE_DAYS
-from app.llm.gateway import MONTH_SPEND_SQL, agency_budget
+from app.llm import budget_limits, gateway
 from app.members import accounts as partner_accounts
 from app.members import team
 from app.members.directory import PartnerDirectory
@@ -241,7 +241,7 @@ async def agency_usage(pool: asyncpg.Pool, tenant_id: uuid.UUID, *, staff_sub: s
     end = (start + dt.timedelta(days=32)).replace(day=1)
     async with platform_tx(pool, tenant_id, actor=platform_actor(staff_sub), statuses=TENANT_STATUSES) as ctx:
         plan = await team.plan_of(ctx)
-        budget = await ctx.conn.fetchval(BUDGET_SQL)
+        budget = await ctx.conn.fetchrow(BUDGET_SQL)  # AA-1096 L4: agency_budget = what the gateway enforces
         out = {
             "tenant_id": str(tenant_id),
             "period_start": start.isoformat(),
@@ -251,11 +251,8 @@ async def agency_usage(pool: asyncpg.Pool, tenant_id: uuid.UUID, *, staff_sub: s
             "active_members_30d": int(await ctx.conn.fetchval(ACTIVE_MEMBERS_SQL) or 0),
             "storage_bytes": int(await ctx.conn.fetchval(STORAGE_SQL) or 0),
             "inbound_mail_30d": 0,
-            "ai_cost_usd_month": _usd(await ctx.conn.fetchval(MONTH_SPEND_SQL)),
-            # AA-1096 L4: the budget the gateway enforces (the default without a row, never above the ceiling)
-            "ai_budget_usd_month": _usd(
-                await agency_budget(ctx, None if budget is None else {"ai_budget_usd": budget})
-            ),
+            "ai_cost_usd_month": _usd(await ctx.conn.fetchval(gateway.MONTH_SPEND_SQL)),
+            "ai_budget_usd_month": _usd(await budget_limits.agency_budget(ctx, budget)),
             "failed_jobs_24h": await queue.failed_count_24h(ctx.conn, str(tenant_id)),
             "last_activity_at": _iso(await ctx.conn.fetchval(LAST_ACTIVITY_SQL)),
         }
