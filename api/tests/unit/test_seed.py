@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 import pytest
 
 from app import seed
-from app.seed.catalogue import AGENCIES, BY_KEY, agency_id, e2e_username
+from app.seed.catalogue import AGENCIES, BY_KEY, REHEARSAL_AGENCY, agency_id, e2e_username
 from app.seed.travellers import EMAIL_DOMAIN, make_traveller, travellers_for
 from tests.tokens import PARTNER_ISSUER, LocalPools
 from tests.unit.fakes import ScriptedConn
@@ -27,7 +27,8 @@ def lines(out: io.StringIO) -> list[dict]:
 
 
 def test_catalogue_has_two_or_three_agencies_with_fixed_ids() -> None:
-    assert 2 <= len(AGENCIES) <= 3
+    # CRM-07's two or three synthetic agencies, plus the AA-1086 pilot rehearsal agency.
+    assert 2 <= len([a for a in AGENCIES if a.key != REHEARSAL_AGENCY]) <= 3
     assert len({a.tenant_id for a in AGENCIES}) == len(AGENCIES)
     assert (
         AGENCIES[0].tenant_id
@@ -161,7 +162,9 @@ async def test_dry_run_with_a_database_reads_state_and_writes_nothing() -> None:
     out = io.StringIO()
     assert await seed.run_plan(plan, db.conn, "dev", out) == 0
     actions = {r["agency"]: r.get("action") for r in lines(out)[:-1]}
-    assert actions == {"sen-vang": "unchanged", "southern-cross": "create", "harbour-lights": "create"}
+    assert actions == {
+        "sen-vang": "unchanged", "southern-cross": "create", "harbour-lights": "create", REHEARSAL_AGENCY: "create"
+    }  # fmt: skip
     assert db.conn.sql("INSERT INTO") == [] and db.conn.sql("UPDATE") == []
 
 
@@ -180,8 +183,8 @@ async def test_apply_creates_then_reports_unchanged_and_the_name_round_trips() -
     assert rows[-1] == {
         "summary": "apply",
         "environment": "dev",
-        "agencies": 3,
-        "created": 3,
+        "agencies": 4,
+        "created": 4,
         "updated": 0,
         "members_added": 2,
         "members_updated": 0,
@@ -206,6 +209,38 @@ async def test_apply_fails_when_the_stored_name_differs() -> None:
     plan = seed.build_plan(["--apply", "--agency", "sen-vang"], settings())
     assert await seed.run_plan(plan, db.conn, "dev", out) == 1
     assert lines(out)[-1] == {"summary": "failed", "reason": "name round trip"}
+
+
+# ── AA-1086 G1: the pilot rehearsal agency ──────────────────────────────────────────────────────────────────────
+
+
+def test_the_rehearsal_agency_has_the_id_cis_holds_and_an_owner_and_agent() -> None:
+    rehearsal = BY_KEY[REHEARSAL_AGENCY]
+    # The id AA-CIS-App's e2e_fixtures rehearsal-tenant enqueues the CIS tenant under (same namespace and prefix).
+    assert rehearsal.tenant_id == uuid.uuid5(
+        uuid.UUID("6f1d3c2e-9a7b-5c4d-8e2f-a935c0de0007"), "aa-crm-synthetic-agency:pilot-rehearsal-01"
+    )
+    assert rehearsal.display_name == "E2E Pilot Rehearsal Travel"  # CIS REHEARSAL name, letter for letter
+    assert rehearsal.roles == ("owner", "agent")
+    assert [e2e_username(REHEARSAL_AGENCY, r) for r in rehearsal.roles] == [
+        "e2e-test-crm-pilot-rehearsal-01-owner",
+        "e2e-test-crm-pilot-rehearsal-01-agent",
+    ]
+
+
+def test_the_rehearsal_agency_takes_its_own_members_only() -> None:
+    plan = seed.build_plan(
+        [
+            "--apply", "--agency", REHEARSAL_AGENCY,
+            "--member", f"{REHEARSAL_AGENCY}:owner:sub-ro", "--member", f"{REHEARSAL_AGENCY}:agent:sub-ra",
+        ],
+        settings(),
+    )  # fmt: skip
+    assert [a.key for a in plan.agencies] == [REHEARSAL_AGENCY]
+    members = [(m.cognito_sub, m.role) for m in plan.members[REHEARSAL_AGENCY]]
+    assert members == [("sub-ro", "owner"), ("sub-ra", "agent")]
+    with pytest.raises(seed.SeedRefused, match="not selected"):
+        seed.build_plan(["--agency", REHEARSAL_AGENCY, "--member", "sen-vang:owner:s1"], settings())
 
 
 # ── AA-969 (CRM-37a): the load-test agencies ────────────────────────────────────────────────────────────────────
