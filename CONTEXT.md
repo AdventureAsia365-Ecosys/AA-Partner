@@ -946,7 +946,8 @@ Design v3 §6.3 CRM-16 (M6 non-AA, M15, R17, R18), lane §2.7 / §3.1 / §3.2; m
   the money is frozen at the rate of the confirmation day in the agency timezone (R17), strict refuses a second
   confirmed line of one supplier with one number (409 `duplicate_confirmation_no`, card R), and the assistant is never
   blocked by a missing commission: the line is confirmed and the owner gets the task `add_commission` (R18). AA lines
-  are the Booking feed's (CRM-19): 403 `aa_line_read_only` for members. Only a planning line goes to the trash (kind
+  are the Booking feed's (CRM-19): 403 `aa_line_read_only` for members, except `visible_to_travelers` alone on a
+  confirmed AA line (AA-1086, crm-065; 422 `line_not_editable` before AA confirms). Only a planning line goes to the trash (kind
   `booking_line`); a confirmed one is cancelled (hidden from travellers, R22). Agency lines never block a trip delete.
 - **Money** (`PUT /crm/v1/lines/{id}/money`, owner / agent): cost, sell, commission_expected, each a new row through
   `crm.booking_line_money_put` (frozen rows never change: card E); responses carry money as keyed objects (`cost`,
@@ -963,7 +964,9 @@ Design v3 §6.3 CRM-16 (M6 non-AA, M15, R17, R18), lane §2.7 / §3.1 / §3.2; m
 - **waiting_on**: hook `supplier_lines` (priority 50, AA-943 contract) = `supplier` while a booked / pre-departure trip
   has a planning agency line; registered when `app.ledger.lines` is imported (the router does).
 - **Web**: the trip workspace's Bookings tab (`components/ledger/LinesPanel.tsx`: Day | Item | Supplier | Conf no |
-  Status | Cost (owner / agent) | Sell | FX (rate @ date) | Collect; add, money, confirm, cancel, delete), `/bookings`
+  Status | Cost (owner / agent) | Sell | FX (rate @ date) | Collect; add, money, confirm, cancel, delete, and AA-1086
+  "Shown to travellers" / "Hidden from travellers" with a Show / Hide switch on every line that is not cancelled, an
+  AA line once confirmed), `/bookings`
   (A-11, status filter, totals for owner / agent), `/suppliers` (A-13, AA pinned, contact behind a reveal with a
   reason), `/settings/payments` (owner; others see why). Refusal codes are worded in `lib/ledger.ts` / `lib/i18n.ts`
   (EN default, VI); the BFF lines are in `lib/bff.ts` (card AA-944). Dev E2E: `e2e/tests/ledger.spec.ts`.
@@ -1541,7 +1544,14 @@ Design v3 §6.3 CRM-18 (M4 base, M7 manual, M11 base, M12 v0); migration crm-016
     airport, R33), a write-only passport scan (`document` kind `passport_scan`, `uploaded_by_kind = traveler`, never
     readable here: 403 `document_write_only`, card R), the documents the agency shared with this traveller or the
     whole trip (another traveller's: 403 `document_not_yours`), the trip's lines shown to travellers without prices
-    or cancelled ones, the accepted proposal's days. The lead also sees the group with names and each person's way in
+    or cancelled ones, the accepted proposal's days. AA-1086: a confirmed AA line is shown by default (the Booking
+    sync sets `visible_to_travelers` when it confirms the line: `BOOKED_SQL` on the move to confirmed, `line.confirmed`;
+    no backfill: an older one is shown by the agency), so its voucher is released too, and the agency hides or shows it
+    again on the trip's Bookings tab (crm-065: `PATCH /lines/{id}` with `visible_to_travelers` alone on a confirmed AA
+    line; any other AA field stays 403 `aa_line_read_only`). The travellers' copy of an AA line's voucher names the
+    agency, with no AA reference (the agent's copy names Adventure Asia). A dated day the accepted version leaves with
+    neither a title nor a place takes the AA tour day of a shown AA tour line on that date (`aa_days.portal_days`); a
+    day with either is the agency's. The lead also sees the group with names and each person's way in
     and gives a companion without an address one at the invite (`POST /companions`: only for a companion on this trip
     alone (409 `ask_your_agent`: the address lands on the agency-wide client record), never over an address on file,
     409 `email_in_use` for another client's address without naming them; refusals audited as denied and capped at
@@ -2069,6 +2079,13 @@ migration crm-019; code in `app/proposals/` (`builder.py`, `rules.py` pure, `aa_
   owner / agent to price it (`aa_item_unpriced`). "Refresh AA prices" re-quotes with the same nights, the oldest quote
   first, 40 a run; an item left over is reported `refresh_limit` (`refresh.skipped`), an undated one
   `day_has_no_date`. No hold, no AA line, no money row: those come after the client accepts (CRM-21b).
+  AA-1086 (S279 rehearsal): a whole tour (`trip_plan`) also copies the tour's days from the catalog cache
+  (`aa_catalog_tour.body` `days`: title, place names, zone) into the block's day and the following ones
+  (`app/proposals/aa_days.py` `after_add`): only when it is the block's only whole tour, only empty titles / places
+  (the zone goes with a copied place), never the Before you go day, never a new day; the agency edits the copied text
+  like its own (drawer hint `builder.aa.daysHint`). A second, different whole tour in the block (alternatives) clears
+  what was copied, so the portal later shows the client's confirmed pick; removing a tour (or its block) clears its
+  copied text, and the one tour left is copied again (`after_delete`, `before_block_delete`).
 - **Roles**: every role builds; sell / net / deposit share need `MONEY_FIELDS_EDIT`; net and margin are built only for
   owner / agent (and stripped by the serializer).
 - **Web**: `/pipeline/<trip>/proposal/<proposal>` (`components/proposals/BuilderPage.tsx`, the drawer

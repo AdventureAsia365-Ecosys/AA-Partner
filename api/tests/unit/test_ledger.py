@@ -262,6 +262,25 @@ async def test_update_line_validates_each_field() -> None:
 
 
 @pytest.mark.asyncio
+async def test_an_aa_line_takes_only_the_travellers_visibility_once_confirmed() -> None:
+    """AA-1086 (crm-065): the one member change to an AA line is whether a confirmed one is shown to travellers."""
+    sql = "SELECT trip_id, status, supplier_kind FROM crm.booking_line"
+    confirmed = _conn(**{sql: {"trip_id": TRIP, "status": "confirmed", "supplier_kind": "aa"}})
+    for changes in ({"title": "x"}, {"visible_to_travelers": False, "title": "x"}, {}):
+        with _raises(Forbidden, "aa_line_read_only"):
+            await lines.update_line(tenant_ctx(confirmed), LINE, changes)
+    planning = _conn(**{sql: {"trip_id": TRIP, "status": "planning", "supplier_kind": "aa"}})
+    with _raises(Invalid, "line_not_editable"):
+        await lines.update_line(tenant_ctx(planning), LINE, {"visible_to_travelers": True})
+    assert not [c for c in confirmed.calls + planning.calls if c[0].startswith("UPDATE crm.booking_line SET")]
+    with _raises(Invalid, "invalid_visible_to_travelers"):
+        await lines.update_line(tenant_ctx(confirmed), LINE, {"visible_to_travelers": "no"})
+    await lines.update_line(tenant_ctx(confirmed), LINE, {"visible_to_travelers": False})
+    (update,) = [c for c in confirmed.calls if c[0].startswith("UPDATE crm.booking_line SET")]
+    assert update[0].startswith("UPDATE crm.booking_line SET visible_to_travelers = $2 ") and update[1] == (LINE, False)
+
+
+@pytest.mark.asyncio
 async def test_a_confirmed_line_keeps_its_number_unless_the_level_is_off() -> None:
     confirmed = {"trip_id": TRIP, "status": "confirmed", "supplier_kind": "agency"}
     conn = _conn(**{"SELECT trip_id, status, supplier_kind FROM crm.booking_line": confirmed})

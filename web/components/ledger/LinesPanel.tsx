@@ -13,6 +13,8 @@
 // AA-1069 (crm-053): "Request from suppliers" prepares one e-mail per supplier (SupplierRequestsPanel); a requested line
 // shows when it was asked and whether the supplier replied, takes the supplier's confirmation number ("Record
 // confirmation": saved and confirmed in one call) or goes back to planning.
+// AA-1086: every line that is not cancelled says whether the trip's travellers see it, with a Show / Hide switch; an
+// AA line is switchable once AA confirmed it (shown by default then; its travellers' voucher names the agency).
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useState } from "react";
@@ -28,6 +30,7 @@ import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, plural, t, type Lang, type MessageKey } from "@/lib/i18n";
 import {
+  canToggleShown,
   errorKey,
   formatMoney,
   fxReading,
@@ -189,6 +192,7 @@ export function LinesPanel({
           <span>{fmt(tr("aa.heldUntil"), { date: formatDate(aa.hold_expires_at.slice(0, 10), locale) })}</span>
         )}
         {aa.no_longer_offered && <Badge tone="danger">{tr("aa.noLongerOffered")}</Badge>}
+        {line.status === "confirmed" && <span data-testid="aa-shown-hint">{tr("ledger.aaShownHint")}</span>}
       </span>
     );
   }
@@ -287,9 +291,24 @@ export function LinesPanel({
     return rows;
   }
 
+  /** AA-1086: shown to the trip's travellers (the portal, the released voucher) or hidden, with the switch. */
+  function shown(line: Line) {
+    if (!canToggleShown(line, closed)) return null;
+    const on = line.visible_to_travelers;
+    return (
+      <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }} data-testid="line-shown" data-shown={on ? "yes" : "no"}>
+        <span style={{ fontSize: 11.5, color: K.muted }}>{tr(on ? "ledger.shown" : "ledger.hidden")}</span>
+        <Button size="sm" variant="ghost" disabled={!hydrated || busy} onClick={() => run("PATCH", `lines/${line.booking_line_id}`, { visible_to_travelers: !on })}>
+          {tr(on ? "ledger.hide" : "ledger.show")}
+        </Button>
+      </span>
+    );
+  }
+
   function actions(line: Line) {
     return (
       <>
+        {shown(line)}{" "}
         {allowedAaActions(line.aa?.actions ?? [], role).filter((action) => !closed || action === "release").map((action: AaAction) => (
           <Button
             key={action}

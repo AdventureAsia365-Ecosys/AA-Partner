@@ -8,7 +8,8 @@ tenant vault DEK (AAD = ``booking_line_voucher``, the column, the row id); the t
 (opened server-side), the party size, the service (title, dates, time, places), the confirmation number, the PNR, the
 note and the supplier: an own supplier's name and its contact person's name (opened for the voucher only, never the
 e-mail), or "Adventure Asia" with a short AA booking reference for an AA line (its departure and dates come from the
-line's Booking facts; Booking's confirmation read with pick-up points is a later Booking card).
+line's Booking facts; Booking's confirmation read with pick-up points is a later Booking card). AA-1086: the
+travellers' copy of an AA line's voucher names the agency, with no AA reference (the agent's copy is unchanged).
 
 **Released to the travellers** (:data:`RELEASED_STAGES`) when the trip is booked (or later), the line is confirmed and
 shown to travellers (``visible_to_travelers``). The agent sees every confirmed line's voucher with ``released`` and,
@@ -183,6 +184,23 @@ def _iso(value: dt.date | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
+def _supplier(ln: Any, contact: str | None, agency: str | None, travellers_only: bool) -> dict[str, Any]:
+    """The voucher's supplier block. An AA line names Adventure Asia with a short AA booking reference for the agent;
+    the travellers' copy (AA-1086) names the agency instead and carries no AA reference, so an agency that sells
+    Adventure Asia's services as its own never shows its supplier to its travellers."""
+    aa = ln["supplier_kind"] == "aa"
+    if aa and travellers_only:
+        return {"name": agency, "category": ln["category"], "contact_name": None, "aa_booking_ref": None,
+                "aa_departure_id": None}  # fmt: skip
+    return {
+        "name": AA_SUPPLIER_NAME if aa else ln["supplier_name"],
+        "category": ln["category"],
+        "contact_name": contact,
+        "aa_booking_ref": ((ln["bk_booking_id"] or "")[:8] or None) if aa else None,
+        "aa_departure_id": ln["departure_id"] if aa else None,
+    }
+
+
 async def trip_vouchers(
     ctx: AnyContext, vault: Vault, trip_id: uuid.UUID, *, travellers_only: bool = False
 ) -> dict[str, Any]:
@@ -214,13 +232,7 @@ async def trip_vouchers(
                 "service_from": _iso(ln["service_from"]),
                 "service_to": _iso(ln["service_to"]),
                 "confirmation_no": ln["confirmation_no"],
-                "supplier": {
-                    "name": AA_SUPPLIER_NAME if aa else ln["supplier_name"],
-                    "category": ln["category"],
-                    "contact_name": contact,
-                    "aa_booking_ref": ((ln["bk_booking_id"] or "")[:8] or None) if aa else None,
-                    "aa_departure_id": ln["departure_id"] if aa else None,
-                },
+                "supplier": _supplier(ln, contact, agency, travellers_only),
                 **await _details(vault, details.get(ln["booking_line_id"])),
                 "released": reason is None,
                 "not_released_reason": reason,

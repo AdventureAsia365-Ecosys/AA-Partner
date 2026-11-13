@@ -162,7 +162,7 @@ UPDATE crm.booking_line SET aa_sub_status = $2, hold_expires_at = $3 WHERE booki
 BOOKED_SQL = """
 UPDATE crm.booking_line
    SET bk_booking_id = $2, confirmation_no = $3, status = $4, aa_sub_status = $5, confirm_class = $6,
-       aa_result_code = NULL
+       aa_result_code = NULL, visible_to_travelers = visible_to_travelers OR ($4 = 'confirmed' AND status <> $4)
  WHERE booking_line_id = $1
 """
 CLOSE_LINE_SQL = """
@@ -170,8 +170,8 @@ UPDATE crm.booking_line SET status = 'cancelled', aa_sub_status = $2, aa_decline
  WHERE booking_line_id = $1 AND status <> 'cancelled'
 """
 CONFIRM_LINE_SQL = """
-UPDATE crm.booking_line SET status = 'confirmed', aa_sub_status = NULL, confirm_class = 'confirmed'
- WHERE booking_line_id = $1 AND status = 'planning'
+UPDATE crm.booking_line SET status = 'confirmed', aa_sub_status = NULL, confirm_class = 'confirmed',
+       visible_to_travelers = true WHERE booking_line_id = $1 AND status = 'planning'
 """
 MONEY_SQL = "SELECT crm.booking_line_aa_money($1, $2, $3, $4, $5, $6)"
 COMMIT_SQL = """
