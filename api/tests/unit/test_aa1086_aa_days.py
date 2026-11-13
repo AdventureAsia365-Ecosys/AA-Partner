@@ -1,6 +1,7 @@
 """AA-1086 follow-up (S279 rehearsal REH-10-portal): the AA tour's days in the agency's proposal and in the traveller
-portal (``app.proposals.aa_days``, ``app.portal.person.itinerary``), and the Booking sync's default "shown to
-travellers" on a confirmed AA line (``app.booking.sync``). Invented tours and places only."""
+portal (``app.proposals.aa_days``, ``app.portal.person.itinerary``), the Booking sync's default "shown to
+travellers" on a confirmed AA line (``app.booking.sync``) and the travellers' voucher of an AA line
+(``app.travel_ops.vouchers``). Invented tours and places only."""
 
 from __future__ import annotations
 
@@ -14,6 +15,9 @@ import pytest
 from app.booking import sync
 from app.portal import person
 from app.proposals import aa_days
+from app.travel_ops import vouchers
+from tests.unit.slice_fakes import FakeVault, tenant_ctx
+from tests.unit.test_aa1070_travel_ops import TRIP, _voucher_conn
 
 BODY_DAYS = [
     {"day_no": 1, "title": "Arrival in Lanterna", "time_zone": "Asia/Bangkok",
@@ -250,3 +254,19 @@ def test_the_sync_shows_an_aa_line_when_it_becomes_confirmed() -> None:
     assert "visible_to_travelers = true" in sync.CONFIRM_LINE_SQL and "status = 'planning'" in sync.CONFIRM_LINE_SQL
     # Booking's booking answer: only the move to confirmed shows the line (the agency's later hide is kept).
     assert "visible_to_travelers = visible_to_travelers OR ($4 = 'confirmed' AND status <> $4)" in sync.BOOKED_SQL
+
+
+# ── the travellers' voucher of an AA line names the agency ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_the_travellers_voucher_of_an_aa_line_names_the_agency() -> None:
+    agent = await vouchers.trip_vouchers(tenant_ctx(_voucher_conn(kind="aa")), FakeVault(), TRIP)
+    assert agent["vouchers"][0]["supplier"]["name"] == "Adventure Asia"  # the agent's copy keeps the AA reference
+    assert agent["vouchers"][0]["supplier"]["aa_booking_ref"] == "BKG-AAAA"
+    mine = await vouchers.trip_vouchers(tenant_ctx(_voucher_conn(kind="aa")), FakeVault(), TRIP, travellers_only=True)
+    assert mine["vouchers"][0]["supplier"] == {"name": "Lotus Trails", "category": "activity", "contact_name": None,
+                                               "aa_booking_ref": None, "aa_departure_id": None}  # fmt: skip
+    # An agency line's travellers' copy is unchanged (its own supplier, its contact person).
+    own = await vouchers.trip_vouchers(tenant_ctx(_voucher_conn()), FakeVault(), TRIP, travellers_only=True)
+    assert own["vouchers"][0]["supplier"]["name"] == "Calm Bay Boats"
