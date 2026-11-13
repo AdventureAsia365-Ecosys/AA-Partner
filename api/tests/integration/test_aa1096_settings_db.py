@@ -113,3 +113,30 @@ async def test_a_rejected_change_keeps_the_value_in_force(app_pool: asyncpg.Pool
     with pytest.raises(ServiceError) as err:
         await service.decide(app_pool, uuid.UUID(proposal["id"]), staff_sub=OTHER, approve=True)  # outside the agency
     assert err.value.code == "unknown_change"
+
+
+async def test_a_range_group_is_checked_against_its_values_in_force(app_pool: asyncpg.Pool) -> None:
+    key = ps.TRASH_DAYS_MAX
+    base = await _version(app_pool, key)
+    out = await service.propose(app_pool, key, value=30, reason=REASON, staff_sub=SUB, base_version=base, apply=True)
+    assert out["status"] == "approved"  # today's value: the default (7) stays inside
+    for bad_key, value in ((ps.TRASH_DAYS_MAX, 5), (ps.TRASH_DAYS_MIN, 10)):
+        with pytest.raises(ServiceError) as err:
+            await service.propose(
+                app_pool, bad_key, value=value, reason=REASON, staff_sub=SUB, base_version=await _version(app_pool,
+                bad_key))  # fmt: skip
+        assert err.value.code == "range_inconsistent"
+    assert (await service.history(app_pool, ps.TRASH_DAYS_MIN, staff_sub=SUB))["history"] == []  # nothing written
+
+
+async def test_an_agency_value_is_refused_under_an_env_override(app_pool: asyncpg.Pool) -> None:
+    tenant_id, _ = await _agency(app_pool)
+    ps.configure_env({"RATE_LIMIT_INTAKE_FORM_PER_HOUR": "200"})
+    try:
+        with pytest.raises(ServiceError) as err:
+            await service.propose(app_pool, ps.RATE_INTAKE_FORM, value=900, reason=REASON, staff_sub=SUB,
+                                  base_version=0, tenant_id=tenant_id, apply=True)  # fmt: skip
+        assert err.value.code == "env_override_active"
+        assert (await service.history(app_pool, ps.RATE_INTAKE_FORM, tenant_id, staff_sub=SUB))["history"] == []
+    finally:
+        ps.configure_env({})
