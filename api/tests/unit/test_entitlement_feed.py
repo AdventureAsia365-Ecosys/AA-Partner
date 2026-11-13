@@ -113,7 +113,8 @@ def pool(*, statuses: dict[uuid.UUID, str | None] | None = None, cursor: str | N
     conn.on("set_config('app.tenant_id'", lambda tid: state.update(tenant=uuid.UUID(tid)))
     conn.on("AND deleted_at IS NULL", lambda *_: statuses.get(state["tenant"]))
     conn.on("FROM crm.tenant_entitlement WHERE deleted_at IS NULL", entitlement)
-    conn.on("FOR UPDATE", {"is_pilot": False} | (lock or {"status": "active", "lock_source": None}))
+    tenant = {"is_pilot": False, "is_synthetic": True}  # AA-1086 G9: every Dev agency starts synthetic
+    conn.on("FOR UPDATE", tenant | (lock or {"status": "active", "lock_source": None}))
     return conn
 
 
@@ -245,24 +246,19 @@ async def test_apply_writes_the_pilot_marker_when_cis_changes_it() -> None:
     audit = conn.sql("INSERT INTO crm.audit_event")
     assert audit and audit[0][2] == "tenant_pilot_marker" and audit[0][7] == "cis_account"
     assert counts.result("ok")["pilot_changed_count"] == 1
-    # already marked: nothing written
-    conn = pool(
-        statuses={A: "active"}, entitlement=row, lock={"status": "active", "lock_source": None, "is_pilot": True}
-    )
+    # already marked (and already real, AA-1086 G9): nothing written
+    real = {"status": "active", "lock_source": None, "is_pilot": True, "is_synthetic": False}
+    conn = pool(statuses={A: "active"}, entitlement=row, lock=real)
     assert await feed.apply(conn, A, wanted, feed.RunCounts()) == "unchanged"  # type: ignore[arg-type]
     assert conn.sql("SET is_pilot") == []
     # CIS cleared it: cleared here too
-    conn = pool(
-        statuses={A: "active"}, entitlement=row, lock={"status": "active", "lock_source": None, "is_pilot": True}
-    )
+    conn = pool(statuses={A: "active"}, entitlement=row, lock=real)
     gone = feed.Projection("core", 5, ("ai_assist",), True, True, False)
     assert await feed.apply(conn, A, gone, feed.RunCounts()) == "applied"  # type: ignore[arg-type]
-    assert conn.sql("SET is_pilot") == [(A, False)]
+    assert conn.sql("SET is_pilot") == [(A, False)] and conn.sql("SET is_synthetic") == []
     # the snapshot has no is_pilot (None): the marker stays as it is, set or not
     for current in (True, False):
-        conn = pool(
-            statuses={A: "active"}, entitlement=row, lock={"status": "active", "lock_source": None, "is_pilot": current}
-        )
+        conn = pool(statuses={A: "active"}, entitlement=row, lock=real | {"is_pilot": current})
         absent = feed.Projection("core", 5, ("ai_assist",), True, True, None)
         assert await feed.apply(conn, A, absent, feed.RunCounts()) == "unchanged"  # type: ignore[arg-type]
         assert conn.sql("SET is_pilot") == []
@@ -566,3 +562,36 @@ async def test_require_feature_refuses_and_audits() -> None:
     await entitlements.require_feature(ctx, "campaigns", action="x", object_kind="y", object_id=None)
     with pytest.raises(ValueError, match="unknown CRM feature"):
         await entitlements.feature_allowed(ctx, "teleport")
+
+
+@pytest.mark.asyncio
+async def test_apply_marks_a_pilot_agency_real_for_good() -> None:
+    """AA-1086 G9: Dev creates every agency synthetic, the pilot included. The first projection that sees the pilot
+    marker (in the snapshot or already stored) clears ``is_synthetic``, one way only, so ending the pilot later never
+    makes its real data a test agency again for the E2E identities or the console's test-agency delete."""
+    row = {
+        "plan": "core",
+        "member_limit": 5,
+        "allowed_features": ["ai_assist"],
+        "projected_at": NOW,
+        "tp_crm_leads": False,
+    }
+    marked = feed.Projection("core", 5, ("ai_assist",), True, True, True)
+    # CIS marks the pilot: the marker and the real flag in the same transaction, two audit events
+    conn = pool(statuses={A: "active"}, entitlement=row)
+    assert await feed.apply(conn, A, marked, feed.RunCounts()) == "applied"  # type: ignore[arg-type]
+    assert conn.sql("SET is_pilot") == [(A, True)] and conn.sql("SET is_synthetic") == [(A,)]
+    actions = [(a[2], a[7]) for a in conn.sql("INSERT INTO crm.audit_event")]
+    assert ("tenant_pilot_marker", "cis_account") in actions and ("tenant_real_marker", "cis_pilot") in actions
+    # a pilot marked before this rule, still synthetic: CIS ends the pilot, the agency still becomes real
+    stale = {"status": "active", "lock_source": None, "is_pilot": True, "is_synthetic": True}
+    ended = feed.Projection("core", 5, ("ai_assist",), True, True, False)
+    conn = pool(statuses={A: "active"}, entitlement=row, lock=stale)
+    assert await feed.apply(conn, A, ended, feed.RunCounts()) == "applied"  # type: ignore[arg-type]
+    assert conn.sql("SET is_pilot") == [(A, False)] and conn.sql("SET is_synthetic") == [(A,)]
+    # an ordinary synthetic agency is left synthetic, and the feed never sets the flag back to true
+    for wanted in (ended, feed.Projection("core", 5, ("ai_assist",), True, True, None)):
+        conn = pool(statuses={A: "active"}, entitlement=row)
+        assert await feed.apply(conn, A, wanted, feed.RunCounts()) == "unchanged"  # type: ignore[arg-type]
+        assert conn.sql("SET is_synthetic") == []
+    assert "is_synthetic = false" in feed.SET_REAL_SQL and "true" not in feed.SET_REAL_SQL

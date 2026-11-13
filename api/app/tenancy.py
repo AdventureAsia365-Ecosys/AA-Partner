@@ -568,14 +568,15 @@ async def entitlement_feed_tx(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> Async
             await _write_audit(ctx, ctx.audit_events)
 
 
-# AA-979 (root ADR 0006a A10b-1): the one fact the Dev-only E2E CIS admin's studio-invitation relay needs from the CRM.
-SYNTHETIC_AGENCY_SQL = "SELECT is_synthetic IS TRUE FROM crm.tenant WHERE tenant_id = $1 AND deleted_at IS NULL"
+# AA-979 (ADR 0006a A10b-1) + AA-1086 G9: synthetic, not the pilot (crm-044 ``is_pilot``; all Dev agencies synthetic).
+_SYNTHETIC_NOT_PILOT_SQL = "SELECT is_synthetic IS TRUE AND is_pilot IS NOT TRUE FROM crm.tenant WHERE tenant_id = $1"
+SYNTHETIC_AGENCY_SQL = _SYNTHETIC_NOT_PILOT_SQL + " AND deleted_at IS NULL"
 
 
 async def synthetic_agency(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> bool:
-    """True when the CRM holds an (untrashed) agency with this id and ``is_synthetic`` is true; False when the agency
-    is real or the CRM has none. One read-only transaction with ``app.tenant_id`` = that id (crm-002 FORCE RLS), no
-    actor, no audit: it reads one flag. Used by :func:`app.members.studio.check_e2e_invitation` only."""
+    """True when the CRM holds an (untrashed) synthetic, non-pilot agency with this id (AA-1086 G9), else False. One
+    read-only transaction with ``app.tenant_id`` = that id (crm-002 FORCE RLS), no actor, no audit: it reads one flag.
+    Used by :func:`app.members.studio.check_e2e_invitation` only."""
     if not isinstance(tenant_id, uuid.UUID):
         raise TypeError("tenant_id must be a UUID")
     async with pool.acquire() as conn, conn.transaction(readonly=True):
@@ -583,13 +584,12 @@ async def synthetic_agency(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> bool:
         return bool(await conn.fetchval(SYNTHETIC_AGENCY_SQL, tenant_id))
 
 
-# AA-1019 (root ADR 0006a A10c): the Dev-only CRM staff E2E identity reaches synthetic agencies only. Read inside the
-# staff context's own transaction (``app.tenant_id`` already set), after the agency was found.
-E2E_SYNTHETIC_SQL = "SELECT is_synthetic IS TRUE FROM crm.tenant WHERE tenant_id = $1"
+# AA-1019 (ADR 0006a A10c): the CRM staff E2E identity reaches synthetic, non-pilot agencies only (in the staff tx).
+E2E_SYNTHETIC_SQL = _SYNTHETIC_NOT_PILOT_SQL
 
 
 async def _refuse_e2e_real_agency(conn: asyncpg.Connection, caller: Caller | None, tenant_id: uuid.UUID) -> None:
-    """403 ``e2e_synthetic_only`` when ``caller`` is the CRM staff E2E identity and the agency is not synthetic."""
+    """403 ``e2e_synthetic_only`` when ``caller`` is the CRM staff E2E identity and the agency is real or the pilot."""
     if caller is not None and caller.e2e_synthetic_only and not await conn.fetchval(E2E_SYNTHETIC_SQL, tenant_id):
         log.warning("crm_e2e_staff_refused tenant=%s", tenant_id)
         raise Forbidden(e2e_staff.E2E_SYNTHETIC_ONLY)
