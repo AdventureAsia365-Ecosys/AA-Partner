@@ -1,6 +1,12 @@
 """``crm.aa_catalog_tour`` / ``crm.aa_catalog_state`` (crm-017): the AA tour cache, platform tables without tenant rows
 or personal data. Written on the pool by the sync only (this module is on the DB-module list of
 ``tests/unit/test_code_rules.py``); agencies read it with :func:`search` / :func:`tour` inside their own transaction.
+
+AA-1093 part 1 (crm-063): :func:`upsert` and :func:`set_state` return the tour's served-state transition and, in the
+same transaction as the state write, queue one ``crm_tour_retired_fanout`` row for a retirement (served or paused ->
+retired) or a reinstatement (retired -> served), keyed by the tour, the transition and its ``state_changed_at``
+(:func:`app.catalog.retired.fanout_job`): a state write never commits without its fan-out row, and the same
+transition never queues twice.
 """
 
 from __future__ import annotations
@@ -12,7 +18,9 @@ from typing import Any
 
 import asyncpg
 
+from app.catalog import retired
 from app.catalog.client import Summary
+from app.jobs import queue
 from app.tenancy import TenantContext
 
 STATE_SQL = """
@@ -25,7 +33,9 @@ SELECT source_id, content_hash, served_state, etag FROM crm.aa_catalog_tour
 TOUCH_SQL = """
 UPDATE crm.aa_catalog_tour SET checked_at = now() WHERE source_system = 'cis' AND source_id = ANY($1::text[])
 """
+# The CTE reads the row as it was before the statement (one snapshot): old_state is NULL for a new tour.
 UPSERT_SQL = """
+WITH prev AS (SELECT served_state FROM crm.aa_catalog_tour WHERE source_system = 'cis' AND source_id = $1)
 INSERT INTO crm.aa_catalog_tour (source_id, title, country_code, duration_days, content_hash, etag, served_state,
                                  reason, body, fetched_at, checked_at, state_changed_at)
 VALUES ($1, $2, $3, $4, $5, $6, 'served', NULL, $7::jsonb, now(), now(), now())
@@ -36,12 +46,15 @@ ON CONFLICT (source_system, source_id) DO UPDATE
        state_changed_at = CASE WHEN crm.aa_catalog_tour.served_state <> 'served' THEN now()
                                ELSE crm.aa_catalog_tour.state_changed_at END,
        served_state = 'served'
+RETURNING (SELECT served_state FROM prev) AS old_state, served_state AS new_state, state_changed_at
 """
 STATE_CHANGE_SQL = """
+WITH prev AS (SELECT served_state FROM crm.aa_catalog_tour WHERE source_system = 'cis' AND source_id = $1)
 UPDATE crm.aa_catalog_tour
    SET served_state = $2, reason = $3, checked_at = now(),
        state_changed_at = CASE WHEN served_state <> $2 THEN now() ELSE state_changed_at END
  WHERE source_system = 'cis' AND source_id = $1
+RETURNING (SELECT served_state FROM prev) AS old_state, served_state AS new_state, state_changed_at
 """
 STALE_SQL = """
 SELECT source_id, etag FROM crm.aa_catalog_tour
@@ -123,13 +136,33 @@ async def touch(pool: asyncpg.Pool, source_ids: list[str]) -> None:
         await pool.execute(TOUCH_SQL, source_ids)
 
 
-async def upsert(pool: asyncpg.Pool, s: Summary, etag: str | None, body: dict[str, Any]) -> None:
-    await pool.execute(UPSERT_SQL, s.source_id, s.title, s.country_code, s.duration_days, s.content_hash, etag,
-                       json.dumps(body, ensure_ascii=False))  # fmt: skip
+async def _write(pool: asyncpg.Pool, source_id: str, sql: str, *args: Any) -> str | None:
+    """One state write and, in its transaction, the fan-out row of the transition it made. Returns the transition
+    (``retired`` / ``reinstated``), ``unkeyed`` when a transition cannot be queued (a source id that is not a uuid,
+    which catalog.http.v1 never sends), or None."""
+    async with pool.acquire() as conn, conn.transaction():
+        row = await conn.fetchrow(sql, *args)
+        if row is None:
+            return None
+        made = retired.transition(row["old_state"], row["new_state"])
+        if made is None:
+            return None
+        job = retired.fanout_job(source_id, made, row["state_changed_at"])
+        if job is None:
+            return "unkeyed"
+        payload, key = job
+        await queue.enqueue(conn, retired.KIND, payload, idempotency_key=key, max_attempts=retired.MAX_ATTEMPTS,
+                            created_by=retired.QUEUED_BY)  # fmt: skip
+        return made
 
 
-async def set_state(pool: asyncpg.Pool, source_id: str, state: str, reason: str | None) -> None:
-    await pool.execute(STATE_CHANGE_SQL, source_id, state, reason)
+async def upsert(pool: asyncpg.Pool, s: Summary, etag: str | None, body: dict[str, Any]) -> str | None:
+    return await _write(pool, s.source_id, UPSERT_SQL, s.source_id, s.title, s.country_code, s.duration_days,
+                        s.content_hash, etag, json.dumps(body, ensure_ascii=False))  # fmt: skip
+
+
+async def set_state(pool: asyncpg.Pool, source_id: str, state: str, reason: str | None) -> str | None:
+    return await _write(pool, source_id, STATE_CHANGE_SQL, source_id, state, reason)
 
 
 async def stale(pool: asyncpg.Pool, before: dt.datetime, limit: int) -> list[tuple[str, str | None]]:

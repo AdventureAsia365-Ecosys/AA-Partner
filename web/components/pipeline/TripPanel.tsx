@@ -20,6 +20,7 @@ import { useState, useTransition } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { DocumentsPanel } from "@/components/clients/DocumentsPanel";
 import { AaCancelCard } from "@/components/pipeline/AaCancelCard";
+import { TourRetiredCard } from "@/components/pipeline/TourRetiredCard";
 import { CancelDialog, GateDialog } from "@/components/pipeline/StageDialogs";
 import { useMarkTripClosed, useTripClosed } from "@/components/pipeline/TripClosed";
 import { TravellerInfoPanel } from "@/components/pipeline/TravellerInfoPanel";
@@ -361,6 +362,11 @@ export function TripPanel({
             setCancelOpen(true);
           }}
         />
+      )}
+
+      {/* AA-1093: an AA tour of the trip Adventure Asia no longer offers (information; the task asks to act). */}
+      {view.aa_tour_retired && view.aa_tour_retired.length > 0 && (
+        <TourRetiredCard tours={view.aa_tour_retired} lang={lang} locale={locale} timeZone={timeZone} />
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(300px, 100%), 1fr))", gap: 14, alignItems: "start" }}>

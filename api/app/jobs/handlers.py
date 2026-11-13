@@ -12,7 +12,8 @@
   Deploy-gate and DB Migrate idle exempt, like the heartbeat.
 - ``crm_booking_sync`` (AA-947, every 60 s, Recurring, plus one-agency nudges): the AA outage queue and the Booking
   event feed, :mod:`app.booking.sync`. Exempt like the membership pull. ``crm_catalog_sync`` (AA-947, hourly,
-  :class:`app.catalog.sync.HourlyCatalogSync`): the AA tour cache.
+  :class:`app.catalog.sync.HourlyCatalogSync`): the AA tour cache. ``crm_tour_retired_fanout`` (AA-1093, one row per
+  tour retirement or reinstatement the catalog sync stored): the flags and tasks of :mod:`app.catalog.retired`.
 - ``crm_ops_release_sync`` (AA-956, hourly, :class:`app.ops_release.job.HourlyOpsReleaseSync`, plus one-trip nudges):
   the Module 8 ops release (create, refresh, T-21 alert, withdraw, purge with a receipt).
 - ``crm_workflow_run`` / ``crm_workflow_tick`` / ``crm_task_digest`` (AA-959, CRM-29a): one workflow run's due
@@ -73,6 +74,7 @@ from app.jobs.kinds import (
     STAGE_DATE_RULE,
     STUDIO_ACTIVATION,
     TASK_DIGEST,
+    TOUR_RETIRED_FANOUT,
     TP_LEAD_PULL,
     WORKFLOW_RUN,
     WORKFLOW_TICK,
@@ -203,6 +205,7 @@ def build_handlers(
     from app.audit_export import export as audit_export
     from app.audit_export import retention as audit_retention
     from app.booking.sync import BookingSync
+    from app.catalog import retired as tour_retired
     from app.catalog.sync import CatalogSync
     from app.cis.entitlement_feed import EntitlementFeed
     from app.cis.membership_feed import MembershipFeed
@@ -266,6 +269,7 @@ def build_handlers(
         PILOT_BACKUP: pilot_backup.build_handler(),
         TP_LEAD_PULL: LeadPull(tp_leads, keys),
         PDF_RENDER: pdf_job.build_handler(keys, documents),
+        TOUR_RETIRED_FANOUT: tour_retired.build_handler(keys),
     }
 
 
@@ -398,5 +402,6 @@ EVENT_KINDS: frozenset[str] = frozenset(
         WORKFLOW_RUN,
         TASK_DIGEST,
         PDF_RENDER,  # AA-1070: one per member's PDF request
+        TOUR_RETIRED_FANOUT,  # AA-1093: one per AA tour retirement or reinstatement, queued by crm_catalog_sync
     }
 )

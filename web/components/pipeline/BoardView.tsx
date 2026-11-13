@@ -175,6 +175,10 @@ export function BoardView({ board, lang, locale, coverage = null, canTag = false
         <Chip href={boardHref({ waiting_on: active, owner: board.filter.owner, issue: issue === "aa_cancelled" ? null : "aa_cancelled" })} on={issue === "aa_cancelled"} testId="chip-aa-cancelled">
           {t(lang, "aaCancel.filter")}
         </Chip>
+        {/* AA-1093: the trips that use an AA tour Adventure Asia no longer offers. */}
+        <Chip href={boardHref({ waiting_on: active, owner: board.filter.owner, issue: issue === "aa_tour_retired" ? null : "aa_tour_retired" })} on={issue === "aa_tour_retired"} testId="chip-aa-tour-retired">
+          {t(lang, "tourRetired.filter")}
+        </Chip>
       </nav>
       <p style={{ margin: 0, fontSize: 12, color: K.muted }}>{t(lang, "pipeline.dragHint")}</p>
       <div
@@ -369,6 +373,11 @@ function TripCard({ card, lang, locale, now, missing = [], onDrag }: { card: Car
         {card.aa_cancelled && (
           <span data-testid="trip-card-aa-cancelled" style={{ display: "contents" }}>
             <Badge tone="danger">{t(lang, "aaCancel.badge")}</Badge>
+          </span>
+        )}
+        {card.aa_tour_retired && (
+          <span data-testid="trip-card-aa-tour-retired" style={{ display: "contents" }}>
+            <Badge tone="warning">{t(lang, "tourRetired.badge")}</Badge>
           </span>
         )}
         {!!card.passport_issues && (

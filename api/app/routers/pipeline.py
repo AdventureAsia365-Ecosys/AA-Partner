@@ -192,7 +192,7 @@ async def get_pipeline(
     tenant_id: TenantDep,
     waiting_on: Annotated[Literal["agency", "client", "aa", "supplier", "none"] | None, Query()] = None,
     owner: Annotated[Literal["anyone", "me"], Query()] = "anyone",
-    issue: Annotated[Literal["passport", "aa_cancelled"] | None, Query()] = None,
+    issue: Annotated[Literal["passport", "aa_cancelled", "aa_tour_retired"] | None, Query()] = None,
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
