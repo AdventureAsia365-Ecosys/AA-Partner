@@ -44,7 +44,7 @@ PATH = f"{PREFIX}/tenants/{TENANT}/studio-invitations"
 A10B = e2e_staff.E2E_CIS_ADMIN_EMAIL
 E2E_INVITEE = "e2e-test-studio-viewer@e2e-mail.lumiguides.it.com"
 CIS_BASE = "https://cis.example.test"
-SYNTHETIC_SQL = "SELECT is_synthetic IS TRUE FROM crm.tenant"
+SYNTHETIC_SQL = "SELECT is_synthetic IS TRUE AND is_pilot IS NOT TRUE FROM crm.tenant"  # AA-1086 G9: the pilot is out
 SAMPLES = Path(__file__).resolve().parents[3] / "docs" / "contracts" / "samples" / "tenant.membership.v1"
 
 

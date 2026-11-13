@@ -17,6 +17,8 @@ from dataclasses import dataclass
 
 # Fixed namespace for the synthetic agency ids (uuid5). Never reuse it for anything else.
 SYNTHETIC_NAMESPACE = uuid.UUID("6f1d3c2e-9a7b-5c4d-8e2f-a935c0de0007")
+# AA-1086 G1: the key of the pilot rehearsal agency; CIS's slug for the same tenant is the same string.
+REHEARSAL_AGENCY = "pilot-rehearsal-01"
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,18 @@ AGENCIES: tuple[SyntheticAgency, ...] = (
         traveller_locales=("en_US", "en_US", "vi_VN"),
         traveller_count=12,
         roles=("owner",),
+    ),
+    # AA-1086 G1: the pilot rehearsal agency (root docs/ops/runbooks/pilot-rehearsal.md, Fixtures). CIS holds it as the
+    # synthetic tenant ``pilot-rehearsal-01`` under this same id (AA-CIS-App ``services/tenant_account/e2e_fixtures.py
+    # rehearsal-tenant``), with the CRM and TripPlanner add-ons, so the CRM and portal specs run on it with its own E2E
+    # owner and agent. Never the pilot: the pilot is a ``kind`` agency tenant, this one is ``demo``.
+    SyntheticAgency(
+        key=REHEARSAL_AGENCY,
+        display_name="E2E Pilot Rehearsal Travel",
+        default_locale="en-AU",
+        traveller_locales=("en_AU", "en_GB", "vi_VN"),
+        traveller_count=6,
+        roles=("owner", "agent"),
     ),
 )
 
