@@ -15,7 +15,9 @@ AA-1019 (root ADR 0006a A10c): a second Dev-only WORKFORCE E2E identity, the **C
 On ``/crm/staff/v1`` it is **synthetic-only**: :class:`app.auth.route_guard.Caller` carries ``e2e_synthetic_only``,
 the guard refuses its token outside ``dev`` / ``test`` / ``local`` (403 ``e2e_read_only``), and every staff context
 (``ops_tx``, ``staff_tx``, ``support_tx`` in :mod:`app.tenancy`) refuses an agency whose ``crm.tenant.is_synthetic``
-is not true (403 ``e2e_synthetic_only``); the board and the agency lists skip such agencies. Same removal as A10b.
+is not true, and the pilot agency (``crm.tenant.is_pilot``, AA-1086 G9: Dev marks every agency synthetic, the pilot
+holds a real agency's data) (403 ``e2e_synthetic_only``); the board and the agency lists skip such agencies. The
+studio invitation relay (A10b-1) reads the same rule (:func:`app.tenancy.synthetic_agency`). Same removal as A10b.
 
 AA-1035 (root ADR 0006a A10d): a third Dev-only WORKFORCE E2E identity, the **CIS customer success** address
 :data:`E2E_CIS_CS_EMAIL`, issued with exactly ``cis-customer_success`` by the same trigger map and only on Dev. In the

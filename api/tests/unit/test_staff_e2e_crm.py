@@ -96,3 +96,12 @@ def test_the_picker_answers_ids_names_and_status_only() -> None:
     fields = set(staff_router.BreakglassAgency.model_fields)
     assert fields == {"tenant_id", "agency_name", "agency_status", "my_session_expires_at"}
     assert staff_router.BreakglassAgency.model_config.get("extra") == "forbid"
+
+
+def test_the_synthetic_checks_leave_the_pilot_agency_out() -> None:
+    """AA-1086 G9: Dev marks every agency synthetic, the pilot included, so both E2E checks also read the pilot marker
+    (crm-044). Behaviour on PostgreSQL: tests/integration/test_aa1086_e2e_pilot.py."""
+    from app import tenancy
+
+    for sql in (tenancy.E2E_SYNTHETIC_SQL, tenancy.SYNTHETIC_AGENCY_SQL):
+        assert "is_synthetic IS TRUE AND is_pilot IS NOT TRUE" in sql

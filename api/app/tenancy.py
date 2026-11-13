@@ -569,13 +569,19 @@ async def entitlement_feed_tx(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> Async
 
 
 # AA-979 (root ADR 0006a A10b-1): the one fact the Dev-only E2E CIS admin's studio-invitation relay needs from the CRM.
-SYNTHETIC_AGENCY_SQL = "SELECT is_synthetic IS TRUE FROM crm.tenant WHERE tenant_id = $1 AND deleted_at IS NULL"
+# AA-1086 G9: the pilot agency (``is_pilot``, the CIS pilot marker projected by crm_entitlement_pull, crm-044) is never
+# synthetic for an E2E identity, whatever its ``is_synthetic`` flag (every Dev agency is synthetic, the pilot included;
+# CIS reads synthetic the same way: ``is_canary`` and not the pilot).
+SYNTHETIC_AGENCY_SQL = (
+    "SELECT is_synthetic IS TRUE AND is_pilot IS NOT TRUE FROM crm.tenant WHERE tenant_id = $1 AND deleted_at IS NULL"
+)
 
 
 async def synthetic_agency(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> bool:
-    """True when the CRM holds an (untrashed) agency with this id and ``is_synthetic`` is true; False when the agency
-    is real or the CRM has none. One read-only transaction with ``app.tenant_id`` = that id (crm-002 FORCE RLS), no
-    actor, no audit: it reads one flag. Used by :func:`app.members.studio.check_e2e_invitation` only."""
+    """True when the CRM holds an (untrashed) agency with this id, ``is_synthetic`` is true and it is not the pilot
+    (AA-1086 G9); False when the agency is real, is the pilot or the CRM has none. One read-only transaction with
+    ``app.tenant_id`` = that id (crm-002 FORCE RLS), no actor, no audit: it reads one flag. Used by
+    :func:`app.members.studio.check_e2e_invitation` only."""
     if not isinstance(tenant_id, uuid.UUID):
         raise TypeError("tenant_id must be a UUID")
     async with pool.acquire() as conn, conn.transaction(readonly=True):
@@ -584,12 +590,14 @@ async def synthetic_agency(pool: asyncpg.Pool, tenant_id: uuid.UUID) -> bool:
 
 
 # AA-1019 (root ADR 0006a A10c): the Dev-only CRM staff E2E identity reaches synthetic agencies only. Read inside the
-# staff context's own transaction (``app.tenant_id`` already set), after the agency was found.
-E2E_SYNTHETIC_SQL = "SELECT is_synthetic IS TRUE FROM crm.tenant WHERE tenant_id = $1"
+# staff context's own transaction (``app.tenant_id`` already set), after the agency was found. AA-1086 G9: the pilot
+# agency (``is_pilot``, crm-044) is refused too, although Dev marks every agency synthetic (the pilot's real data).
+E2E_SYNTHETIC_SQL = "SELECT is_synthetic IS TRUE AND is_pilot IS NOT TRUE FROM crm.tenant WHERE tenant_id = $1"
 
 
 async def _refuse_e2e_real_agency(conn: asyncpg.Connection, caller: Caller | None, tenant_id: uuid.UUID) -> None:
-    """403 ``e2e_synthetic_only`` when ``caller`` is the CRM staff E2E identity and the agency is not synthetic."""
+    """403 ``e2e_synthetic_only`` when ``caller`` is the CRM staff E2E identity and the agency is not synthetic or is
+    the pilot agency (AA-1086 G9)."""
     if caller is not None and caller.e2e_synthetic_only and not await conn.fetchval(E2E_SYNTHETIC_SQL, tenant_id):
         log.warning("crm_e2e_staff_refused tenant=%s", tenant_id)
         raise Forbidden(e2e_staff.E2E_SYNTHETIC_ONLY)
