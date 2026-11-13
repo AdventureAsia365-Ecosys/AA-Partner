@@ -3,7 +3,7 @@
 import { describe, expect, it } from "vitest";
 import { matchBff } from "@/lib/bff";
 import { MESSAGES } from "@/lib/i18n";
-import { errorKey, formatMoney, fxReading, missingCodes, moneyBody, seesMargin } from "@/lib/ledger";
+import { canToggleShown, errorKey, formatMoney, fxReading, missingCodes, moneyBody, seesMargin } from "@/lib/ledger";
 
 const ID = "00000000-0000-4000-8000-0000000000e1";
 
@@ -21,6 +21,20 @@ describe("ledger helpers", () => {
     expect(fxReading({ amount: "1", currency: "VND" })).toBeNull();
     expect(fxReading({ amount: "1", currency: "USD", base_currency: "USD", fx })).toBeNull();
     expect(fxReading(null)).toBeNull();
+  });
+
+  it("shows or hides a line for travellers, an AA line once AA confirmed it", () => {
+    expect(canToggleShown({ status: "planning", supplier_kind: "agency" }, false)).toBe(true);
+    expect(canToggleShown({ status: "confirmed", supplier_kind: "agency" }, false)).toBe(true);
+    expect(canToggleShown({ status: "confirmed", supplier_kind: "aa" }, false)).toBe(true);
+    expect(canToggleShown({ status: "planning", supplier_kind: "aa" }, false)).toBe(false);
+    expect(canToggleShown({ status: "cancelled", supplier_kind: "agency" }, false)).toBe(false);
+    expect(canToggleShown({ status: "confirmed", supplier_kind: "aa" }, true)).toBe(false);
+    for (const key of ["ledger.shown", "ledger.hidden", "ledger.show", "ledger.hide", "ledger.aaShownHint"] as const) {
+      expect(MESSAGES.en[key]).toBeTruthy();
+      expect(MESSAGES.vi[key]).toBeTruthy();
+      expect(MESSAGES.vi[key]).not.toBe(MESSAGES.en[key]);
+    }
   });
 
   it("only owner and agent see margins", () => {

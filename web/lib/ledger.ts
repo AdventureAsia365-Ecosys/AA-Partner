@@ -201,3 +201,11 @@ export function moneyBody(
 export function lineDay(line: Line): string | null {
   return line.service_from;
 }
+
+/** AA-1086: whether a member may show the line to the trip's travellers or hide it (the portal and the released
+ * voucher). Not on a closed trip or a cancelled line (always hidden); an Adventure Asia line only once AA confirmed it
+ * (it is shown by default then; the API refuses it before). */
+export function canToggleShown(line: Pick<Line, "status" | "supplier_kind">, closed: boolean): boolean {
+  if (closed || line.status === "cancelled") return false;
+  return line.supplier_kind !== "aa" || line.status === "confirmed";
+}
