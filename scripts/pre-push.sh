@@ -65,6 +65,10 @@ classify_file() {
   case "$f" in
     *.md | docs/*) groups+=" docs" ;;
   esac
+  # AA-1097: any source file (or the ratchet's own files) -> the code-health ratchets.
+  case "$f" in
+    *.py | *.ts | *.tsx | *.js | *.jsx | *.mjs | *.cjs | .github/code-health*) groups+=" code_health" ;;
+  esac
   echo "$groups"
 }
 
@@ -76,7 +80,7 @@ plan_checks() {
   local mode="$1"; shift
   local g all=" " f
   if [[ "$mode" != "fast" ]]; then
-    all=" hook py deps unit_full trivyignore docs docs_tools web web_deps "
+    all=" hook py code_health deps unit_full trivyignore docs docs_tools web web_deps "
   else
     for f in "$@"; do
       [[ -z "$f" ]] && continue
@@ -90,6 +94,7 @@ plan_checks() {
   [[ "$all" == *" hook "* ]] && echo "hook-self-test"
   [[ "$all" == *" trivyignore "* ]] && echo "trivyignore"
   if [[ "$all" == *" py "* ]]; then echo "ruff-check"; echo "ruff-format"; fi
+  [[ "$all" == *" code_health "* ]] && echo "code-health"
   [[ "$all" == *" deps "* ]] && echo "pip-audit"
   if [[ "$all" == *" unit_full "* ]]; then echo "unit-full"
   elif [[ "$all" == *" unit "* ]]; then echo "unit-changed"; fi
@@ -209,27 +214,28 @@ self_test() {
   }
   local DOCS="docs-frontmatter docs-adr docs-aws-multiline docs-links"
   local WEB="web-kit web-typecheck web-test web-lint"
-  local ALL="resource-ids hook-self-test trivyignore ruff-check ruff-format pip-audit unit-full docs-tools-tests $DOCS $WEB web-audit"
+  local ALL="resource-ids hook-self-test trivyignore ruff-check ruff-format code-health pip-audit unit-full docs-tools-tests $DOCS $WEB web-audit"
   expect "empty diff: resource IDs only" "resource-ids" fast
-  expect "app module" "resource-ids ruff-check ruff-format unit-changed" fast api/app/routers/pipeline.py
-  expect "test file" "resource-ids ruff-check ruff-format unit-changed" fast api/tests/unit/test_health.py
-  expect "shared test helper" "resource-ids ruff-check ruff-format unit-changed" fast api/tests/unit/fakes.py
+  expect "app module" "resource-ids ruff-check ruff-format code-health unit-changed" fast api/app/routers/pipeline.py
+  expect "test file" "resource-ids ruff-check ruff-format code-health unit-changed" fast api/tests/unit/test_health.py
+  expect "shared test helper" "resource-ids ruff-check ruff-format code-health unit-changed" fast api/tests/unit/fakes.py
   expect "unit conftest -> targeted unit + warning (never the full suite in fast mode)" \
-    "resource-ids ruff-check ruff-format unit-changed" fast api/tests/conftest.py
+    "resource-ids ruff-check ruff-format code-health unit-changed" fast api/tests/conftest.py
   expect "pyproject -> targeted unit + warning" "resource-ids ruff-check ruff-format unit-changed" fast api/pyproject.toml
   expect "requirements -> pip-audit + targeted unit + warning" "resource-ids ruff-check ruff-format pip-audit unit-changed" \
     fast api/requirements-dev.txt
   expect "migration -> the unit tests that read it" "resource-ids unit-changed" fast api/migrations/031_example.sql
   expect "api README -> docs only" "resource-ids $DOCS" fast api/README.md
-  expect "web -> kit checks + tsc + vitest + lint, never build" "resource-ids unit-changed $WEB" fast web/app/pipeline/page.tsx
+  expect "web -> kit checks + tsc + vitest + lint, never build" "resource-ids code-health unit-changed $WEB" fast web/app/pipeline/page.tsx
   expect "web lockfile -> npm audit too" "resource-ids unit-changed $WEB web-audit" fast web/package-lock.json
-  expect "e2e -> its tsc only" "resource-ids e2e-typecheck" fast e2e/tests/slice1.spec.ts
+  expect "e2e -> its tsc only" "resource-ids code-health e2e-typecheck" fast e2e/tests/slice1.spec.ts
   expect "markdown -> docs lint" "resource-ids $DOCS" fast CONTEXT.md
   expect "markdown with a space in the name" "resource-ids $DOCS" fast "docs/a b.md"
   expect "non-ASCII markdown name" "resource-ids $DOCS" fast "docs/Tài liệu.md"
-  expect "docs tools -> their unit tests too" "resource-ids docs-tools-tests $DOCS" fast tools/docs/check_frontmatter.py
+  expect "docs tools -> their unit tests too" "resource-ids code-health docs-tools-tests $DOCS" fast tools/docs/check_frontmatter.py
   expect ".trivyignore" "resource-ids trivyignore" fast .trivyignore
-  expect "trivyignore checker" "resource-ids trivyignore" fast .github/scripts/check_trivyignore.py
+  expect "code-health baseline -> the ratchets" "resource-ids code-health" fast .github/code-health-baseline.json
+  expect "trivyignore checker" "resource-ids trivyignore code-health" fast .github/scripts/check_trivyignore.py
   expect "workflow only -> the unit tests that read it" "resource-ids unit-changed" fast .github/workflows/deploy-dev.yml
   expect "release config -> unit tests" "resource-ids unit-changed" fast .release-please-manifest.json
   expect "contract copy -> its unit tests + docs lint" "resource-ids unit-changed $DOCS" fast \
@@ -237,7 +243,7 @@ self_test() {
   expect ".vercelignore -> unit tests" "resource-ids unit-changed" fast .vercelignore
   expect "hook files -> hook self-test" "resource-ids hook-self-test" fast scripts/pre-push.sh .githooks/pre-push
   expect "delete or rename -> link check" "resource-ids docs-links" fast :deleted-or-renamed
-  expect "mixed diff" "resource-ids ruff-check ruff-format unit-changed $DOCS $WEB" fast \
+  expect "mixed diff" "resource-ids ruff-check ruff-format code-health unit-changed $DOCS $WEB" fast \
     api/app/db.py docs/implementation-notes/AA-993.md web/lib/pipeline.ts web/lib/config.ts api/migrations/031_x.sql
   expect "--full ignores the diff" "$ALL" full
   expect "--ci never skips by diff" "$ALL" ci README.md
@@ -629,6 +635,23 @@ run_check() {
       run_step "$id" "" "docs-lint.yml / Internal links (offline)" \
         "git ls-files -z '*.md' | xargs -0 -r lychee --config tools/docs/lychee.toml" -- \
         bash -c 'git ls-files -z "*.md" | xargs -0 -r lychee --config tools/docs/lychee.toml' ;;
+    code-health)
+      # AA-1097: complexity + file-size ratchets against the diff base. TypeScript complexity when web/ or the ratchet
+      # files changed (or --full / --ci); a missing ruff / web node_modules is a visible skip outside --ci.
+      local kinds="python,files" allow=(--allow-missing-tools) f
+      [[ "$MODE" == "ci" ]] && allow=()
+      [[ "$MODE" != "fast" ]] && kinds="python,files,typescript"
+      for f in "${CHANGED[@]}"; do
+        case "$f" in web/* | .github/code-health* | .github/scripts/code_health*) kinds="python,files,typescript" ;; esac
+      done
+      local base_args=()
+      git -C "$REPO_ROOT" rev-parse --verify -q "$BASE" >/dev/null && base_args=(--base "$BASE")
+      # The API env's ruff (the CI pin) when ruff is not on PATH.
+      local ruff_env=()
+      [[ -n "$API_PY" ]] && ! command -v ruff >/dev/null 2>&1 && ruff_env=(env "PATH=$(dirname "$API_PY"):$PATH")
+      run_step "$id" "" "ci.yml / Lint / Code health ratchets (+ Web Build / Code health (TypeScript complexity))" \
+        "python3 .github/scripts/code_health.py check --kind $kinds ${base_args[*]}" -- \
+        "${ruff_env[@]}" python3 .github/scripts/code_health.py check --kind "$kinds" "${base_args[@]}" "${allow[@]}" ;;
     hook-self-test)
       run_step "$id" "" "this hook's own decision tests (not a CI step)" \
         "bash scripts/pre-push.sh --self-test" -- bash scripts/pre-push.sh --self-test ;;

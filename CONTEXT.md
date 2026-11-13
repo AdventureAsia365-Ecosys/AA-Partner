@@ -454,6 +454,12 @@ gate or DB Migrate. A test keeps every event check raised somewhere in `app/` (`
 service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
 ## CI and release
 
+- **Code-health ratchets** (AA-1097; `.github/scripts/code_health.py`, limits and exemptions with reasons in
+  `.github/code-health.json`): a new function over cyclomatic complexity 10 (Python: ruff C901, in **Lint**;
+  TypeScript: ESLint `complexity`, in **Web Build**) or a new source file over 800 lines (tests included; the i18n
+  catalogue, the vendored kit core and vendored CIS copies exempt) fails; today's offenders sit in
+  `.github/code-health-baseline.json`, may not get worse, and the baseline only shrinks: after an improvement run
+  `python3 .github/scripts/code_health.py update` and commit it. `scripts/pre-push.sh` runs it too.
 - Web checks (AA-935): **Web Build** (kit core integrity + provenance, vitest, `next build` with the type check,
   standalone smoke, kit lint) and **Web Docker Build Check** (native arm64 image, container smoke, Trivy); Security Audit also runs `npm audit` for `web/`.
 - Portal checks: retired with `portal/` (AA-1036 R3 slice 2): "Portal Build", "Portal Docker Build Check" and
