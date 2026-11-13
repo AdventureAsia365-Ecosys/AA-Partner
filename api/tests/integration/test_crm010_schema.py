@@ -1254,6 +1254,8 @@ CASCADE_ERASED = {
     "proposal_inclusion": {"proposal"},
     # AA-1070 item crm-13 (crm-060): an "AA cancelled" case leaves with its trip.
     "aa_cancel_case": {"trip"},
+    # AA-1093 part 1 (crm-063, an expand file): a retired-tour flag leaves with its trip.
+    "tour_retired_flag": {"trip"},
 }
 
 

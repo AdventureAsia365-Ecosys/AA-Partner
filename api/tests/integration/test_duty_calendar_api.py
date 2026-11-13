@@ -114,13 +114,16 @@ async def _aa_line(pool: asyncpg.Pool, tenant: uuid.UUID, trip: uuid.UUID, start
 
 
 async def _event(pool: asyncpg.Pool, tenant: uuid.UUID, kind: str, event_id: str) -> tuple[str, str]:
+    # Relative to now: trip_incidents shows a cleared flag for 14 days from its cleared_at (= occurred_at), so a fixed
+    # date made this test fail from 14 days after it (S279: "2026-10-30T01:00:00Z" broke CI at 2026-11-13T01:00Z).
+    occurred = (dt.datetime.now(dt.UTC) - dt.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
     ev = contract.event(
         {
             "event_id": event_id,
             "type": kind,
             "departure_id": DEP,
             "incident_code": "road",
-            "occurred_at": "2026-10-30T01:00:00Z",
+            "occurred_at": occurred,
         }  # fmt: skip
     )
     async with system_tx(pool, tenant, actor="job:crm_booking_sync") as ctx:
