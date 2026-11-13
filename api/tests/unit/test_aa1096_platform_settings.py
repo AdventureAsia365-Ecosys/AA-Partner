@@ -433,3 +433,85 @@ def test_new_agency_settings_take_todays_platform_defaults() -> None:
     from app.agencies import new_agency_settings
 
     assert new_agency_settings() == (Decimal("2.00"), Decimal("10"), Decimal("1000.00"), 7, 36, 60)
+
+
+# ── range groups and env overrides (review S279) ─────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        (ps.TRASH_DAYS_MAX, 5),  # below the default (7)
+        (ps.TRASH_DAYS_MIN, 10),  # above the default
+        (ps.ARCHIVE_MONTHS_MAX, 24),
+        (ps.ARCHIVE_MONTHS_MIN, 48),
+        (ps.PRICE_CHECKS_MAX, 50),
+        (ps.PRICE_CHECKS_MIN, 100),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_change_that_breaks_its_range_group_is_refused_before_any_write(key: str, value: int) -> None:
+    conn = ScriptedConn()
+    with pytest.raises(ServiceError) as err:
+        await service.propose(conn, key, value=value, reason=REASON, staff_sub="zz", base_version=0)
+    assert err.value.status_code == 422 and err.value.code == "range_inconsistent"
+    assert not conn.sql("INSERT INTO crm.setting_value")
+    group = ps.range_group(key)
+    assert group is not None and conn.sql("pg_advisory_xact_lock")[0] == (f"range:{group[0]}",)  # one lock per group
+
+
+@pytest.mark.asyncio
+async def test_a_range_change_is_checked_against_the_approved_siblings() -> None:
+    conn = ScriptedConn()
+    conn.on("key = ANY($1::text[])", [{"key": ps.TRASH_DAYS_MAX, "value_text": "10"}])
+    with pytest.raises(ServiceError) as err:
+        await service.propose(conn, ps.TRASH_DAYS_DEFAULT, value=12, reason=REASON, staff_sub="zz", base_version=0)
+    assert err.value.code == "range_inconsistent" and "(10)" in err.value.message
+    conn.on("coalesce(max(version), 0)", 0)
+    conn.on("INSERT INTO crm.setting_value", _row(key=ps.TRASH_DAYS_DEFAULT, status="proposed", value=9))
+    out = await service.propose(conn, ps.TRASH_DAYS_DEFAULT, value=9, reason=REASON, staff_sub="zz", base_version=0)
+    assert out["status"] == "proposed"
+    assert conn.sql("key = ANY($1::text[])")[-1] == (list(ps.range_group(ps.TRASH_DAYS_DEFAULT) or ()), None)
+
+
+@pytest.mark.asyncio
+async def test_an_approval_rechecks_the_range_group() -> None:
+    conn = ScriptedConn()
+    conn.on(
+        "WHERE v.id = $1 FOR UPDATE",
+        _row(key=ps.TRASH_DAYS_MAX, status="proposed", proposed_by="platform:other", value=12),
+    )
+    conn.on("key = ANY($1::text[])", [{"key": ps.TRASH_DAYS_DEFAULT, "value_text": "14"}])  # approved meanwhile
+    with pytest.raises(ServiceError) as err:
+        await service.decide(conn, VID, staff_sub="zz", approve=True)
+    assert err.value.code == "range_inconsistent"
+    assert not conn.sql("UPDATE crm.setting_value AS v SET status")
+    # a rejection never needs the range
+    conn.on("UPDATE crm.setting_value AS v SET status", _row(key=ps.TRASH_DAYS_MAX, status="rejected", value=12))
+    out = await service.decide(conn, VID, staff_sub="zz", approve=False, note="not now")
+    assert out["status"] == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_an_agency_value_is_refused_while_the_env_override_is_in_force(agency: dict[str, Any]) -> None:
+    ps.configure_env({"RATE_LIMIT_INTAKE_FORM_PER_HOUR": "200"})
+    conn = ScriptedConn()
+    with pytest.raises(ServiceError) as err:
+        await service.propose(conn, ps.RATE_INTAKE_FORM, value=900, reason=REASON, staff_sub="zz", base_version=0,
+                              tenant_id=TENANT, apply=True)  # fmt: skip
+    assert err.value.status_code == 409 and err.value.code == "env_override_active"
+    assert "RATE_LIMIT_INTAKE_FORM_PER_HOUR" in err.value.message and conn.calls == []
+    # an open agency change from before the env var was set cannot be approved either
+    conn.on(
+        "WHERE v.id = $1 FOR UPDATE",
+        _row(key=ps.RATE_INTAKE_FORM, tenant_id=str(TENANT), status="proposed", proposed_by="platform:other"),
+    )
+    with pytest.raises(ServiceError) as err:
+        await service.decide(conn, VID, staff_sub="zz", approve=True, tenant_id=TENANT)
+    assert err.value.code == "env_override_active"
+    # a bad env value is ignored by the reader, so the agency value would apply: accepted
+    ps.configure_env({"RATE_LIMIT_INTAKE_FORM_PER_HOUR": "zz"})
+    service.check_env_override(ps.definition(ps.RATE_INTAKE_FORM), TENANT)
+    # the platform value of the same key is still accepted (the page shows it overridden by env)
+    ps.configure_env({"RATE_LIMIT_INTAKE_FORM_PER_HOUR": "200"})
+    service.check_env_override(ps.definition(ps.RATE_INTAKE_FORM), None)

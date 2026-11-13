@@ -137,15 +137,16 @@ ON CONFLICT (tenant_id) DO NOTHING
 
 
 def new_agency_settings() -> tuple[Any, ...]:
-    """The NEW_AGENCY_SETTINGS_SQL arguments: today's platform defaults (the AI budget never above the ceiling)."""
+    """The NEW_AGENCY_SETTINGS_SQL arguments: today's platform defaults (the AI budget never above the ceiling, the
+    windows and price checks inside the range the platform allows)."""
     budget = min(ps.decimal(ps.AI_BUDGET_DEFAULT), ps.decimal(ps.AI_BUDGET_MAX))
     return (
         budget.quantize(Decimal("0.01")),
         ps.decimal(ps.DISCOUNT_LIMIT_DEFAULT),
         ps.decimal(ps.REFUND_THRESHOLD_DEFAULT).quantize(Decimal("0.01")),
-        int(ps.get(ps.TRASH_DAYS_DEFAULT)),
-        int(ps.get(ps.ARCHIVE_MONTHS_DEFAULT)),
-        int(ps.get(ps.PRICE_CHECKS_DEFAULT)),
+        ps.clamped_default(ps.TRASH_DAYS_DEFAULT),
+        ps.clamped_default(ps.ARCHIVE_MONTHS_DEFAULT),
+        ps.clamped_default(ps.PRICE_CHECKS_DEFAULT),
     )
 
 

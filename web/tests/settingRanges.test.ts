@@ -2,7 +2,7 @@
 // setting_ranges), and the column bounds when an API before it omits them.
 import { describe, expect, it } from "vitest";
 import { fmt, MESSAGES } from "@/lib/i18n";
-import { settingRanges } from "@/lib/lifecycle";
+import { inputRange, settingRanges } from "@/lib/lifecycle";
 
 describe("owner setting ranges", () => {
   it("reads the platform range or falls back to the column bounds", () => {
@@ -17,5 +17,11 @@ describe("owner setting ranges", () => {
       expect(text).toContain("14");
       expect(text).not.toContain("{min}");
     }
+  });
+
+  it("widens a window's input to the agency's current value when AA narrowed the range", () => {
+    expect(inputRange({ min: 2, max: 14 }, 7)).toEqual({ min: 2, max: 14 });
+    expect(inputRange({ min: 2, max: 14 }, 21)).toEqual({ min: 2, max: 21 });
+    expect(inputRange({ min: 24, max: 60 }, 12)).toEqual({ min: 12, max: 60 });
   });
 });

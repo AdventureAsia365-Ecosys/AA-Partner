@@ -69,29 +69,35 @@ def _owner(ctx: TenantContext, action: str, kind: str, object_id: str | None = N
 
 async def settings(ctx: TenantContext) -> dict[str, int]:
     row = await ctx.conn.fetchrow(SETTINGS_SQL, ctx.tenant_id)
-    return {
-        "trash_days": int(row["trash_days"]) if row else int(ps.get(ps.TRASH_DAYS_DEFAULT)),
-        "auto_archive_months": int(row["auto_archive_months"]) if row else int(ps.get(ps.ARCHIVE_MONTHS_DEFAULT)),
-    }
+    if row is None:  # no settings row yet: the platform defaults, inside the range the platform allows
+        return {
+            "trash_days": ps.clamped_default(ps.TRASH_DAYS_DEFAULT),
+            "auto_archive_months": ps.clamped_default(ps.ARCHIVE_MONTHS_DEFAULT),
+        }
+    return {"trash_days": int(row["trash_days"]), "auto_archive_months": int(row["auto_archive_months"])}
 
 
 async def update_settings(ctx: TenantContext, *, trash_days: int | None, auto_archive_months: int | None) -> dict:
     _owner(ctx, "update", "tenant_settings")
-    # AA-1096 L4: the range the platform allows today (admin-editable), inside the column CHECKs.
+    # AA-1096 L4: the range the platform allows today (admin-editable), inside the column CHECKs. A value equal to the
+    # agency's current one passes even when AA narrowed the range since: the form sends both windows, and the owner
+    # must not be blocked on the one they did not touch.
     ranges = rules.owner_ranges()
+    current = await settings(ctx)
     lo, hi = ranges["trash_days"]
-    if trash_days is not None and not lo <= trash_days <= hi:
+    if trash_days is not None and trash_days != current["trash_days"] and not lo <= trash_days <= hi:
         raise Invalid("invalid_trash_days", f"{lo} to {hi} days")
     lo, hi = ranges["auto_archive_months"]
-    if auto_archive_months is not None and not lo <= auto_archive_months <= hi:
+    months = auto_archive_months
+    if months is not None and months != current["auto_archive_months"] and not lo <= months <= hi:
         raise Invalid("invalid_auto_archive_months", f"{lo} to {hi} months")
     row = await ctx.conn.fetchrow(
         UPSERT_SQL,
         ctx.tenant_id,
         trash_days,
         auto_archive_months,
-        int(ps.get(ps.TRASH_DAYS_DEFAULT)),
-        int(ps.get(ps.ARCHIVE_MONTHS_DEFAULT)),
+        ps.clamped_default(ps.TRASH_DAYS_DEFAULT),
+        ps.clamped_default(ps.ARCHIVE_MONTHS_DEFAULT),
     )
     changed = tuple(f for f, v in (("trash_days", trash_days), ("auto_archive_months", auto_archive_months)) if v)
     ctx.audit("update", "allowed", "tenant_settings", fields=changed)

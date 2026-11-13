@@ -81,6 +81,15 @@ AUDIT_RETENTION_DRY_RUN = "crm.retention.audit_dry_run"
 PARTNER_CLEANUP_DRY_RUN = "crm.retention.partner_account_cleanup_dry_run"
 TWO_PERSON_APPROVAL = "crm.settings.two_person_approval"
 
+# The platform ranges of the agency-owner settings: (new-agency default, lowest an owner may pick, highest). The
+# registry service refuses a change that would break min <= default <= max (422 range_inconsistent);
+# :func:`int_range` and :func:`clamped_default` are the backstop of a reader that still meets a broken group.
+RANGE_GROUPS: tuple[tuple[str, str, str], ...] = (
+    (TRASH_DAYS_DEFAULT, TRASH_DAYS_MIN, TRASH_DAYS_MAX),
+    (ARCHIVE_MONTHS_DEFAULT, ARCHIVE_MONTHS_MIN, ARCHIVE_MONTHS_MAX),
+    (PRICE_CHECKS_DEFAULT, PRICE_CHECKS_MIN, PRICE_CHECKS_MAX),
+)
+
 # An agency's approved rows, read in its own context (RLS). One statement, the newest approved row in force per key.
 TENANT_SQL = """
 SELECT DISTINCT ON (v.key) v.key, v.value::text AS value_text, v.version
@@ -234,6 +243,36 @@ def decimal(key: str, tenant_id: uuid.UUID | str | None = None) -> Decimal:
     return as_decimal(get(key, tenant_id))
 
 
+def range_group(key: str) -> tuple[str, str, str] | None:
+    """The (default, min, max) group ``key`` belongs to, or None."""
+    return next((g for g in RANGE_GROUPS if key in g), None)
+
+
+_INVERTED_SEEN: set[tuple[str, int, int]] = set()
+
+
+def int_range(min_key: str, max_key: str) -> tuple[int, int]:
+    """The (lowest, highest) an agency owner may pick. The registry refuses min > max; should a group still be
+    inverted (a value written around the service), the two ends are swapped and logged once, so the owner's setting
+    stays editable instead of refusing every value."""
+    lo, hi = int(get(min_key)), int(get(max_key))
+    if lo <= hi:
+        return lo, hi
+    if (min_key, lo, hi) not in _INVERTED_SEEN:
+        _INVERTED_SEEN.add((min_key, lo, hi))
+        log.error("setting_range_inverted min_key=%s min=%s max_key=%s max=%s", min_key, lo, max_key, hi)
+    return hi, lo
+
+
+def clamped_default(default_key: str) -> int:
+    """The new-agency default of a range group, never outside the range the platform allows today."""
+    group = range_group(default_key)
+    if group is None or group[0] != default_key:
+        raise KeyError(f"{default_key} is not the default of a range group")
+    lo, hi = int_range(group[1], group[2])
+    return max(lo, min(hi, int(get(default_key))))
+
+
 def limit(key: str) -> Callable[[], int]:
     """A limiter's limit read at each call (:class:`app.ratelimit.FixedWindowLimiter` takes a callable)."""
     return lambda: int(get(key))
@@ -284,9 +323,11 @@ __all__ = [
     "Definition",
     "KEY_PREFIX",
     "READER",
+    "RANGE_GROUPS",
     "Resolution",
     "aget",
     "as_decimal",
+    "clamped_default",
     "coerce",
     "configure_env",
     "decimal",
@@ -296,11 +337,13 @@ __all__ = [
     "forget_tenant",
     "get",
     "install",
+    "int_range",
     "invalidate",
     "keys",
     "limit",
     "load_definitions",
     "parse_text",
+    "range_group",
     "resolve",
     "start_refresher",
     "stop_refresher",

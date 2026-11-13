@@ -16,4 +16,4 @@ TRASH_DAYS_SQL = "SELECT trash_days FROM crm.tenant_settings WHERE tenant_id = $
 
 async def trash_days(ctx: TenantContext | LifecycleContext) -> int:
     days = await ctx.conn.fetchval(TRASH_DAYS_SQL, ctx.tenant_id)
-    return int(days) if days is not None else int(ps.get(ps.TRASH_DAYS_DEFAULT))
+    return int(days) if days is not None else ps.clamped_default(ps.TRASH_DAYS_DEFAULT)

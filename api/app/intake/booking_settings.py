@@ -28,12 +28,12 @@ PRICE_CHECKS_BOUNDS = (10, 600)
 
 def default_price_checks() -> int:
     """The price checks a minute of an agency with no settings row (and of a new agency): the platform setting."""
-    return int(ps.get(ps.PRICE_CHECKS_DEFAULT))
+    return ps.clamped_default(ps.PRICE_CHECKS_DEFAULT)
 
 
 def price_checks_bounds() -> tuple[int, int]:
     """The range the owner may pick (platform settings, inside the crm-062 column CHECK 10 to 600)."""
-    return int(ps.get(ps.PRICE_CHECKS_MIN)), int(ps.get(ps.PRICE_CHECKS_MAX))
+    return ps.int_range(ps.PRICE_CHECKS_MIN, ps.PRICE_CHECKS_MAX)
 
 
 READ_SQL = "SELECT public_booking_enabled, public_price_per_minute FROM crm.tenant_settings"

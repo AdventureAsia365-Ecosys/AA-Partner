@@ -10,6 +10,13 @@ L1 console and the app profile are).
 - :func:`propose`: a new value, checked against the definition first (422 with the reason), optimistic lock on the
   version the person saw (409 ``stale_version``), one open change per key and scope (409 ``open_change``).
   ``apply=True`` also approves it in the same transaction.
+- Range groups (:data:`app.platform_settings.RANGE_GROUPS`: the new-agency default and the range an agency owner may
+  pick, e.g. ``trash_days`` / ``_min`` / ``_max``): a change, and again its approval, is refused when the group would
+  break ``min <= default <= max`` with the values in force at the same scope (422 ``range_inconsistent``); the keys of
+  a group share one advisory lock, so two changes of one group never pass the check side by side.
+- An agency's own value of a key whose env override is in force is refused (409 ``env_override_active``): the env var
+  wins over every agency's value (the emergency override, tech lead S279 Q5), so the change would be recorded as
+  approved and have no effect.
 - :func:`decide`: approve or reject an open change. ``maker_checker``: the approver is not the proposer, unless
   ``crm.settings.two_person_approval`` is off (the dev phase, tech lead S279 Q2): then the administrator approves their
   own change (``self_approved``), and a high-impact one raises an AA ops e-mail (``setting_self_approved``). An approval
@@ -123,6 +130,13 @@ TWO_PERSON_SQL = """
 SELECT value::text AS value_text FROM crm.setting_value
  WHERE key = $1 AND tenant_id IS NULL AND status = 'approved' AND effective_from <= now()
  ORDER BY effective_from DESC, version DESC LIMIT 1
+"""
+# The values in force of a range group's keys at one scope (the change's sibling keys).
+GROUP_SQL = """
+SELECT DISTINCT ON (key) key, value::text AS value_text FROM crm.setting_value
+ WHERE key = ANY($1::text[]) AND status = 'approved' AND tenant_id IS NOT DISTINCT FROM $2::uuid
+   AND effective_from <= now()
+ ORDER BY key, effective_from DESC, version DESC
 """
 TENANT_GUC_SQL = "SELECT current_setting('app.tenant_id', true) AS t"
 SET_TENANT_SQL = "SELECT set_config('app.tenant_id', $1, true)"
@@ -281,6 +295,49 @@ def check_value(d: Definition, value: Any) -> None:
         raise _refused(422, "out_of_bounds", f"{d.label}: {problem}")
 
 
+def check_env_override(d: Definition, tenant_id: uuid.UUID | str | None) -> None:
+    """An agency's own value has no effect while the key's env override is in force (the env var wins over every
+    agency, :func:`app.platform_settings.resolve`): refuse it instead of recording a change that does nothing."""
+    if tenant_id is None:
+        return
+    res = ps.READER.resolve(d.key)
+    if res.source == "env":
+        raise _refused(
+            409,
+            "env_override_active",
+            f"{d.label}: the env var {res.env_name} overrides every agency's value in this environment; remove it "
+            "from the environment first",
+        )
+
+
+def _lock_scope(d: Definition, tenant_id: uuid.UUID | str | None) -> str:
+    group = ps.range_group(d.key)
+    name = f"range:{group[0]}" if group else d.key
+    return name if tenant_id is None else f"{name}@{tenant_id}"
+
+
+async def check_range(conn: asyncpg.Connection, d: Definition, value: Any, tenant_id: uuid.UUID | str | None) -> None:
+    """``value`` for ``d.key`` keeps its range group ``min <= default <= max`` with the values in force at the same
+    scope (the caller holds the group lock, :func:`_lock_scope`)."""
+    group = ps.range_group(d.key)
+    if group is None:
+        return
+    values = {k: ps.definition(k).default_value for k in group}
+    tid = None if tenant_id is None else uuid.UUID(str(tenant_id))
+    for r in await conn.fetch(GROUP_SQL, list(group), tid):
+        values[r["key"]] = json.loads(r["value_text"])
+    values[d.key] = value
+    default, low, high = (values[k] for k in group)
+    if not low <= default <= high:
+        labels = [ps.definition(k).label for k in group]
+        raise _refused(
+            422,
+            "range_inconsistent",
+            f"{d.label}: {labels[1]} ({low}) <= {labels[0]} ({default}) <= {labels[2]} ({high}) must hold; change the "
+            "other value of the range first",
+        )
+
+
 async def propose(
     pool: asyncpg.Pool,
     key: str,
@@ -304,6 +361,7 @@ async def propose(
         raise _refused(422, "evidence_required", f"{d.label} needs an evidence link")
     if tenant_id is not None and not d.tenant_scoped:
         raise _refused(422, "not_tenant_scoped", f"{d.label} has no per-agency value")
+    check_env_override(d, tenant_id)
     actor = _actor(staff_sub)
     try:
         if tenant_id is None:
@@ -336,14 +394,14 @@ async def _propose(
     tenant_id: uuid.UUID | None,
     apply: bool,
 ) -> dict[str, Any]:
-    scope = d.key if tenant_id is None else f"{d.key}@{tenant_id}"
-    await conn.execute(LOCK_SQL, scope)
+    await conn.execute(LOCK_SQL, _lock_scope(d, tenant_id))
     current = await conn.fetchrow(CURRENT_SQL, d.key, tenant_id)
     current_version = current["version"] if current else 0
     if (base_version or 0) != current_version:
         raise _refused(
             409, "stale_version", f"{d.label} changed since you opened it (version {current_version}); reload"
         )
+    await check_range(conn, d, value, tenant_id)
     version = int(await conn.fetchval(MAX_VERSION_SQL, d.key, tenant_id)) + 1
     try:
         async with conn.transaction():
@@ -428,6 +486,10 @@ async def _decide(
     note = (note or "").strip() or None
     if not approve and (note is None or len(note) < 3):
         raise _refused(422, "note_required", "say why the change is rejected")
+    if approve:  # the scope may have moved since the proposal: check again under the group lock
+        check_env_override(d, proposal["tenant_id"])
+        await conn.execute(LOCK_SQL, _lock_scope(d, proposal["tenant_id"]))
+        await check_range(conn, d, proposal["value"], proposal["tenant_id"])
     self_approved = False
     if approve and actor == proposal["proposed_by"] and d.approval == "maker_checker":
         # The flag is maker_checker itself (crm-064): while it is on, the one person it checks cannot turn it off.
@@ -469,6 +531,8 @@ def _after_decision(d: Definition, out: dict[str, Any]) -> None:
 
 __all__ = [
     "SettingsUnavailable",
+    "check_env_override",
+    "check_range",
     "check_value",
     "decide",
     "definition_out",

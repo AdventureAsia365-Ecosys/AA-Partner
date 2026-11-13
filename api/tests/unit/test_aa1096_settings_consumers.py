@@ -121,3 +121,47 @@ def test_the_draft_token_cap_is_read_at_each_call() -> None:
     approved(ps.AI_DRAFT_MAX_TOKENS, 400)
     assert provider._request("hi", None)["inferenceConfig"]["maxTokens"] == 400
     assert BedrockConverseProvider("anthropic.zz-model-v1:0", max_tokens=300).output_cap() == 300
+
+
+@pytest.mark.asyncio
+async def test_a_default_outside_a_narrowed_range_is_clamped_into_it() -> None:
+    from app.agencies import new_agency_settings
+
+    approved(ps.TRASH_DAYS_MAX, 5)  # the default (7) is above it: a value written around the registry's check
+    approved(ps.ARCHIVE_MONTHS_MIN, 48)  # the default (36) is below it
+    approved(ps.PRICE_CHECKS_MIN, 100)  # the default (60) is below it
+    ctx = tenant_ctx(ScriptedConn())
+    assert await window.trash_days(ctx) == 5
+    assert await policy.settings(ctx) == {"trash_days": 5, "auto_archive_months": 48}
+    assert booking_settings.default_price_checks() == 100
+    assert new_agency_settings()[3:] == (5, 48, 100)
+    with pytest.raises(KeyError):
+        ps.clamped_default(ps.TRASH_DAYS_MAX)  # only the default of a group is clamped
+
+
+@pytest.mark.asyncio
+async def test_an_inverted_range_is_swapped_so_the_owner_can_still_edit() -> None:
+    approved(ps.TRASH_DAYS_MIN, 20)
+    approved(ps.TRASH_DAYS_MAX, 5)
+    approved(ps.PRICE_CHECKS_MIN, 300)
+    approved(ps.PRICE_CHECKS_MAX, 100)
+    assert rules.owner_ranges()["trash_days"] == (5, 20)
+    assert booking_settings.price_checks_bounds() == (100, 300)
+    assert ps.clamped_default(ps.TRASH_DAYS_DEFAULT) == 7
+    ctx = tenant_ctx(
+        ScriptedConn().on("INSERT INTO crm.tenant_settings", {"trash_days": 15, "auto_archive_months": 36})
+    )
+    assert (await policy.update_settings(ctx, trash_days=15, auto_archive_months=None))["trash_days"] == 15
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_window_outside_a_narrowed_range_still_saves() -> None:
+    approved(ps.TRASH_DAYS_MAX, 10)  # the agency picked 20 before AA narrowed the range
+    conn = ScriptedConn()
+    conn.on("SELECT trash_days, auto_archive_months FROM", {"trash_days": 20, "auto_archive_months": 36})
+    conn.on("INSERT INTO crm.tenant_settings", {"trash_days": 20, "auto_archive_months": 48})
+    ctx = tenant_ctx(conn)
+    out = await policy.update_settings(ctx, trash_days=20, auto_archive_months=48)  # the form sends both windows
+    assert out == {"trash_days": 20, "auto_archive_months": 48}
+    with pytest.raises(Invalid, match="1 to 10 days"):
+        await policy.update_settings(ctx, trash_days=21, auto_archive_months=48)

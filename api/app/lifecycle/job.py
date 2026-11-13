@@ -159,7 +159,8 @@ async def run_agency(
             counts[f"trash_{kind}_purged"] += 1
 
     if not pilot:
-        months = await ctx.conn.fetchval(ARCHIVE_MONTHS_SQL, ctx.tenant_id) or int(ps.get(ps.ARCHIVE_MONTHS_DEFAULT))
+        months = await ctx.conn.fetchval(ARCHIVE_MONTHS_SQL, ctx.tenant_id)
+        months = months or ps.clamped_default(ps.ARCHIVE_MONTHS_DEFAULT)
         rows = await ctx.conn.fetch(INACTIVE_SQL, int(months), list(OPEN_STAGES), BATCH)
         inactive = [r["traveler_id"] for r in rows]
         if inactive and not dry_run:

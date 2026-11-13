@@ -15,6 +15,7 @@ import {
   aaRequestKey,
   confirmsErase,
   deletionReport,
+  inputRange,
   offboardingStep,
   ruleWindow,
   settingRanges,
@@ -54,6 +55,8 @@ export function DataLifecycleView({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const ranges = settingRanges(view);
+  const trashInput = inputRange(ranges.trash_days, view.settings.trash_days);
+  const archiveInput = inputRange(ranges.auto_archive_months, view.settings.auto_archive_months);
   const [trashDays, setTrashDays] = useState(String(view.settings.trash_days));
   const [archiveMonths, setArchiveMonths] = useState(String(view.settings.auto_archive_months));
   const [holdScope, setHoldScope] = useState<Hold["scope"]>("tenant");
@@ -129,11 +132,11 @@ export function DataLifecycleView({
           >
             <label style={{ display: "grid", gap: 4, fontSize: 13, flex: "1 1 260px" }}>
               {fmt(t(lang, "data.trashDays"), { min: String(ranges.trash_days.min), max: String(ranges.trash_days.max) })}
-              <input type="number" min={ranges.trash_days.min} max={ranges.trash_days.max} value={trashDays} onChange={(e) => setTrashDays(e.target.value)} style={field} data-testid="data-trash-days" />
+              <input type="number" min={trashInput.min} max={trashInput.max} value={trashDays} onChange={(e) => setTrashDays(e.target.value)} style={field} data-testid="data-trash-days" />
             </label>
             <label style={{ display: "grid", gap: 4, fontSize: 13, flex: "1 1 260px" }}>
               {fmt(t(lang, "data.autoArchive"), { min: String(ranges.auto_archive_months.min), max: String(ranges.auto_archive_months.max) })}
-              <input type="number" min={ranges.auto_archive_months.min} max={ranges.auto_archive_months.max} value={archiveMonths} onChange={(e) => setArchiveMonths(e.target.value)} style={field} data-testid="data-archive-months" />
+              <input type="number" min={archiveInput.min} max={archiveInput.max} value={archiveMonths} onChange={(e) => setArchiveMonths(e.target.value)} style={field} data-testid="data-archive-months" />
             </label>
             <Button type="submit" variant="primary" disabled={busy}>
               {t(lang, "data.save")}

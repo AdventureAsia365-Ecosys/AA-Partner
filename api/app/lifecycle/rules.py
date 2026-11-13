@@ -29,8 +29,8 @@ SIGNED_AGREEMENT_MONTHS = 36
 def owner_ranges() -> dict[str, tuple[int, int]]:
     """The ranges an agency owner may pick today (platform settings, inside the hard bounds)."""
     return {
-        "trash_days": (int(ps.get(ps.TRASH_DAYS_MIN)), int(ps.get(ps.TRASH_DAYS_MAX))),
-        "auto_archive_months": (int(ps.get(ps.ARCHIVE_MONTHS_MIN)), int(ps.get(ps.ARCHIVE_MONTHS_MAX))),
+        "trash_days": ps.int_range(ps.TRASH_DAYS_MIN, ps.TRASH_DAYS_MAX),
+        "auto_archive_months": ps.int_range(ps.ARCHIVE_MONTHS_MIN, ps.ARCHIVE_MONTHS_MAX),
     }
 
 

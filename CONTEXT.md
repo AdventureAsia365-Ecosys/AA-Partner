@@ -2916,6 +2916,13 @@ or an env var alone. The CRM keeps its own registry in `crm` (root ADR 0008a: no
   CRM Settings pages (markup 0-300 %, price checks 10-600/min, trash 1-30 d, archive 12-120 mo inside the column CHECKs;
   `GET /crm/v1/lifecycle` `setting_ranges`, `GET /settings/retail-markup` `markup_max_pct`), the overdue invoice
   reminder cadence, and the retention dry-run switches.
+- **Range groups** (`ps.RANGE_GROUPS`: trash days, auto-archive months, price checks, each a new-agency default and the
+  `_min` / `_max` an owner may pick): a change or its approval that would break `min <= default <= max` at its scope is
+  422 `range_inconsistent` (the keys of a group share one advisory lock). Backstop in the readers: the default is
+  clamped into the range (`ps.clamped_default`), an inverted range is swapped and logged (`ps.int_range`). An owner's
+  window equal to the agency's current value is accepted even after AA narrowed the range.
+- **Env override vs agency values**: an env override in force wins over every agency's value, so an agency's own value
+  of such a key is refused (409 `env_override_active`) instead of recorded with no effect.
 - **Two keys on deletes** (tech lead Q7): `LIFECYCLE_DRY_RUN`, `JOB_RETENTION_DRY_RUN`, `AUDIT_RETENTION_DRY_RUN` and
   `PARTNER_ACCOUNT_CLEANUP_DRY_RUN` stay in Terraform as a hard never-delete floor; the admin switch
   `crm.retention.*_dry_run` (maker-checker) is the second key; a delete runs only while both are off.
