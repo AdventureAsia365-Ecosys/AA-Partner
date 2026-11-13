@@ -3,7 +3,7 @@
 // Read only: nothing here writes, rewrites or meters; the language choice is a cookie of this browser context only.
 //
 //   - AA-1029 (from price): the Marketplace (/portal/tours) searched for one live Dev tour whose AA-Booking
-//     price.from.v1 row is 235 USD per person for 2. The card and the tour drawer both show "From $235 per person" and
+//     price.from.v1 row is a USD per-person price for 2 (read live). The card and the tour drawer both show "From $<it> per person" and
 //     the caveat line; screenshots of the card and the drawer at 1440 and 390, light and dark. Dev data drift fails
 //     fast with a message naming the tour and what the pool API answered (no row, a null price, another price), not
 //     with a locator timeout.
@@ -51,9 +51,10 @@ async function assertClean(watcher: PageWatcher): Promise<void> {
 
 /** The live Dev tour with a Booking price.from.v1 row, and what that row says. */
 const PRICED_TOUR = 'Okinawa from Naha';
-const EXPECTED_PRICE = { amount: 235, currency: 'USD', pax: 2 };
-/** FromPriceLine's text for that row (TourCard.tsx; marketplace.messages.ts + lib.messages.ts priceNote, English). */
-const PRICE_LINE = 'From $235 per person';
+/** The row's shape this check expects; the amount itself is read live (Booking reprices: 235 -> 245 on 13/11/2026). */
+const EXPECTED_PRICE = { currency: 'USD', pax: 2 };
+/** FromPriceLine's text for a whole-dollar row (TourCard.tsx; marketplace.messages.ts + lib.messages.ts, English). */
+const priceLine = (row: PoolRow) => `From $${Number(row.from_price!.amount)} per person`;
 const PRICE_NOTE = 'Suggested price for 2 travellers. Your advisor confirms the final price.';
 
 type PoolRow = {
@@ -82,16 +83,19 @@ async function searchPricedTour(page: Page): Promise<PoolRow> {
   const price = row!.from_price;
   const answered = row && 'from_price' in row ? JSON.stringify(price) : 'no from_price field (an older CIS pool answer)';
   expect(price ?? null, `Dev data drift: the pool API answers "${row!.aa_name}" (${row!.id}) with from_price `
-    + `${answered}: no Booking price.from.v1 price reaches the studio (expected ${EXPECTED_PRICE.amount} `
-    + `${EXPECTED_PRICE.currency} per person for ${EXPECTED_PRICE.pax})`).not.toBeNull();
-  expect({ amount: Number(price!.amount), currency: price!.currency, pax: price!.pax },
+    + `${answered}: no Booking price.from.v1 price reaches the studio (expected a `
+    + `${EXPECTED_PRICE.currency} per-person price for ${EXPECTED_PRICE.pax})`).not.toBeNull();
+  const amount = Number(price!.amount);
+  expect(Number.isInteger(amount) && amount > 0, `"${row!.aa_name}": from price ${price!.amount} is not a whole positive `
+    + 'amount (this check renders the whole-dollar line)').toBe(true);
+  expect({ currency: price!.currency, pax: price!.pax },
     `Dev data drift: "${row!.aa_name}" (${row!.id}) has another price.from.v1 row than this check expects`)
     .toEqual(EXPECTED_PRICE);
   await waitForPortalData(page);
   return row!;
 }
 
-/** The card's price block and the drawer's price line both say "From $235 per person" plus the caveat; captures the
+/** The card's price block and the drawer's price line both say "From $<price> per person" plus the caveat; captures the
  *  card and the drawer at the current viewport and scheme. Leaves the drawer closed. */
 async function checkCardAndDrawer(page: Page, row: PoolRow, vp: typeof DESKTOP | typeof MOBILE, scheme: string) {
   const name = row.aa_name ?? '';
@@ -100,7 +104,7 @@ async function checkCardAndDrawer(page: Page, row: PoolRow, vp: typeof DESKTOP |
   await expect(card, `${vp.name}: no Marketplace card for "${name}"`).toBeVisible({ timeout: 15000 });
   const cardPrice = card.getByTestId('marketplace-from-price');
   await expect(cardPrice, `${vp.name}: the "${name}" card shows no from price`).toBeVisible({ timeout: 10000 });
-  await expect(cardPrice).toContainText(PRICE_LINE);
+  await expect(cardPrice).toContainText(priceLine(row));
   await expect(cardPrice).toContainText(PRICE_NOTE);
   await waitForPortalData(page);
   await card.scrollIntoViewIfNeeded();
@@ -112,7 +116,7 @@ async function checkCardAndDrawer(page: Page, row: PoolRow, vp: typeof DESKTOP |
   await expect(drawer).toContainText(name);
   const drawerPrice = drawer.getByTestId('marketplace-drawer-price');
   await expect(drawerPrice, `${vp.name}: the "${name}" drawer shows no from price`).toBeVisible({ timeout: 10000 });
-  await expect(drawerPrice).toContainText(PRICE_LINE);
+  await expect(drawerPrice).toContainText(priceLine(row));
   await expect(drawerPrice).toContainText(PRICE_NOTE);
   await waitForPortalData(page);
   await page.screenshot({ path: `${PORTAL_RESULTS_DIR}/aa1029-from-price-drawer-${vp.name}-${scheme}.png` });
@@ -159,7 +163,7 @@ async function currentLocale(page: Page): Promise<string> {
 test.describe('UI smoke — studio from price and Vietnamese (S268)', () => {
   test.skip(() => !hasTenantState(), NO_LOGIN_REASON);
 
-  test('Marketplace: the priced tour shows "From $235 per person" on the card and in the drawer', async ({ browser }) => {
+  test('Marketplace: the priced tour shows its live from price on the card and in the drawer', async ({ browser }) => {
     test.setTimeout(180_000);
     for (const scheme of ['light', 'dark'] as const) {
       const context = await newStudioContext(browser, scheme);
