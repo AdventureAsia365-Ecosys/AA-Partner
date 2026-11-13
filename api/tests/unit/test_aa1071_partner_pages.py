@@ -108,8 +108,8 @@ async def test_the_intake_form_and_its_checks(monkeypatch: pytest.MonkeyPatch) -
     good = {"destinations": ["laos"], "adults": 1, "budget_band": "under_1000", "name": "An", "email": "an@x.test",
             "consent_contact": True, "client_submission_id": str(uuid.uuid4())}  # fmt: skip
     with pytest.raises(RateLimited):
-        await public.submit(object(), object(), ECHO, TOKEN, good, origin=None, form_quota=lambda _: False)  # type: ignore[arg-type]
-    assert await public.submit(object(), object(), ECHO, TOKEN, good, origin=None, form_quota=lambda _: True)  # type: ignore[arg-type]
+        await public.submit(object(), object(), ECHO, TOKEN, good, origin=None, form_quota=lambda *_, **__: False)  # type: ignore[arg-type]
+    assert await public.submit(object(), object(), ECHO, TOKEN, good, origin=None, form_quota=lambda *_, **__: True)  # type: ignore[arg-type]
     assert stored.calls[-1]["sales_partner_id"] == PARTNER  # type: ignore[attr-defined]
     assert stored.calls[-1]["idempotency_key"].startswith(f"partner:{LINK.hex[:12]}:")  # type: ignore[attr-defined]
     assert conn.sql("SET use_count = use_count + 1") == [(LINK,)]

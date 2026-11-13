@@ -62,6 +62,7 @@ from app.jobs.queue import Job
 from app.jobs.worker import Handler, PermanentError
 from app.members import studio
 from app.members.directory import DELETED, GONE, PartnerDirectory, delete_verdict
+from app.platform_settings import flag
 from app.tenancy import SystemContext, partner_account_tx
 
 log = logging.getLogger(__name__)
@@ -281,7 +282,7 @@ async def sweep(
     return result
 
 
-def build_handler(directory: PartnerDirectory | None, *, dry_run: bool) -> Handler:
+def build_handler(directory: PartnerDirectory | None, *, dry_run: bool | Callable[[], bool]) -> Handler:
     """The ``crm_partner_accounts`` job: payload ``{purpose: daily_schedule}`` or ``{purpose: agency_delete,
     tenant_id}``. ``dry_run``: ``PARTNER_ACCOUNT_CLEANUP_DRY_RUN``."""
 
@@ -297,7 +298,8 @@ def build_handler(directory: PartnerDirectory | None, *, dry_run: bool) -> Handl
                 raise PermanentError("invalid_payload") from None
         if directory is None:
             raise PermanentError("directory_not_configured")
-        result = await sweep(pool, directory, dry_run=dry_run, tenant_id=tenant_id)
+        # AA-1096 L4: the Terraform floor and the admin switch, read at each run
+        result = await sweep(pool, directory, dry_run=flag(dry_run), tenant_id=tenant_id)
         if result.get("failed_count"):
             # Each account's Cognito error was counted, not raised, so the others went on; the job still fails so the
             # worker retries it with its backoff (lessons: a per-item catch must not end the job "succeeded").

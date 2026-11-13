@@ -43,6 +43,7 @@ from fastapi import Depends, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from app import platform_settings as ps
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
@@ -87,9 +88,10 @@ class _Body(BaseModel):
 
 
 class SettingsChange(_Body):
-    trash_days: int | None = Field(default=None, ge=rules.MIN_TRASH_DAYS, le=rules.MAX_TRASH_DAYS)
+    # The hard bounds (column CHECKs); the platform range inside them is checked by app.lifecycle.policy (AA-1096 L4).
+    trash_days: int | None = Field(default=None, ge=rules.TRASH_DAYS_BOUNDS[0], le=rules.TRASH_DAYS_BOUNDS[1])
     auto_archive_months: int | None = Field(
-        default=None, ge=rules.MIN_AUTO_ARCHIVE_MONTHS, le=rules.MAX_AUTO_ARCHIVE_MONTHS
+        default=None, ge=rules.AUTO_ARCHIVE_MONTHS_BOUNDS[0], le=rules.AUTO_ARCHIVE_MONTHS_BOUNDS[1]
     )
 
 
@@ -121,7 +123,9 @@ class AcceptIn(_Body):
 
 
 def _dry_run(request: Request) -> bool:
-    return bool(request.app.state.settings.lifecycle_dry_run)
+    """AA-1096 L4 (tech lead S279 Q7): deletes run only when Terraform's LIFECYCLE_DRY_RUN floor AND the admin switch
+    (crm.retention.lifecycle_dry_run) are both off."""
+    return ps.flag(ps.dry_run(request.app.state.settings.lifecycle_dry_run, ps.LIFECYCLE_DRY_RUN))
 
 
 async def _owner_extras(ctx: TenantContext, vault: Vault | None) -> dict[str, Any]:
@@ -172,6 +176,8 @@ async def get_lifecycle(request: Request, caller: CallerDep, tenant_id: TenantDe
         out: dict[str, Any] = {
             "rules": rules.rules_view(),
             "settings": await policy.settings(ctx),
+            # AA-1096 L4: the range of each window the owner may pick (platform settings, admin-editable).
+            "setting_ranges": {k: {"min": lo, "max": hi} for k, (lo, hi) in rules.owner_ranges().items()},
             "lost_reasons": list(LOST_REASONS),
             "archive_reasons": [r for r in rules.ARCHIVE_REASONS if r != "auto_inactive"],
             "hold_reasons": list(rules.HOLD_REASONS),

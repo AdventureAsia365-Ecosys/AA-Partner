@@ -8,26 +8,29 @@ import { useState } from "react";
 import { Button, Field, Input, K, useHydrated } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
-import { t, type Lang, type MessageKey } from "@/lib/i18n";
+import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 
 export interface RetailMarkupView {
   retail_markup_pct: Record<string, string>;
   kinds: string[];
+  /** AA-1096 L4: the highest markup AA allows (a platform setting); an API before it omits it (300). */
+  markup_max_pct?: string;
 }
 
-/** "" → null (no markup); a percentage 0-300 with at most 2 decimals → its number; anything else → undefined. */
-export function markupInput(value: string): number | null | undefined {
+/** "" → null (no markup); a percentage 0 to ``max`` with at most 2 decimals → its number; anything else → undefined. */
+export function markupInput(value: string, max = 300): number | null | undefined {
   const v = value.trim();
   if (!v) return null;
   if (!/^\d{1,3}(\.\d{1,2})?$/.test(v)) return undefined;
   const n = Number(v);
-  return n <= 300 ? n : undefined;
+  return n <= max ? n : undefined;
 }
 
 export function RetailMarkupForm({ view, lang }: { view: RetailMarkupView; lang: Lang }) {
   const router = useRouter();
   const hydrated = useHydrated();
-  const tr = (key: string) => t(lang, key as MessageKey);
+  const max = Number(view.markup_max_pct ?? "300");
+  const tr = (key: string) => fmt(t(lang, key as MessageKey), { max: String(max) });
   const [values, setValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(view.kinds.map((k) => [k, view.retail_markup_pct[k] ?? ""])),
   );
@@ -37,7 +40,7 @@ export function RetailMarkupForm({ view, lang }: { view: RetailMarkupView; lang:
   async function save() {
     const body: Record<string, number | null> = {};
     for (const kind of view.kinds) {
-      const parsed = markupInput(values[kind] ?? "");
+      const parsed = markupInput(values[kind] ?? "", max);
       if (parsed === undefined) {
         setMessage({ tone: "danger", text: tr("markup.error") });
         return;

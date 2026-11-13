@@ -90,6 +90,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Protocol
 
+from app import platform_settings as ps
 from app.aa_llm import budget as llm_budget
 from app.aa_llm import errors as llm_errors
 from app.aa_llm import ledger
@@ -110,10 +111,30 @@ GUARD_PROVIDER = "bedrock_guardrails"
 GUARD_FAMILY = "amazon"  # the maker of Bedrock Guardrails (root ADR 0009 §3: family = maker)
 ALERT_LEVELS = (75, 90, 100)
 ATTEMPT = 1  # the guardrail row and the refusals before any model attempt
-DEFAULT_BUDGET_USD = Decimal("2")
 STUB_PREFIX = "stub"
 MANUAL_REPLY = "manual_reply_needed"
 MAP_STORE_FAILED = "PlaceholderMapStoreError"
+
+
+def default_budget_usd() -> Decimal:
+    """The monthly AI budget of an agency with no settings row (AA-1096 L4: ``crm.ai.budget_default_usd``, 2 USD,
+    admin-editable)."""
+    return ps.decimal(ps.AI_BUDGET_DEFAULT)
+
+
+async def budget_ceiling(ctx: AnyContext) -> Decimal:
+    """The highest monthly AI budget of this agency (``crm.ai.budget_max_usd``: the platform value or the agency's own,
+    read in its context; ``AI_BUDGET_MAX_USD`` overrides it for one release)."""
+    return ps.as_decimal(await ps.tenant_get(ctx.conn, ps.AI_BUDGET_MAX, ctx.tenant_id))
+
+
+async def agency_budget(ctx: AnyContext, row: Any) -> Decimal:
+    """The budget the gateway enforces: the agency's own (or the default without a settings row), never above its
+    ceiling (an administrator who lowers the ceiling lowers every budget above it at once)."""
+    stored = Decimal(row["ai_budget_usd"]) if row else default_budget_usd()
+    return min(stored, await budget_ceiling(ctx))
+
+
 # Outcomes of the gateway result (the API); the ledger rows carry the ledger v2 statuses (ledger.STATUSES).
 OK, REFUSED, ERROR = ledger.STATUS_OK, ledger.STATUS_REFUSED, ledger.STATUS_ERROR
 # Refusal codes of the stage profile (S263 F2) and of an unreadable month (budget.decide).
@@ -351,7 +372,7 @@ class LlmGateway:
         await ctx.conn.execute(BUDGET_LOCK_SQL, str(ctx.tenant_id))
         settings = await ctx.conn.fetchrow(SETTINGS_SQL)
         enabled = bool(settings["ai_enabled"]) if settings else False
-        budget = Decimal(settings["ai_budget_usd"]) if settings else DEFAULT_BUDGET_USD
+        budget = await agency_budget(ctx, settings)
         spent = await self._month_spend(ctx)
         refused = await self._budget_refusal(ctx, stage, role, first, spent, budget, settings, meta)
         if refused is not None:
@@ -625,7 +646,7 @@ class LlmGateway:
     async def _alert(self, ctx: AnyContext, result: GatewayResult, settings: Any, pct: float | None) -> GatewayResult:
         """R5: raise the month's 75 / 90 / 100 % alert once per level (after the row that crossed it is logged)."""
         if pct is None:
-            budget = Decimal(settings["ai_budget_usd"]) if settings else DEFAULT_BUDGET_USD
+            budget = await agency_budget(ctx, settings)
             spent = await self._month_spend(ctx)
             if spent is None:  # the call is logged; no alert without a readable month (the next call refuses)
                 return result
@@ -802,7 +823,9 @@ def build_gateway(settings: Any, keys: Any | None = None) -> LlmGateway:
             usd_per_mtok_in=settings.crm_llm_usd_per_mtok_in,
             usd_per_mtok_out=settings.crm_llm_usd_per_mtok_out,
             region=settings.crm_llm_region,
-            max_tokens=settings.crm_llm_max_tokens,
+            # AA-1096 L4: the admin-editable cap (crm.ai.draft_reply_max_tokens; CRM_LLM_MAX_TOKENS overrides it for one
+            # release), read at each call by every route entry of the stage.
+            max_tokens=ps.limit(ps.AI_DRAFT_MAX_TOKENS),
             role_arn=settings.crm_llm_role_arn,
         )
     real_scrub = bool(settings.scrub_guardrail_id) or provider.name != STUB_PREFIX
@@ -811,6 +834,6 @@ def build_gateway(settings: Any, keys: Any | None = None) -> LlmGateway:
         scrubber,
         provider,
         keys=keys,
-        limiter=FixedWindowLimiter(settings.rate_limit_ai_per_minute),
+        limiter=FixedWindowLimiter(ps.limit(ps.RATE_AI)),
         profiles=DbProfileSource(),
     )

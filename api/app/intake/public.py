@@ -35,6 +35,7 @@ from typing import Any
 
 import asyncpg
 
+from app import platform_settings as ps
 from app.errors import Forbidden, Invalid, RateLimited, Unavailable
 from app.intake import slots, stage1
 from app.jobs import queue
@@ -124,7 +125,7 @@ async def submit(
     raw: Any,
     *,
     origin: str | None,
-    form_quota: Callable[[uuid.UUID], bool] | None = None,
+    form_quota: Callable[..., bool] | None = None,
     quota_window_s: int = 3600,
 ) -> Submitted:
     if settings.intake_origin_check and not settings.intake_page_origins:
@@ -147,7 +148,10 @@ async def submit(
         if answers.call_slot is not None and not await slots.is_offered(ctx, answers.call_slot):
             record_drop("invalid", form.intake_form_id)
             raise Invalid("invalid_submission", "the call slot is no longer free", fields=["call_slot"])
-        if form_quota is not None and not form_quota(form.intake_form_id):
+        # AA-1096 L4: the quota is the agency's own (an administrator may give a busy agency more) or the platform's.
+        if form_quota is not None and not form_quota(
+            form.intake_form_id, limit=await ps.tenant_get(ctx.conn, ps.RATE_INTAKE_FORM, ctx.tenant_id)
+        ):
             record_drop("form_quota", form.intake_form_id)
             raise RateLimited("form_rate_limited", quota_window_s)
         stored = await store_submission(

@@ -36,6 +36,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import asyncpg
 
+from app import platform_settings as ps
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.proposals import retail
 from app.tenancy import AnyContext, TenantContext
@@ -120,7 +121,8 @@ async def settings(ctx: AnyContext) -> Settings:
     try:
         return Settings(int(row["child_age_max"]), int(row["infant_age_max"]), Decimal(row["discount_owner_limit_pct"]))
     except (TypeError, KeyError, IndexError, InvalidOperation):  # no settings row yet: the defaults
-        return Settings()
+        # AA-1096 L4: the discount owner limit of an agency without a row is the platform default (admin-editable)
+        return Settings(discount_owner_limit_pct=ps.decimal(ps.DISCOUNT_LIMIT_DEFAULT))
 
 
 def _rule_out(r: PriceRule) -> dict[str, Any]:

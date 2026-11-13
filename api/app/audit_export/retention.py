@@ -40,6 +40,7 @@ from app.errors import NotFound
 from app.jobs import queue
 from app.jobs.queue import Job
 from app.jobs.worker import Handler
+from app.platform_settings import flag
 from app.tenancy import RETENTION_ACTOR, audit_export_tx
 
 log = logging.getLogger(__name__)
@@ -80,8 +81,9 @@ async def record_run(pool: asyncpg.Pool, tenant_id: Any, reason: str, dropped: t
     return True
 
 
-def build_handler(archive: AuditArchive | None, *, dry_run: bool) -> Handler:
+def build_handler(archive: AuditArchive | None, *, dry_run: bool | Callable[[], bool]) -> Handler:
     async def audit_retention(pool: asyncpg.Pool, _job: Job) -> dict[str, Any]:
+        dry = flag(dry_run)  # AA-1096 L4: the Terraform floor and the admin switch, read at each run
         created = await registry.ensure_partitions(pool)
         verified = problems = 0
         reasons: dict[Any, str] = {}
@@ -101,7 +103,7 @@ def build_handler(archive: AuditArchive | None, *, dry_run: bool) -> Handler:
                     await ctx.conn.execute(MARK_SQL, report.checked_until)
                 verified += 1
             reasons[agency.tenant_id] = "verified"
-        actions = await registry.drop_expired_partitions(pool, dry_run=dry_run)
+        actions = await registry.drop_expired_partitions(pool, dry_run=dry)
         counts = {a: sum(1 for x in actions if x.action == a) for a in ("dropped", "would_drop", "kept_unverified")}
         for x in actions:
             log.info("audit_partition partition=%s action=%s", x.partition_name, x.action)
@@ -110,7 +112,7 @@ def build_handler(archive: AuditArchive | None, *, dry_run: bool) -> Handler:
         for tenant_id, reason in reasons.items():
             recorded += await record_run(pool, tenant_id, reason, dropped)
         return {
-            "dry_run": dry_run,
+            "dry_run": dry,
             "status": "problems" if problems else "ok",
             "partition_count": created,
             "verified_count": verified,

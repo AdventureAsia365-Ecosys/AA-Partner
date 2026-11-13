@@ -144,6 +144,17 @@ CHECKS: dict[str, Check] = {
         "did not open under the key the export used). Fix the cause, then run the restore drill on the next "
         "night's export (root runbook pilot-tenant-restore-drill).",
     ),
+    # AA-1096 L4 (crm-064): the admin-editable CRM settings.
+    "setting_value_refused": Check(
+        "CRM setting value refused",
+        "A stored value of a CRM setting breaks its definition (type or bounds), so the CRM serves the default "
+        "instead. Open Platform > Settings (CRM tab), read the key's history and approve a valid value.",
+    ),
+    "setting_self_approved": Check(
+        "High-impact CRM setting self-approved",
+        "An administrator approved their own change of a high-impact CRM setting while two-person approval is off "
+        "(the dev-phase rule). Review the change on Platform > Settings (CRM tab) and its reason.",
+    ),
     "tp_lead_rejected": Check(
         "TripPlanner lead rejected by the CRM",
         "The CRM could not store a traveller's request from an agency's TripPlanner site and acknowledged it rejected, "
@@ -166,6 +177,8 @@ EVENT_CHECKS = frozenset(
         "bulk_reveal",
         "pilot_backup_failed",
         "tp_lead_rejected",
+        "setting_value_refused",
+        "setting_self_approved",
     }
 )
 

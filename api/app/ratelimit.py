@@ -26,6 +26,9 @@ A caller can take a slot and give it back (:meth:`FixedWindowLimiter.release`): 
 (``app.routers.client_pages``), so only refused sessions use it up, and a burst of parallel requests cannot pass
 before the first refusal is counted.
 
+The limiter's own limit may be a callable read at each call (AA-1096 L4): the limits that are admin-editable
+settings (``app.platform_settings``, crm-064: public, intake, form quota, member, AI) pass ``ps.limit(key)``.
+
 A caller can pass its own ``limit`` per key (:meth:`FixedWindowLimiter.allow`): the "Book now" price checks per
 agency (AA-1092) read the agency's own ceiling (``tenant_settings.public_price_per_minute``) on each call.
 
@@ -64,19 +67,26 @@ VIEWER_ADDRESS_HEADER = "cloudfront-viewer-address"
 class FixedWindowLimiter:
     def __init__(
         self,
-        limit_per_window: int,
+        limit_per_window: int | Callable[[], int],
         *,
         clock: Callable[[], float] = time.monotonic,
         max_keys: int = MAX_TRACKED_KEYS,
         window_s: float = WINDOW_S,
     ) -> None:
-        self._limit = limit_per_window
+        # AA-1096 L4: a callable is read at each call, so an administrator's change of the setting (crm-064, read by
+        # app.platform_settings within its 30 s cache) takes effect without a restart.
+        self._limit_source = limit_per_window
         self.window_s = window_s
         self._clock = clock
         self._max_keys = max_keys
         self._window_start = clock()
         self._window = 0  # bumped at every new window, so a late release never frees a slot of the next one
         self._counts: OrderedDict[str, int] = OrderedDict()
+
+    @property
+    def _limit(self) -> int:
+        source = self._limit_source
+        return int(source()) if callable(source) else source
 
     @property
     def window(self) -> int:

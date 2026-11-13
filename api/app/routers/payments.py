@@ -197,11 +197,12 @@ class VnGatewayIn(_Body):
 
 class OnlineBookingIn(_Body):
     enabled: bool | None = None
-    # AA-1092 (crm-062): the agency's Book now price checks a minute (booking_settings bounds, the column CHECK).
+    # AA-1092 (crm-062): the agency's Book now price checks a minute (the column CHECK here; the platform range inside
+    # it, an admin-editable setting since AA-1096 L4, is checked by booking_settings.update).
     price_checks_per_minute: int | None = Field(
         default=None,
-        ge=booking_settings.MIN_PRICE_PER_AGENCY_MINUTE,
-        le=booking_settings.MAX_PRICE_PER_AGENCY_MINUTE,
+        ge=booking_settings.PRICE_CHECKS_BOUNDS[0],
+        le=booking_settings.PRICE_CHECKS_BOUNDS[1],
     )
 
 

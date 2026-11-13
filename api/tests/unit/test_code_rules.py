@@ -56,6 +56,12 @@ DB_MODULES = frozenset(
         "app/fx/fetch.py",  # crm.fx_rate_platform: platform reference rates, no tenant rows, insert only (AA-944)
         "app/cis/feed_state.py",  # crm.membership_feed_state: platform singleton, no tenant rows (AA-978)
         "app/catalog/store.py",  # crm.aa_catalog_tour / aa_catalog_state: platform cache, no tenant rows (AA-947)
+        # AA-1096 L4 (crm-064): the settings reader (a byte copy of the CIS reader: the platform snapshot on its own
+        # pool connection), its binding (an agency's rows through the caller's own context connection) and the registry
+        # service (platform rows outside any agency context; an agency's rows only inside platform_tx)
+        "app/platform_settings/reader.py",
+        "app/platform_settings/__init__.py",
+        "app/platform_settings/service.py",
     }
 )
 # The only modules that may open the platform context provisioning_tx() (no membership check): agency creation and the

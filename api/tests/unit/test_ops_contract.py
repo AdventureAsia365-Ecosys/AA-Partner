@@ -13,6 +13,7 @@ trip, pipeline or revenue keys"; design v3 S-01 "never trips or revenue", "no PI
 from __future__ import annotations
 
 import datetime as dt
+import json
 import uuid
 from collections.abc import Iterator
 from decimal import Decimal
@@ -227,6 +228,32 @@ def _llm_call_row() -> dict[str, Any]:
         "is_experiment": False,
         "scrub_entities": None,
     }
+
+
+def _setting_row(**over: Any) -> dict[str, Any]:
+    """A crm.setting_value row as the AA-1096 L4 service reads it (value_text = the JSON text)."""
+    value = over.pop("value", 4)
+    row = {
+        "id": REQ,
+        "key": "crm.payments.invoice_reminder_max",
+        "tenant_id": None,
+        "value_text": json.dumps(value),
+        "version": 1,
+        "status": "approved",
+        "effective_from": NOW,
+        "proposed_by": "platform:staff",
+        "proposed_at": NOW,
+        "reason": "zz fewer reminders after agency feedback",
+        "evidence_ref": None,
+        "self_approved": False,
+        "decided_by": "platform:staff",
+        "decided_at": NOW,
+        "decision_note": None,
+    }
+    row.update(over)
+    if row["status"] == "proposed":
+        row.update(decided_by=None, decided_at=None)
+    return row
 
 
 def _ops_routes(app: FastAPI) -> list[APIRoute]:
@@ -460,9 +487,49 @@ SCENARIOS: list[tuple[str, str, str, Any, Any, str, int, str | None]] = [
      "reader", 409, "invitation_claimed"),
     ("POST", "/tenants/{tenant_id}/studio-invitations", f"{T}/studio-invitations",
      {"email": "not an address", "cis_invitation_id": str(REQ)}, None, "admin", 422, "invalid_email"),
+    # crm.ops.v1 1.13 (AA-1096 L4, crm-064): the admin-editable CRM settings (the CIS Platform > Settings CRM tab).
+    ("GET", "/settings", f"{PREFIX}/settings", None, None, "reader", 200, None),
+    ("GET", "/settings", f"{PREFIX}/settings?area=rate_limit", None,
+     lambda c: c.on("v.status IN ('approved', 'rejected', 'superseded')", asyncpg.UndefinedTableError("x")),
+     "reader", 503, "settings_unavailable"),
+    ("GET", "/settings/{key}/history", f"{PREFIX}/settings/crm.rate.public_per_minute/history", None,
+     lambda c: c.on("ORDER BY v.version DESC", [_setting_row()]), "reader", 200, None),
+    ("GET", "/settings/{key}/history", f"{PREFIX}/settings/crm.rate.intake_form_per_hour/history?tenant_id={TENANT}",
+     None, lambda c: c.on("ORDER BY v.version DESC", [_setting_row(key="crm.rate.intake_form_per_hour",
+                                                                    tenant_id=str(TENANT), value=900)]),
+     "reader", 200, None),
+    ("GET", "/settings/{key}/history", f"{PREFIX}/settings/crm.zz.unknown_key/history", None, None, "reader", 404,
+     "unknown_setting"),
+    ("POST", "/settings/{key}/changes", f"{PREFIX}/settings/crm.payments.invoice_reminder_max/changes",
+     {"value": 4, "reason": "zz fewer reminders after agency feedback", "base_version": 0, "apply": True},
+     lambda c: (c.on("coalesce(max(version), 0)", 0),
+                c.on("INSERT INTO crm.setting_value", _setting_row(status="proposed")),
+                c.on("UPDATE crm.setting_value AS v SET status", _setting_row())),
+     "admin", 201, None),
+    ("POST", "/settings/{key}/changes", f"{PREFIX}/settings/crm.payments.invoice_reminder_max/changes",
+     {"value": 4, "reason": "zz fewer reminders after agency feedback"}, None, "reader", 403, "missing_group"),
+    ("POST", "/settings/{key}/changes", f"{PREFIX}/settings/crm.payments.invoice_reminder_max/changes",
+     {"value": 99, "reason": "zz far too many reminders for a client"}, None, "admin", 422, "out_of_bounds"),
+    ("POST", "/settings/{key}/changes", f"{PREFIX}/settings/crm.payments.invoice_reminder_max/changes",
+     {"value": 4, "reason": "zz fewer reminders after agency feedback", "base_version": 3}, None, "admin", 409,
+     "stale_version"),
+    ("POST", "/settings/changes/{value_id}/{decision}", f"{PREFIX}/settings/changes/{REQ}/approve", {"note": "ok"},
+     lambda c: (c.on("WHERE v.id = $1 FOR UPDATE", _setting_row(status="proposed", proposed_by="platform:zz-other")),
+                c.on("UPDATE crm.setting_value AS v SET status", _setting_row(proposed_by="platform:zz-other"))),
+     "admin", 200, None),
+    ("POST", "/settings/changes/{value_id}/{decision}", f"{PREFIX}/settings/changes/{REQ}/reject", None,
+     lambda c: c.on("WHERE v.id = $1 FOR UPDATE", _setting_row(status="proposed")), "admin", 422, "note_required"),
+    ("POST", "/settings/changes/{value_id}/{decision}", f"{PREFIX}/settings/changes/{REQ}/approve", None, None,
+     "admin", 404, "unknown_change"),
 ]  # fmt: skip
 # AA-979: routes that write no agency audit (the CIS tenant of a studio invitation may have no CRM agency).
-NO_AGENCY_AUDIT = {"/tenants/{tenant_id}/studio-invitations", "/llm/app-profile"}  # + AA-1025: a platform setting
+NO_AGENCY_AUDIT = {
+    "/tenants/{tenant_id}/studio-invitations",
+    "/llm/app-profile",  # AA-1025: a platform setting
+    # AA-1096 L4: a platform value of a setting (an agency's own value writes its agency's audit)
+    "/settings/{key}/changes",
+    "/settings/changes/{value_id}/{decision}",
+}
 
 
 def test_every_ops_route_answers_inside_the_allow_list(ops_app: Any, pools: LocalPools) -> None:

@@ -26,6 +26,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app import platform_settings as ps
 from app import tenant_gate
 from app.audit_export.archive import AuditArchive, build_audit_archive
 from app.auth import identity_config
@@ -44,7 +45,6 @@ from app.db import Database
 from app.documents.store import DocumentStore, MemoryDocumentStore, S3DocumentStore
 from app.errors import ServiceError, service_error_handler
 from app.esign.seal import build_sealer
-from app.intake.booking_settings import DEFAULT_PRICE_PER_AGENCY_MINUTE
 from app.jobs import handlers as job_handlers
 from app.jobs.metrics import JobMetricsSampler
 from app.jobs.worker import Worker
@@ -186,16 +186,18 @@ def create_app(
         sampler_task: asyncio.Task[None] | None = None
         sampler: JobMetricsSampler | None = None
         prefetch_task = identity_config.start_jwks_prefetch(app.state.verifier, settings)
+        # AA-1096 L4: the admin-editable settings (crm-064), re-read every 30 s; the defaults until the first read.
+        settings_task = ps.start_refresher(db.pool) if db.configured else None
         if settings.worker_enabled and db.configured:
             worker = Worker(
                 db.pool,
                 job_handlers.build_handlers(
-                    retention_dry_run=settings.job_retention_dry_run,
+                    retention_dry_run=ps.dry_run(settings.job_retention_dry_run, ps.JOB_RETENTION_DRY_RUN),
                     keys=app.state.keys,
                     audit_archive=app.state.audit_archive,
-                    audit_retention_dry_run=settings.audit_retention_dry_run,
+                    audit_retention_dry_run=ps.dry_run(settings.audit_retention_dry_run, ps.AUDIT_RETENTION_DRY_RUN),
                     documents=app.state.documents,
-                    lifecycle_dry_run=settings.lifecycle_dry_run,
+                    lifecycle_dry_run=ps.dry_run(settings.lifecycle_dry_run, ps.LIFECYCLE_DRY_RUN),
                     dek_cache_ttl_s=settings.dek_cache_ttl_seconds,
                     sender=app.state.dispatch_sender,
                     fx_provider=settings.fx_provider,
@@ -210,7 +212,9 @@ def create_app(
                     ingest_store=app.state.ingest_store,
                     ingest_domain=settings.crm_ingest_domain,
                     messaging_runtime=app.state.messaging_runtime,
-                    partner_account_cleanup_dry_run=settings.partner_account_cleanup_dry_run,
+                    partner_account_cleanup_dry_run=ps.dry_run(
+                        settings.partner_account_cleanup_dry_run, ps.PARTNER_CLEANUP_DRY_RUN
+                    ),
                 ),
                 recurring=job_handlers.RECURRING,
                 hooks=job_handlers.build_hooks(
@@ -225,6 +229,7 @@ def create_app(
         yield
         stop.set()
         await identity_config.stop_jwks_prefetch(prefetch_task)
+        await ps.stop_refresher(settings_task)
         if sampler_task is not None:
             sampler_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -259,9 +264,11 @@ def create_app(
     app.state.directory = directory
     app.state.mailer = mailer
     app.state.claim_limiter = FixedWindowLimiter(settings.rate_limit_claim_per_minute)
+    # AA-1096 L4: the env overrides of the admin-editable settings are this Settings' own (one release, tech lead Q5).
+    ps.configure_env(settings.settings_env())
     # AA-969 (CRM-37a): the agency fair share. Requests per member per agency per minute (app.auth.route_guard) and
     # the per-agency share of the pool every tenant_tx() takes (app.tenant_gate).
-    app.state.member_limiter = FixedWindowLimiter(settings.rate_limit_member_per_minute)
+    app.state.member_limiter = FixedWindowLimiter(ps.limit(ps.RATE_MEMBER))
     tenant_gate.configure(settings.tenant_max_concurrency, settings.tenant_slot_wait_ms / 1000)
     # AA-942: the Booking line re-check a trip restore needs (CRM-19 plugs the B2B client in). AA-945 (CRM-17): the
     # e-mail sender behind the dispatcher gate (the agency's own mailbox; never AA's SES), the mail runtime (send-as
@@ -289,7 +296,7 @@ def create_app(
     # AA-955 (CRM-25): the platform seal of signed envelopes (KMS alias/crm-<env>/seal; the HMAC stub on dev / test /
     # local without KMS_SEAL_KEY_ID; None on stg / prod without it: signing answers 503 esign_not_configured).
     app.state.sealer = build_sealer(settings)
-    app.state.public_limiter = FixedWindowLimiter(settings.rate_limit_public_per_minute)
+    app.state.public_limiter = FixedWindowLimiter(ps.limit(ps.RATE_PUBLIC))
     # AA-958: the Twilio webhooks count only unknown hook ids per address (app.routers.public), never genuine callbacks.
     app.state.hook_miss_limiter = FixedWindowLimiter(HOOK_MISSES_PER_MINUTE)
     # AA-1092: forged VNPay notices per (address, merchant reference) (app.routers.public get_vnpay_ipn).
@@ -300,20 +307,22 @@ def create_app(
     # AA-964 (CRM-33a): the one LLM gateway of the process (stub provider unless CRM_LLM_PROVIDER=bedrock).
     app.state.llm_gateway = build_gateway(settings, keys)
     # AA-936: inquiry-form submissions, per client address per minute and per form per hour.
-    app.state.intake_limiter = FixedWindowLimiter(settings.rate_limit_intake_per_minute)
-    app.state.intake_form_limiter = FixedWindowLimiter(settings.rate_limit_intake_form_per_hour, window_s=3600.0)
+    # AA-1096 L4: both read their admin-editable setting at each call; the form quota may be one agency's own value
+    # (the services pass it as ``limit``).
+    app.state.intake_limiter = FixedWindowLimiter(ps.limit(ps.RATE_INTAKE))
+    app.state.intake_form_limiter = FixedWindowLimiter(ps.limit(ps.RATE_INTAKE_FORM), window_s=3600.0)
     # AA-953 follow-up: traveller portal writes made with a session cookie get their own per-address bucket, so a
     # family on one home address is not stopped by the intake ceiling (app.routers.client_pages).
     app.state.portal_write_limiter = FixedWindowLimiter(settings.rate_limit_portal_write_per_minute)
     # ... and a session cookie only lifts a write to that bucket once it proves valid: each such write holds a slot of
     # this one (the anonymous ceiling) until the session check passes, so forged or stale cookies stay at 5 a minute.
-    app.state.portal_unproven_limiter = FixedWindowLimiter(settings.rate_limit_intake_per_minute)
+    app.state.portal_unproven_limiter = FixedWindowLimiter(ps.limit(ps.RATE_INTAKE))
     # AA-1072 (S277 live check): "Book now" price checks get their own per-address bucket (they store nothing), so a
     # visitor who compares dates does not use up the intake limit the booking, the hold, the accept and the pay share.
     app.state.booking_price_limiter = FixedWindowLimiter(settings.rate_limit_booking_price_per_minute)
     # AA-1092: and a ceiling per agency for every address together; the limit of each call is the agency's own
     # setting (tenant_settings.public_price_per_minute, crm-062), so the limiter's own value is only the default.
-    app.state.booking_agency_price_limiter = FixedWindowLimiter(DEFAULT_PRICE_PER_AGENCY_MINUTE)
+    app.state.booking_agency_price_limiter = FixedWindowLimiter(ps.limit(ps.PRICE_CHECKS_DEFAULT))
     app.add_exception_handler(ServiceError, service_error_handler)
     app.add_exception_handler(Exception, unhandled_error_handler)
     # AA-969 (F1): the body ceiling runs before any route reads a body (FastAPI parses JSON before the class guard).

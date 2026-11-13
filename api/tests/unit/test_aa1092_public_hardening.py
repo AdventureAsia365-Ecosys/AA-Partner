@@ -208,7 +208,7 @@ async def _submit(quota: Any, body: dict[str, Any], **kw: Any) -> dict[str, Any]
 async def test_a_booking_over_the_agency_ceiling_is_429_before_any_attempt(book_now_agency: Any) -> None:
     charged: list[int] = []
 
-    def full() -> bool:
+    def full(limit: int | None = None) -> bool:
         charged.append(1)
         return False
 
@@ -223,7 +223,7 @@ async def test_a_booking_over_the_agency_ceiling_is_429_before_any_attempt(book_
 async def test_the_ceiling_is_not_charged_by_a_bot_or_a_bad_answer(book_now_agency: Any) -> None:
     charged: list[int] = []
 
-    def quota() -> bool:
+    def quota(limit: int | None = None) -> bool:
         charged.append(1)
         return True
 

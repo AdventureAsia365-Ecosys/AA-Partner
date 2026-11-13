@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING, Any
 
 import asyncpg
 
+from app import platform_settings as ps
 from app.audit_export import registry
 from app.documents.store import DocumentStore
 from app.errors import Forbidden, NotFound, ServiceError
@@ -51,7 +52,7 @@ from app.jobs.queue import Job
 from app.jobs.worker import Handler
 from app.lifecycle import erase
 from app.lifecycle.pilot import is_pilot
-from app.lifecycle.rules import DEFAULT_AUTO_ARCHIVE_MONTHS
+from app.platform_settings import flag
 from app.tenancy import LifecycleContext, lifecycle_tx
 from app.vault import Vault
 
@@ -158,7 +159,7 @@ async def run_agency(
             counts[f"trash_{kind}_purged"] += 1
 
     if not pilot:
-        months = await ctx.conn.fetchval(ARCHIVE_MONTHS_SQL, ctx.tenant_id) or DEFAULT_AUTO_ARCHIVE_MONTHS
+        months = await ctx.conn.fetchval(ARCHIVE_MONTHS_SQL, ctx.tenant_id) or int(ps.get(ps.ARCHIVE_MONTHS_DEFAULT))
         rows = await ctx.conn.fetch(INACTIVE_SQL, int(months), list(OPEN_STAGES), BATCH)
         inactive = [r["traveler_id"] for r in rows]
         if inactive and not dry_run:
@@ -171,15 +172,18 @@ async def run_agency(
     return result
 
 
-def build_handler(*, dry_run: bool, keys: KeyProvider | None = None, store: DocumentStore | None = None) -> Handler:
+def build_handler(
+    *, dry_run: bool | Callable[[], bool], keys: KeyProvider | None = None, store: DocumentStore | None = None
+) -> Handler:
     async def lifecycle(pool: asyncpg.Pool, _job: Job) -> dict[str, Any]:
+        dry = flag(dry_run)  # AA-1096 L4: the Terraform floor and the admin switch, read at each run
         totals: Counter[str] = Counter()
         done = skipped = failed = pilot_skipped = 0
         for agency in await registry.agencies(pool):
             try:
                 async with lifecycle_tx(pool, agency.tenant_id, actor=ACTOR) as ctx:
                     pilot = await is_pilot(ctx)  # AA-969 d16: only the pilot agency's own deletions run
-                    counts = await run_agency(ctx, dry_run=dry_run, keys=keys, store=store, pilot=pilot)
+                    counts = await run_agency(ctx, dry_run=dry, keys=keys, store=store, pilot=pilot)
             except (Forbidden, NotFound):
                 skipped += 1  # offboarding / offboarded: the offboarding job owns it
                 continue
@@ -199,11 +203,11 @@ def build_handler(*, dry_run: bool, keys: KeyProvider | None = None, store: Docu
             log.info(
                 "lifecycle_run tenant_id=%s dry_run=%s %s",
                 agency.tenant_id,
-                dry_run,
+                dry,
                 " ".join(f"{k}={v}" for k, v in counts.items() if v),
             )
         return {
-            "dry_run": dry_run,
+            "dry_run": dry,
             "agency_count": done,
             "skipped_count": skipped,
             "failed_count": failed,

@@ -29,9 +29,12 @@ import re
 import unicodedata
 import uuid
 from dataclasses import dataclass
+from decimal import Decimal
+from typing import Any
 
 import asyncpg
 
+from app import platform_settings as ps
 from app.errors import Conflict, Invalid
 from app.tenancy import MEMBER_ROLES, provisioning_tx
 
@@ -123,6 +126,29 @@ TENANT_UPDATE_SQL = "UPDATE crm.tenant SET display_name = $2, default_locale = $
 # AA-1031 (S264): is the existing row of this id in the trash? Read in the provisioning transaction (app.tenant_id =
 # this id, so the crm-002 tenant_isolation policy shows the row whatever its deleted_at).
 TENANT_TRASHED_SQL = "SELECT deleted_at IS NOT NULL AS trashed FROM crm.tenant WHERE tenant_id = $1"
+# AA-1096 L4: a new agency starts with the platform defaults of its owner settings (admin-editable, crm-064), not the
+# column defaults; the owner changes them on the CRM Settings pages within the platform range. Idempotent.
+NEW_AGENCY_SETTINGS_SQL = """
+INSERT INTO crm.tenant_settings (ai_budget_usd, discount_owner_limit_pct, refund_owner_threshold_base, trash_days,
+                                 auto_archive_months, public_price_per_minute)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (tenant_id) DO NOTHING
+"""
+
+
+def new_agency_settings() -> tuple[Any, ...]:
+    """The NEW_AGENCY_SETTINGS_SQL arguments: today's platform defaults (the AI budget never above the ceiling)."""
+    budget = min(ps.decimal(ps.AI_BUDGET_DEFAULT), ps.decimal(ps.AI_BUDGET_MAX))
+    return (
+        budget.quantize(Decimal("0.01")),
+        ps.decimal(ps.DISCOUNT_LIMIT_DEFAULT),
+        ps.decimal(ps.REFUND_THRESHOLD_DEFAULT).quantize(Decimal("0.01")),
+        int(ps.get(ps.TRASH_DAYS_DEFAULT)),
+        int(ps.get(ps.ARCHIVE_MONTHS_DEFAULT)),
+        int(ps.get(ps.PRICE_CHECKS_DEFAULT)),
+    )
+
+
 # AA-944 (crm-014): every agency has the built-in Adventure Asia supplier row (M15); idempotent.
 ENSURE_AA_SUPPLIER_SQL = "SELECT crm.ensure_aa_supplier()"
 MEMBER_INSERT_SQL = """
@@ -164,6 +190,7 @@ async def provision_agency(
         if inserted is not None:
             created = True
             ctx.audit("agency_create", "agency", str(agency.tenant_id), object_ids=audit_object_ids)
+            await ctx.conn.execute(NEW_AGENCY_SETTINGS_SQL, *new_agency_settings())
         elif create_only:
             if await ctx.conn.fetchval(TENANT_TRASHED_SQL, agency.tenant_id):
                 raise Conflict(

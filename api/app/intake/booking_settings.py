@@ -7,24 +7,34 @@ a key from here. Owner only (``PAYMENT_SETTINGS``); the page shows no client dat
 
 AA-1092 (crm-062): ``tenant_settings.public_price_per_minute``, the price checks a minute the agency's Book now takes
 from every address together (the policy value of the per-agency ceiling, ``app.routers.public`` ``post_booking_price``):
-default :data:`DEFAULT_PRICE_PER_AGENCY_MINUTE`, the owner sets :data:`MIN_PRICE_PER_AGENCY_MINUTE` to
-:data:`MAX_PRICE_PER_AGENCY_MINUTE` here (the same bounds as the column CHECK). Each API task counts on its own (the CRM
-API has no shared limiter store), so with N tasks an agency gets up to N times its value.
+the default and the range the owner may pick here are admin-editable platform settings (AA-1096 L4, crm-064:
+``crm.agency_defaults.price_checks_per_minute`` [``_min`` / ``_max``], inside the column CHECK 10 to 600). Each API
+task counts on its own (the CRM API has no shared limiter store), so with N tasks an agency gets up to N times its
+value.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from app import platform_settings as ps
 from app.errors import Invalid
 from app.settings import Settings
 from app.tenancy import TenantContext
 
-# The crm-062 column default and CHECK bounds. The default applies only where no settings row exists yet (the column
-# default fills every row); the bounds answer a 422 before the database's CHECK would.
-DEFAULT_PRICE_PER_AGENCY_MINUTE = 60
-MIN_PRICE_PER_AGENCY_MINUTE = 10
-MAX_PRICE_PER_AGENCY_MINUTE = 600
+# The crm-062 column CHECK (engineering: the hard bounds; the platform range inside them is a setting).
+PRICE_CHECKS_BOUNDS = (10, 600)
+
+
+def default_price_checks() -> int:
+    """The price checks a minute of an agency with no settings row (and of a new agency): the platform setting."""
+    return int(ps.get(ps.PRICE_CHECKS_DEFAULT))
+
+
+def price_checks_bounds() -> tuple[int, int]:
+    """The range the owner may pick (platform settings, inside the crm-062 column CHECK 10 to 600)."""
+    return int(ps.get(ps.PRICE_CHECKS_MIN)), int(ps.get(ps.PRICE_CHECKS_MAX))
+
 
 READ_SQL = "SELECT public_booking_enabled, public_price_per_minute FROM crm.tenant_settings"
 UPSERT_SQL = """
@@ -47,14 +57,11 @@ SELECT label, public_key FROM crm.intake_form WHERE status = 'active' AND delete
 async def read(ctx: TenantContext, settings: Settings) -> dict[str, Any]:
     origin = settings.messaging_hooks_origin()
     row = await ctx.conn.fetchrow(READ_SQL)
+    lo, hi = price_checks_bounds()
     return {
         "enabled": bool(row and row["public_booking_enabled"]),
-        "price_checks_per_minute": int(row["public_price_per_minute"]) if row else DEFAULT_PRICE_PER_AGENCY_MINUTE,
-        "price_checks_bounds": {
-            "min": MIN_PRICE_PER_AGENCY_MINUTE,
-            "max": MAX_PRICE_PER_AGENCY_MINUTE,
-            "default": DEFAULT_PRICE_PER_AGENCY_MINUTE,
-        },
+        "price_checks_per_minute": int(row["public_price_per_minute"]) if row else default_price_checks(),
+        "price_checks_bounds": {"min": lo, "max": hi, "default": default_price_checks()},
         "page_base": f"{origin}/trip/" if origin else None,
         "forms": [{"label": r["label"], "public_key": r["public_key"]} for r in await ctx.conn.fetch(FORMS_SQL)],
     }
@@ -67,15 +74,9 @@ async def update(
     if enabled is not None and not isinstance(enabled, bool):
         raise Invalid("invalid_enabled", "true or false")
     ceiling = price_checks_per_minute
-    if ceiling is not None and (
-        isinstance(ceiling, bool)
-        or not isinstance(ceiling, int)
-        or not MIN_PRICE_PER_AGENCY_MINUTE <= ceiling <= MAX_PRICE_PER_AGENCY_MINUTE
-    ):
-        raise Invalid(
-            "invalid_price_checks_per_minute",
-            f"a whole number from {MIN_PRICE_PER_AGENCY_MINUTE} to {MAX_PRICE_PER_AGENCY_MINUTE}",
-        )
+    lo, hi = price_checks_bounds()
+    if ceiling is not None and (isinstance(ceiling, bool) or not isinstance(ceiling, int) or not lo <= ceiling <= hi):
+        raise Invalid("invalid_price_checks_per_minute", f"a whole number from {lo} to {hi}")
     if enabled is None and ceiling is None:
         raise Invalid("nothing_to_change", "send enabled or price_checks_per_minute")
     if enabled is not None:

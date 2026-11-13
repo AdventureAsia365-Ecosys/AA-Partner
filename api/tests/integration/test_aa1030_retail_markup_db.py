@@ -26,7 +26,11 @@ async def test_crm_app_reads_and_merges_through_a_tenant(app_pool: asyncpg.Pool)
             await conn.execute("SELECT set_config('app.actor', 'seed:test', true)")
             await conn.execute("INSERT INTO crm.tenant (tenant_id) VALUES ($1)", tenant_id)
             ctx = TenantContext(conn=conn, tenant_id=tenant_id, member_id=uuid.uuid4(), member_role="owner")
-            assert await retail.read(ctx) == {"retail_markup_pct": {}, "kinds": list(retail.KINDS)}
+            assert await retail.read(ctx) == {
+                "retail_markup_pct": {},
+                "kinds": list(retail.KINDS),
+                "markup_max_pct": "300",  # AA-1096 L4: the platform ceiling (a setting)
+            }
             await retail.update(ctx, {"trip_plan": Decimal("20"), "hotel_room": Decimal("12.50")})
             await retail.update(ctx, {"hotel_room": None, "meal": Decimal("7.25")})
             assert (await retail.read(ctx))["retail_markup_pct"] == {"trip_plan": "20", "meal": "7.25"}

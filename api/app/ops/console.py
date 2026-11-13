@@ -45,7 +45,7 @@ from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.jobs import queue
 from app.lifecycle import offboarding
 from app.lifecycle.rules import BACKUP_PURGE_DAYS
-from app.llm.gateway import DEFAULT_BUDGET_USD, MONTH_SPEND_SQL
+from app.llm.gateway import MONTH_SPEND_SQL, agency_budget
 from app.members import accounts as partner_accounts
 from app.members import team
 from app.members.directory import PartnerDirectory
@@ -252,7 +252,10 @@ async def agency_usage(pool: asyncpg.Pool, tenant_id: uuid.UUID, *, staff_sub: s
             "storage_bytes": int(await ctx.conn.fetchval(STORAGE_SQL) or 0),
             "inbound_mail_30d": 0,
             "ai_cost_usd_month": _usd(await ctx.conn.fetchval(MONTH_SPEND_SQL)),
-            "ai_budget_usd_month": _usd(DEFAULT_BUDGET_USD if budget is None else budget),
+            # AA-1096 L4: the budget the gateway enforces (the default without a row, never above the ceiling)
+            "ai_budget_usd_month": _usd(
+                await agency_budget(ctx, None if budget is None else {"ai_budget_usd": budget})
+            ),
             "failed_jobs_24h": await queue.failed_count_24h(ctx.conn, str(tenant_id)),
             "last_activity_at": _iso(await ctx.conn.fetchval(LAST_ACTIVITY_SQL)),
         }
