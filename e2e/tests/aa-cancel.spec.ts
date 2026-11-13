@@ -148,7 +148,7 @@ test.describe("crm-13: AA cancels a departure the agency has a trip on (Dev, age
       .flatMap((d) => d.blocks.flatMap((b) => b.options))
       .find((o) => o.source === "aa");
     expect(aa?.aa?.departure_id, "the AA item is on the seeded departure").toBe(seeded.departureId);
-    await page.goto(`${PARTNER}/proposal/${proposalId}`);
+    await page.goto(`${PARTNER}/pipeline/${tripId}/proposal/${proposalId}`);
     await hydrated(page, "builder");
     await shot(page, "1-prepared");
     fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true });
@@ -181,7 +181,7 @@ test.describe("crm-13: AA cancels a departure the agency has a trip on (Dev, age
     const board = await bff(page, "GET", "pipeline?issue=aa_cancelled");
     expect(board.status).toBe(200);
     expect(flaggedTripIds(board.body), "the board's AA cancelled filter lists the trip").toContain(state.trip_id);
-    await page.goto(`${PARTNER}/pipeline`);
+    await page.goto(`${PARTNER}/pipeline?issue=aa_cancelled`);
     await shot(page, "2-board");
   });
 });
