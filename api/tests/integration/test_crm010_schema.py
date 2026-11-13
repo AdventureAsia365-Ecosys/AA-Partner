@@ -1209,8 +1209,7 @@ CASCADE_ERASED = {
     "option_price": {"option"},
     "discount_approval": {"proposal"},
     "retail_price_rule": {"tenant_settings"},
-    # AA-1067 (crm-049, an expand file): a cancellation policy leaves with the agency's settings row, its tiers with
-    # it, a cancellation charge with its trip.
+    # AA-1067 (crm-049): a cancellation policy and its tiers leave with the settings row, a charge with its trip.
     "cancellation_policy": {"tenant_settings"},
     "cancellation_policy_tier": {"cancellation_policy"},
     "cancellation_charge": {"trip"},
@@ -1256,6 +1255,7 @@ CASCADE_ERASED = {
     "aa_cancel_case": {"trip"},
     # AA-1093 part 1 (crm-063, an expand file): a retired-tour flag leaves with its trip.
     "tour_retired_flag": {"trip"},
+    "setting_value": {"tenant_settings"},  # AA-1096 L4 (crm-064): an agency's own values leave with its settings row
 }
 
 

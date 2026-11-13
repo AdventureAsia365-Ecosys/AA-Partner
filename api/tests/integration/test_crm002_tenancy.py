@@ -94,6 +94,11 @@ PLATFORM_TABLES = {
     "tenant column, no PII (crm-037, AA-964)",
     "llm_app_profile": "the CRM app profile (AI switch, daily budget), one AA configuration row, no tenant column, no "
     "PII (crm-041, AA-1025)",
+    "setting_definition": "the CRM settings registry's definitions, AA configuration written only by migrations, no "
+    "tenant column, no PII (crm-064, AA-1096)",
+    "setting_value": "the CRM settings registry's append-only values: platform rows (tenant_id NULL) and an agency's "
+    "own override; RLS setting_value_scope (platform rows outside an agency context, an agency's rows in its own), no "
+    "trash columns, erased with crm.tenant_settings (crm-064, AA-1096)",
 }
 # Append-only tenant tables (crm-003): tenant column, RLS and policy as the template, but no updated_at, no trash
 # columns; instead the append-only trigger, and crm_app may only INSERT and SELECT.
