@@ -1,0 +1,38 @@
+# AA-1097 (lane l15, S279): complexity and file-size ratchets
+
+Parts 1-3 of AA-1097 in this repo. The same tool (`.github/scripts/code_health.py` + `code_health_eslint.mjs`) ships to
+AA-CIS-App, AA-Booking and AA-TripPlanner-Web; only `.github/code-health.json` and the baseline differ.
+
+## Decisions
+
+- **Complexity limit 10, Python and TypeScript.** Measured on 13/11/2026, product code only:
+  - Python (ruff C901, `api/` minus tests): 4,122 functions, p90=6, p95=8, p97=10, p99=14, max 60. 113 functions in
+    the baseline.
+  - TypeScript under `web/` (ESLint `complexity`, classic; `web/tests`, the vendored kit core and the vendored CIS
+    `web/lib` helpers excluded): 5,414 functions, p90=6, p95=9, p97=13, p99=22, max 92. 220 functions in the baseline.
+  - One number for both languages and all four repos (10 is between p95 and p97 everywhere, and the mccabe default).
+- **File size 800 lines, tests included** (`.py .ts .tsx .js .jsx .mjs .cjs`): 1,378 files, 24 in the baseline (largest
+  `api/app/proposals/builder.py`, 1,986). Exempt with a reason: the i18n catalogue `web/lib/i18n.ts` (5,520 lines of
+  message strings), the vendored kit core and vendored CIS copies (ratcheted in CIS), `*/fixtures/*`, agent skill folders.
+- **CI**: Python complexity + file size in **Lint** (ruff already installed from `api/requirements-dev.txt`); TypeScript
+  complexity in **Web Build** after `npm ci`. Both pass the PR / queue base so the baseline only shrinks. Both jobs are
+  required checks: no branch-protection change.
+- **Pre-push**: check id `code-health` for any source-file change (TypeScript part when `web/` or the ratchet files
+  changed, always in `--full` / `--ci`); a missing ruff / `web/node_modules` is a visible skip outside `--ci`.
+- Function identity, the shrink-only rules (NEW / WORSE / STALE / TIGHT, `update` never adds or raises), moves and
+  splits: as in the AA-CIS-App notes of the same name; `code_health.py --help` has the summary.
+
+## Changed
+
+- Nothing beyond the issue; no file was refactored. No `app/` code changed, so the unit coverage gate is unaffected.
+
+## Tradeoffs
+
+- The limits live in a committed config, not in the CRM settings: they are CI lint limits, which CI cannot read from the
+  database; raising one fails `check --base`.
+
+## Should know
+
+- `python3 .github/scripts/code_health.py check` (all kinds) needs ruff 0.16.9 and `web/node_modules`.
+- Tests: `api/tests/unit/test_aa1097_code_health.py` (the Python end-to-end case needs ruff, the TypeScript names case
+  needs `web/node_modules`; both skip otherwise).

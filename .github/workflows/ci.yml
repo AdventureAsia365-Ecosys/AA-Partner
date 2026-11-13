@@ -115,6 +115,23 @@ jobs:
       - name: ruff format --check
         run: ruff format --check .
 
+      # AA-1097: code-health ratchets (.github/scripts/code_health.py, limits in .github/code-health.json). A new Python
+      # function over complexity 10 (ruff C901, the pin installed above) or a new source file over 800 lines fails; a
+      # function or file already in .github/code-health-baseline.json may not get worse, and the baseline only shrinks
+      # (also against the PR / queue base). Improved code: `python3 .github/scripts/code_health.py update`, commit the
+      # baseline. The TypeScript part runs in "Web Build" (it needs node_modules).
+      - name: Code health ratchets (Python complexity, file size)
+        working-directory: .
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || '' }}
+        run: |
+          BASE_ARGS=()
+          case "$BASE_SHA" in
+            ""|0000000000000000000000000000000000000000) echo "::notice::No base commit: the shrink-only check against the base is skipped." ;;
+            *) git fetch --no-tags --depth=1 origin "$BASE_SHA" && BASE_ARGS=(--base "$BASE_SHA") ;;
+          esac
+          python3 .github/scripts/code_health.py check --kind python,files "${BASE_ARGS[@]}"
+
   # pip-audit FAILS here (as in AA-Booking). The same job runs the DM-6.10 resource-ID check (this repo is public). The
   # gitleaks scan that ran here moved to .github/workflows/secret-scan.yml (AA-981 follow-up): check "gitleaks" on every
   # PR with the base branch's rules (.gitleaks.toml, .gitleaksignore), "gitleaks full history"
@@ -762,6 +779,21 @@ jobs:
         run: |
           node app/_kit/core/check-kit-copy.mjs --no-kit-disable app --ignore _kit/core
           node app/_kit/core/check-kit-copy.mjs --no-kit-disable components
+
+      # AA-1097: the TypeScript half of the code-health ratchet (ESLint's complexity rule through
+      # .github/scripts/code_health_eslint.mjs, this job's node_modules); the Python half and file size run in "Lint".
+      - name: Code health (TypeScript complexity)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: .
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || '' }}
+        run: |
+          BASE_ARGS=()
+          case "$BASE_SHA" in
+            ""|0000000000000000000000000000000000000000) echo "::notice::No base commit: the shrink-only check against the base is skipped." ;;
+            *) git fetch --no-tags --depth=1 origin "$BASE_SHA" && BASE_ARGS=(--base "$BASE_SHA") ;;
+          esac
+          python3 .github/scripts/code_health.py check --kind typescript "${BASE_ARGS[@]}"
 
   # AA-935 — the CRM web image: native arm64 (Fargate ARM64, ADR 0010 decision 2), container answers /healthz with its
   # commit, Trivy fails on fixable CRITICAL/HIGH like the API image.
