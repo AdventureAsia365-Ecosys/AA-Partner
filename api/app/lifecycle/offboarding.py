@@ -48,6 +48,7 @@ import hashlib
 import json
 import logging
 import uuid
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, NoReturn
 
 import asyncpg
@@ -60,6 +61,7 @@ from app.jobs.queue import Job
 from app.jobs.worker import Handler, PermanentError
 from app.lifecycle import erase
 from app.lifecycle.rules import BACKUP_PURGE_DAYS, EXPORT_FILE_DAYS
+from app.platform_settings import flag
 from app.portability import builder as portability
 from app.portability import exports as portability_exports
 from app.tenancy import AnyContext, LifecycleContext, TenantContext, lifecycle_tx
@@ -596,7 +598,11 @@ async def _refused(pool: asyncpg.Pool, tenant_id: uuid.UUID, request_id: uuid.UU
 
 
 def build_handler(
-    *, keys: KeyProvider | None, store: DocumentStore | None, dry_run: bool, dek_cache_ttl_s: int = 300
+    *,
+    keys: KeyProvider | None,
+    store: DocumentStore | None,
+    dry_run: bool | Callable[[], bool],
+    dek_cache_ttl_s: int = 300,
 ) -> Handler:
     async def offboard(pool: asyncpg.Pool, job: Job) -> dict[str, Any]:
         try:
@@ -613,7 +619,7 @@ def build_handler(
             # AA-967: a scheduled (cool-off) confirmation starts here; one cancelled meanwhile erases nothing.
             if not await _start(pool, tenant_id, request_id):
                 return {"request_id": str(request_id), "status": "skipped"}
-            if dry_run:
+            if flag(dry_run):  # AA-1096 L4: the Terraform floor and the admin switch, read at each run
                 await _refused(pool, tenant_id, request_id, "deletion_dry_run")
             return await _erase(pool, tenant_id, request_id, keys, store, dek_cache_ttl_s)
         raise PermanentError("bad_mode")

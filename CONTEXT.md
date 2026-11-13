@@ -2885,12 +2885,66 @@ secret `MAIL_OAUTH` (`crm/<env>/mail-oauth`, mapped only once it has a value), a
 `PORTAL_OTP_DEV_ECHO` (default false; refused outside dev / test / local; on, the portal code answer carries the code
 for the synthetic Dev agencies that have no mailbox), and the AI gateway (AA-964) `CRM_LLM_PROVIDER` (default `stub`),
 `CRM_LLM_MODEL_ID`, `CRM_LLM_USD_PER_MTOK_IN` / `CRM_LLM_USD_PER_MTOK_OUT`, `CRM_LLM_REGION`, `CRM_LLM_ROLE_ARN`,
-`CRM_LLM_MAX_TOKENS`, `RATE_LIMIT_AI_PER_MINUTE` (default 6) and `AI_BUDGET_MAX_USD` (default 2); on Dev, AA-CIS-Infra
+`CRM_LLM_MAX_TOKENS`, `RATE_LIMIT_AI_PER_MINUTE` (default 6) and `AI_BUDGET_MAX_USD` (default 2) (AA-1096 L4: these
+four and the public / intake / form / member rate limits are now admin-editable settings; the env vars only override
+them, for one release, section "Admin-editable platform settings"); on Dev, AA-CIS-Infra
 `crm_llm.tf` (AA-1027 F4) sets the provider `bedrock`, the model Amazon Nova Lite on acc2 with its catalogue prices, the
 region and the output cap, and grants the task role `bedrock:InvokeModel` on that inference profile only (no
 `CRM_LLM_ROLE_ARN`: acc3 is not used while it refuses every model). Meanings and defaults:
 `api/app/settings.py`. Live check of the key provider inside the
 container: `python -m app.vault.selftest` (KMS round trip under the nil tenant context, nothing stored).
+
+## Admin-editable platform settings (AA-1096 L4, crm-064; S279 thresholds audit)
+
+Tech lead S279: every threshold, limit, cap and policy value is editable by the AA administrator, never a code literal
+or an env var alone. The CRM keeps its own registry in `crm` (root ADR 0008a: no shared table), the shape of CIS 407:
+
+- **Tables** (crm-064, contract): `crm.setting_definition` (one row per setting, written only by migrations: guard
+  trigger `crm.setting_definition_guard`; bounds, type, scope `platform` / `platform+tenant`, impact, approval
+  `single` / `maker_checker`, emergency `env_override`, cache 30 s) and `crm.setting_value` (append-only, versioned:
+  proposed -> approved | rejected, approved -> superseded; reason >= 20 characters; written by AA staff only, `app.actor`
+  `platform:<staff sub>`; FORCE RLS: platform rows outside any agency context, an agency's own rows only in its context;
+  an agency's rows go with its `crm.tenant_settings` row). The 27 seeded keys are today's effective values
+  (Terraform's where it differed: `crm.rate.public_per_minute` 60).
+- **Reader** (`app/platform_settings/`): `reader.py` is a byte copy of AA-CIS-App `shared/settings/reader.py`
+  (`api/settings_reader.lock.json`); the binding resolves env override (one release, tech lead Q5: the Settings' own env
+  var, `Settings.settings_env()`) -> the agency's approved value (read through the caller's own context connection,
+  `tenant_get`) -> the approved platform value (process snapshot, refreshed every 30 s by the API lifespan) -> the
+  compiled default (`compiled_defaults.json`, generated from the migration seed by `scripts/gen_settings_defaults.py`;
+  CI keeps them equal). A stored value that breaks its definition is refused (default served, ops e-mail
+  `setting_value_refused`).
+- **What reads it**: the rate limits (public, intake, intake form per hour with a per-agency override, member, AI), the
+  agency AI budget ceiling (per-agency override; the gateway enforces min(agency budget, ceiling)), the AI draft output
+  token cap (every route entry of `crm_draft_reply`, read per call), the refund owner-approval threshold, discount
+  limit, price checks, trash and auto-archive defaults of a new agency (and of an agency without a settings row; a new
+  agency's `crm.tenant_settings` row is written from them at provisioning), the ranges an agency owner may pick on the
+  CRM Settings pages (markup 0-300 %, price checks 10-600/min, trash 1-30 d, archive 12-120 mo inside the column CHECKs;
+  `GET /crm/v1/lifecycle` `setting_ranges`, `GET /settings/retail-markup` `markup_max_pct`), the overdue invoice
+  reminder cadence, and the retention dry-run switches.
+- **Range groups** (`ps.RANGE_GROUPS`: trash days, auto-archive months, price checks, each a new-agency default and the
+  `_min` / `_max` an owner may pick): a change or its approval that would break `min <= default <= max` at its scope is
+  422 `range_inconsistent` (the keys of a group share one advisory lock). Backstop in the readers: the default is
+  clamped into the range (`ps.clamped_default`), an inverted range is swapped and logged (`ps.int_range`). An owner's
+  window equal to the agency's current value is accepted even after AA narrowed the range.
+- **Env override vs agency values**: an env override in force wins over every agency's value, so an agency's own value
+  of such a key is refused (409 `env_override_active`) instead of recorded with no effect.
+- **Two keys on deletes** (tech lead Q7): `LIFECYCLE_DRY_RUN`, `JOB_RETENTION_DRY_RUN`, `AUDIT_RETENTION_DRY_RUN` and
+  `PARTNER_ACCOUNT_CLEANUP_DRY_RUN` stay in Terraform as a hard never-delete floor; the admin switch
+  `crm.retention.*_dry_run` (maker-checker) is the second key; a delete runs only while both are off.
+- **Edited on** CIS Platform > Settings, CRM tab, relayed with the staff member's own token to `crm.ops.v1` 1.13:
+  `GET /crm/ops/v1/settings`, `GET /settings/{key}/history[?tenant_id]` (full OPS readers), `POST /settings/{key}/changes`
+  and `POST /settings/changes/{id}/approve|reject` (`crm-platform-admin`); maker-checker self-approval only while
+  `crm.settings.two_person_approval` is off (dev phase, tech lead Q2; a high-impact one e-mails AA ops,
+  `setting_self_approved`). An agency's own value is written in its `platform_tx` (one `setting_change` event in its
+  audit). Routes `app/routers/ops_settings.py`, service `app/platform_settings/service.py`.
+- **Guard**: `tests/unit/test_aa1096_settings_lint.py` (no new policy-looking constant in the governed modules, a
+  baseline that only shrinks, every enforced key read by code).
+- **Every key ships its guide** (the CIS 416 rule): `app/platform_settings/guides.json` holds the operator's guide of
+  each key, `{en|vi: {what, raise, lower, when, example}}` (hand-edited; `crm.setting_definition` has no guide column
+  and the reader never needs it). `/settings` and `/settings/{key}/history` serve it as `guide` in each definition; the
+  CIS page shows it in the "what it controls" line and the Explain panel. A new key adds its guide in the same PR:
+  `tests/unit/test_aa1096_settings_guides.py` fails on a key without a complete EN + VI guide, an orphan guide, an
+  issue id or stage code in operator text, or an English example that does not name the default.
 
 ## CIS membership feed (AA-978, CRM-P1)
 

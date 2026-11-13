@@ -81,6 +81,7 @@ from app.jobs.kinds import (
 )
 from app.jobs.queue import Job
 from app.jobs.worker import Handler, MaintenanceHook, Recurring
+from app.platform_settings import flag
 
 if TYPE_CHECKING:  # pragma: no cover
     from app.audit_export.archive import AuditArchive
@@ -130,17 +131,18 @@ async def heartbeat(_pool: asyncpg.Pool, _job: Job) -> dict[str, Any] | None:
     return None
 
 
-def build_job_retention(dry_run: bool) -> Handler:
+def build_job_retention(dry_run: bool | Callable[[], bool]) -> Handler:
     async def job_retention(pool: asyncpg.Pool, _job: Job) -> dict[str, Any]:
+        dry = flag(dry_run)  # AA-1096 L4: the Terraform floor and the admin switch, read at each run
         counts = await pool.fetchrow(COUNT_SQL, SUCCEEDED_DAYS, CANCELLED_DAYS, FAILED_DAYS)
         result: dict[str, Any] = {
-            "dry_run": dry_run,
+            "dry_run": dry,
             "succeeded_count": counts["s"],
             "cancelled_count": counts["c"],
             "failed_kept_count": counts["f"],
             "deleted_count": 0,
         }
-        if dry_run:
+        if dry:
             return result
         deleted = 0
         for _ in range(MAX_BATCHES):
@@ -160,12 +162,12 @@ def build_job_retention(dry_run: bool) -> Handler:
 
 def build_handlers(
     *,
-    retention_dry_run: bool,
+    retention_dry_run: bool | Callable[[], bool],
     keys: KeyProvider | None = None,
     audit_archive: AuditArchive | None = None,
-    audit_retention_dry_run: bool = True,
+    audit_retention_dry_run: bool | Callable[[], bool] = True,
     documents: DocumentStore | None = None,
-    lifecycle_dry_run: bool = True,
+    lifecycle_dry_run: bool | Callable[[], bool] = True,
     dek_cache_ttl_s: int = 300,
     sender: Sender | None = None,
     fx_provider: str = "synthetic",
@@ -178,7 +180,7 @@ def build_handlers(
     catalog: CatalogConfig | None = None,
     studio_activation: ActivationConfig | None = None,
     messaging_runtime: MessagingRuntime | None = None,
-    partner_account_cleanup_dry_run: bool = True,
+    partner_account_cleanup_dry_run: bool | Callable[[], bool] = True,
     entitlement_feed: FeedConfig | None = None,
     tp_leads: LeadPullConfig | None = None,
 ) -> dict[str, Handler]:

@@ -29,14 +29,16 @@ from typing import Annotated, Any, Literal
 from fastapi import Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from app import platform_settings as ps
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
 from app.llm import agency_ai, ai_drafts
+from app.llm.budget_limits import budget_ceiling
 from app.permissions import Action
 from app.privacy.guardrails import guardrail_billed
 from app.routers.agency import tenant_header
-from app.tenancy import tenant_tx
+from app.tenancy import TenantContext, tenant_tx
 from app.vault import Vault
 from app.vault.provider import require_keys
 
@@ -65,12 +67,13 @@ class DecisionIn(_Body):
     feedback_code: Literal["good", "wrong_facts", "wrong_tone", "not_relevant", "too_long", "other"] | None = None
 
 
-def _limits(request: Request) -> dict[str, Any]:
+async def _limits(request: Request, ctx: TenantContext) -> dict[str, Any]:
+    """AA-1096 L4: the ceiling (this agency's own or the platform's) and the AI rate are admin-editable settings."""
     settings = request.app.state.settings
     return {
-        "budget_max": settings.ai_budget_max_usd,
+        "budget_max": await budget_ceiling(ctx),
         "provider": settings.crm_llm_provider,
-        "rate_per_minute": settings.rate_limit_ai_per_minute,
+        "rate_per_minute": int(ps.get(ps.RATE_AI)),
         "scrub_billed": guardrail_billed(settings),
     }
 
@@ -79,7 +82,7 @@ def _limits(request: Request) -> dict[str, Any]:
 async def get_ai_settings(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.AI_USE) as ctx:
-        return await agency_ai.ai_settings(ctx, **_limits(request))
+        return await agency_ai.ai_settings(ctx, **await _limits(request, ctx))
 
 
 @router.put("/settings/ai")
@@ -88,7 +91,9 @@ async def put_ai_settings(
 ) -> dict[str, Any]:
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.AI_SETTINGS) as ctx:
-        return await agency_ai.update_ai_settings(ctx, body.model_dump(exclude_unset=True), **_limits(request))
+        return await agency_ai.update_ai_settings(
+            ctx, body.model_dump(exclude_unset=True), **await _limits(request, ctx)
+        )
 
 
 @router.post("/trips/{trip_id}/ai/draft")

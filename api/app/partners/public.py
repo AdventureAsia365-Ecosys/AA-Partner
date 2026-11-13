@@ -34,6 +34,7 @@ from typing import Any
 
 import asyncpg
 
+from app import platform_settings as ps
 from app.dispatch import queue as dispatch
 from app.errors import Conflict, Forbidden, Invalid, RateLimited, Unavailable
 from app.intake import slots, stage1
@@ -207,7 +208,7 @@ async def submit(
     raw: Any,
     *,
     origin: str | None,
-    form_quota: Callable[[uuid.UUID], bool] | None = None,
+    form_quota: Callable[..., bool] | None = None,
     quota_window_s: int = 3600,
 ) -> bool:
     """True when stored (False: a repeat or a honeypot hit, answered the same 202). The checks of the public form."""
@@ -233,7 +234,10 @@ async def submit(
         if answers.call_slot is not None and not await slots.is_offered(ctx, answers.call_slot):
             record_drop("invalid", form_id)
             raise Invalid("invalid_submission", "the call slot is no longer free", fields=["call_slot"])
-        if form_quota is not None and not form_quota(form_id):
+        # AA-1096 L4: the agency's own quota (crm.rate.intake_form_per_hour) or the platform's.
+        if form_quota is not None and not form_quota(
+            form_id, limit=await ps.tenant_get(ctx.conn, ps.RATE_INTAKE_FORM, ctx.tenant_id)
+        ):
             record_drop("form_quota", form_id)
             raise RateLimited("form_rate_limited", quota_window_s)
         stored = await store_submission(

@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from app import platform_settings as ps
 from app.errors import NotFound
 from app.lifecycle import erase, offboarding, policy, trash
 from app.main import create_app
@@ -157,6 +158,11 @@ def test_erasure_dry_run_then_real(pools: LocalPools, monkeypatch: pytest.Monkey
         refused = client.post(f"/crm/v1/travelers/{ID}/erasure", json={"dry_run": False}, headers=headers)
         assert refused.status_code == 409 and refused.json()["detail"] == "deletion_dry_run"
     app, headers, conn, ctx = _client(pools, monkeypatch, dry_run=False)
+    # AA-1096 L4: two keys, the Terraform floor (off here) and the admin switch (seeded on): switch it off too
+    real_get = ps.get
+    monkeypatch.setattr(
+        ps, "get", lambda key, tenant_id=None: False if key == ps.LIFECYCLE_DRY_RUN else real_get(key, tenant_id)
+    )
     conn.on("INSERT INTO crm.erasure_request", uuid.UUID(ID))
     with TestClient(app) as client:
         done = client.post(f"/crm/v1/travelers/{ID}/erasure", json={"dry_run": False}, headers=headers).json()

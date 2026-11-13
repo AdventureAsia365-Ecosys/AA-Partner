@@ -3,10 +3,10 @@
 Every model call of the CRM goes through :meth:`LlmGateway.call`, inside the agency's context (``tenant_tx()`` or a
 job's ``system_tx()``), in this order — and any step that fails stops the call (fail closed):
 
-1. **budget**: this month's ``crm.llm_call`` cost of the agency against ``crm.tenant_settings.ai_budget_usd``
-   (default 2 USD); at 100 % the call is refused with ``budget_exhausted`` (R5), then **ai_enabled** (default false):
-   refused with ``ai_disabled``. Both run **before the scrub**, so a used-up budget or AI switched off pays no
-   guardrail units (review AA-964: the scrub used to run first and kept billing ``ApplyGuardrail`` past 100 %).
+1. **budget**: this month's ``crm.llm_call`` cost against the agency's budget (never above its ceiling, AA-1096 L4,
+   :mod:`app.llm.budget_limits`): at 100 % refused ``budget_exhausted`` (R5); then **ai_enabled** (default false):
+   refused ``ai_disabled``. Both run **before the scrub**, so a used-up budget or AI switched off pays no guardrail
+   units (review AA-964: the scrub used to run first and kept billing ``ApplyGuardrail`` past 100 %).
    The check runs under a transaction-scoped advisory lock per agency, taken here and held until the call is logged,
    so two calls at 99 % cannot both pass (calls of one agency are serialised, the scrub included; acceptable for the
    volumes of CRM-33a);
@@ -90,11 +90,12 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Protocol
 
+from app import platform_settings as ps
 from app.aa_llm import budget as llm_budget
 from app.aa_llm import errors as llm_errors
 from app.aa_llm import ledger
 from app.audit import AuditEvent, current_request_id
-from app.llm import app_profile
+from app.llm import app_profile, budget_limits
 from app.llm.profiles import DbProfileSource, RouteEntry, StageProfile, fixed_profile
 from app.privacy.guardrails import GUARD_OPERATION, GUARD_STAGE, GuardCall, collect_guard_calls
 from app.privacy.placeholder_store import SealedMap, check_scrubber_version, seal_map, store_map
@@ -110,7 +111,6 @@ GUARD_PROVIDER = "bedrock_guardrails"
 GUARD_FAMILY = "amazon"  # the maker of Bedrock Guardrails (root ADR 0009 §3: family = maker)
 ALERT_LEVELS = (75, 90, 100)
 ATTEMPT = 1  # the guardrail row and the refusals before any model attempt
-DEFAULT_BUDGET_USD = Decimal("2")
 STUB_PREFIX = "stub"
 MANUAL_REPLY = "manual_reply_needed"
 MAP_STORE_FAILED = "PlaceholderMapStoreError"
@@ -351,7 +351,7 @@ class LlmGateway:
         await ctx.conn.execute(BUDGET_LOCK_SQL, str(ctx.tenant_id))
         settings = await ctx.conn.fetchrow(SETTINGS_SQL)
         enabled = bool(settings["ai_enabled"]) if settings else False
-        budget = Decimal(settings["ai_budget_usd"]) if settings else DEFAULT_BUDGET_USD
+        budget = await budget_limits.agency_budget(ctx, settings)
         spent = await self._month_spend(ctx)
         refused = await self._budget_refusal(ctx, stage, role, first, spent, budget, settings, meta)
         if refused is not None:
@@ -625,7 +625,7 @@ class LlmGateway:
     async def _alert(self, ctx: AnyContext, result: GatewayResult, settings: Any, pct: float | None) -> GatewayResult:
         """R5: raise the month's 75 / 90 / 100 % alert once per level (after the row that crossed it is logged)."""
         if pct is None:
-            budget = Decimal(settings["ai_budget_usd"]) if settings else DEFAULT_BUDGET_USD
+            budget = await budget_limits.agency_budget(ctx, settings)
             spent = await self._month_spend(ctx)
             if spent is None:  # the call is logged; no alert without a readable month (the next call refuses)
                 return result
@@ -802,7 +802,7 @@ def build_gateway(settings: Any, keys: Any | None = None) -> LlmGateway:
             usd_per_mtok_in=settings.crm_llm_usd_per_mtok_in,
             usd_per_mtok_out=settings.crm_llm_usd_per_mtok_out,
             region=settings.crm_llm_region,
-            max_tokens=settings.crm_llm_max_tokens,
+            max_tokens=ps.limit(ps.AI_DRAFT_MAX_TOKENS),  # AA-1096 L4: a setting, read at each call
             role_arn=settings.crm_llm_role_arn,
         )
     real_scrub = bool(settings.scrub_guardrail_id) or provider.name != STUB_PREFIX
@@ -811,6 +811,6 @@ def build_gateway(settings: Any, keys: Any | None = None) -> LlmGateway:
         scrubber,
         provider,
         keys=keys,
-        limiter=FixedWindowLimiter(settings.rate_limit_ai_per_minute),
+        limiter=FixedWindowLimiter(ps.limit(ps.RATE_AI)),
         profiles=DbProfileSource(),
     )

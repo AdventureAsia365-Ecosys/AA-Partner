@@ -132,7 +132,7 @@ async def test_without_a_value_the_default_ceiling_applies(agency: ScriptedConn)
     await booking.price(
         None, ProductCache(client), client, KEY, BODY, agency_quota=lambda _t, c: seen.append(c) or True
     )  # type: ignore[arg-type]
-    assert seen == [booking_settings.DEFAULT_PRICE_PER_AGENCY_MINUTE]
+    assert seen == [booking_settings.default_price_checks()]
 
 
 # ── the route ────────────────────────────────────────────────────────────────────────────────────

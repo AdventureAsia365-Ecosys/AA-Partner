@@ -167,7 +167,7 @@ async def post_submission(
         public_key,
         raw,
         origin=origin,
-        form_quota=lambda form_id: form_limiter.allow(intake.form_bucket(form_id)),
+        form_quota=lambda form_id, limit=None: form_limiter.allow(intake.form_bucket(form_id), limit=limit),
         quota_window_s=int(form_limiter.window_s),
     )
     return JSONResponse({"status": "received"}, status_code=202, headers=NO_STORE)
@@ -344,9 +344,12 @@ async def post_booking(
     keys = require_keys(request.app.state.keys)
     cache, client = _booking_deps(request)
     form_limiter = request.app.state.intake_form_limiter
+
+    def quota(limit: int | None = None) -> bool:
+        return form_limiter.allow(f"book:{public_key}", limit=limit)
+
     out = await public_booking.submit(pool, keys, settings, cache, client, public_key, raw, origin=origin,
-                                      client_ip=address,
-                                      form_quota=lambda: form_limiter.allow(f"book:{public_key}"),
+                                      client_ip=address, form_quota=quota,
                                       quota_window_s=int(form_limiter.window_s))  # fmt: skip
     code = {"created": 201, "received": 202}.get(out["status"], 200)
     return JSONResponse(out, status_code=code, headers={**NO_STORE, "Referrer-Policy": "no-referrer"})

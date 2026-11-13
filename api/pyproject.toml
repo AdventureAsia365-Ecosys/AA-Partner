@@ -8,10 +8,12 @@ requires-python = ">=3.12,<3.13"
 line-length = 120
 target-version = "py312"
 # Byte copies of AA-CIS-App files (CIS style, never edited here; CI "Vendored CIS copies" checks them): the job table
-# template comparator (shared/jobs/) and the multi-issuer verifier (api/core/identity_verifier.py).
+# template comparator (shared/jobs/) and the multi-issuer verifier (api/core/identity_verifier.py); the settings reader
+# (shared/settings/reader.py, AA-1096 L4, pinned by settings_reader.lock.json, tests/unit/test_aa1096_settings_reader_copy.py).
 extend-exclude = [
     "tests/job_template/job_table_shape.py",
     "app/auth/identity_verifier.py",
+    "app/platform_settings/reader.py",
 ]
 
 [tool.ruff.lint]
@@ -35,4 +37,4 @@ markers = ["integration: needs a real PostgreSQL (CRM_TEST_ADMIN_DSN); skipped o
 source = ["app"]
 # Byte copies of AA-CIS-App code, tested there: the multi-issuer verifier and the AI gateway core (AA-642 S8,
 # app/aa_llm; tests/unit/test_aa_llm_copy.py checks the copy here).
-omit = ["app/auth/identity_verifier.py", "app/aa_llm/*", "app/seed/__main__.py"]
+omit = ["app/auth/identity_verifier.py", "app/aa_llm/*", "app/platform_settings/reader.py", "app/seed/__main__.py"]

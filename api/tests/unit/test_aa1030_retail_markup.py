@@ -137,6 +137,7 @@ def test_owner_reads_and_sets_the_markup(pools: LocalPools, monkeypatch: pytest.
     client, h = _client(pools, monkeypatch, "owner", conn)
     with client:
         assert client.get("/crm/v1/settings/retail-markup", headers=h).json() == {
+            "markup_max_pct": "300",  # AA-1096 L4: the platform ceiling the owner may set (a setting)
             "retail_markup_pct": {},
             "kinds": list(retail.KINDS),
         }

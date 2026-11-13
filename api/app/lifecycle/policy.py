@@ -16,14 +16,15 @@ from typing import Any
 
 import asyncpg
 
+from app import platform_settings as ps
 from app.errors import Conflict, Forbidden, Invalid, NotFound
-from app.lifecycle import rules, window
+from app.lifecycle import rules
 from app.tenancy import TenantContext
 
 SETTINGS_SQL = "SELECT trash_days, auto_archive_months FROM crm.tenant_settings WHERE tenant_id = $1"
 UPSERT_SQL = """
 INSERT INTO crm.tenant_settings (tenant_id, trash_days, auto_archive_months)
-VALUES ($1, coalesce($2, 7), coalesce($3, 36))
+VALUES ($1, coalesce($2::smallint, $4::smallint), coalesce($3::smallint, $5::smallint))
 ON CONFLICT (tenant_id) DO UPDATE
    SET trash_days = coalesce($2, crm.tenant_settings.trash_days),
        auto_archive_months = coalesce($3, crm.tenant_settings.auto_archive_months)
@@ -68,23 +69,36 @@ def _owner(ctx: TenantContext, action: str, kind: str, object_id: str | None = N
 
 async def settings(ctx: TenantContext) -> dict[str, int]:
     row = await ctx.conn.fetchrow(SETTINGS_SQL, ctx.tenant_id)
-    return {
-        "trash_days": int(row["trash_days"]) if row else window.DEFAULT_TRASH_DAYS,
-        "auto_archive_months": int(row["auto_archive_months"]) if row else rules.DEFAULT_AUTO_ARCHIVE_MONTHS,
-    }
+    if row is None:  # no settings row yet: the platform defaults, inside the range the platform allows
+        return {
+            "trash_days": ps.clamped_default(ps.TRASH_DAYS_DEFAULT),
+            "auto_archive_months": ps.clamped_default(ps.ARCHIVE_MONTHS_DEFAULT),
+        }
+    return {"trash_days": int(row["trash_days"]), "auto_archive_months": int(row["auto_archive_months"])}
 
 
 async def update_settings(ctx: TenantContext, *, trash_days: int | None, auto_archive_months: int | None) -> dict:
     _owner(ctx, "update", "tenant_settings")
-    if trash_days is not None and not rules.MIN_TRASH_DAYS <= trash_days <= rules.MAX_TRASH_DAYS:
-        raise Invalid("invalid_trash_days", f"{rules.MIN_TRASH_DAYS} to {rules.MAX_TRASH_DAYS} days")
-    if auto_archive_months is not None and not (
-        rules.MIN_AUTO_ARCHIVE_MONTHS <= auto_archive_months <= rules.MAX_AUTO_ARCHIVE_MONTHS
-    ):
-        raise Invalid(
-            "invalid_auto_archive_months", f"{rules.MIN_AUTO_ARCHIVE_MONTHS} to {rules.MAX_AUTO_ARCHIVE_MONTHS} months"
-        )
-    row = await ctx.conn.fetchrow(UPSERT_SQL, ctx.tenant_id, trash_days, auto_archive_months)
+    # AA-1096 L4: the range the platform allows today (admin-editable), inside the column CHECKs. A value equal to the
+    # agency's current one passes even when AA narrowed the range since: the form sends both windows, and the owner
+    # must not be blocked on the one they did not touch.
+    ranges = rules.owner_ranges()
+    current = await settings(ctx)
+    lo, hi = ranges["trash_days"]
+    if trash_days is not None and trash_days != current["trash_days"] and not lo <= trash_days <= hi:
+        raise Invalid("invalid_trash_days", f"{lo} to {hi} days")
+    lo, hi = ranges["auto_archive_months"]
+    months = auto_archive_months
+    if months is not None and months != current["auto_archive_months"] and not lo <= months <= hi:
+        raise Invalid("invalid_auto_archive_months", f"{lo} to {hi} months")
+    row = await ctx.conn.fetchrow(
+        UPSERT_SQL,
+        ctx.tenant_id,
+        trash_days,
+        auto_archive_months,
+        ps.clamped_default(ps.TRASH_DAYS_DEFAULT),
+        ps.clamped_default(ps.ARCHIVE_MONTHS_DEFAULT),
+    )
     changed = tuple(f for f, v in (("trash_days", trash_days), ("auto_archive_months", auto_archive_months)) if v)
     ctx.audit("update", "allowed", "tenant_settings", fields=changed)
     return {"trash_days": int(row["trash_days"]), "auto_archive_months": int(row["auto_archive_months"])}

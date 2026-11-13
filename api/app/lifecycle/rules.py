@@ -9,11 +9,14 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
+from app import platform_settings as ps
 from app.pipeline import LOST_REASONS
 
-MIN_TRASH_DAYS, MAX_TRASH_DAYS = 1, 30
-DEFAULT_AUTO_ARCHIVE_MONTHS = 36
-MIN_AUTO_ARCHIVE_MONTHS, MAX_AUTO_ARCHIVE_MONTHS = 12, 120
+# The hard bounds of the two agency windows (the crm-010 column CHECKs; engineering, not policy). The platform range an
+# owner may pick inside them, and the default of a new agency, are admin-editable settings (AA-1096 L4, crm-064:
+# crm.agency_defaults.trash_days[_min|_max], crm.agency_defaults.auto_archive_months[_min|_max]): see owner_ranges().
+TRASH_DAYS_BOUNDS = (1, 30)
+AUTO_ARCHIVE_MONTHS_BOUNDS = (12, 120)
 SUBMISSION_REDACT_DAYS = 90  # crm-005 form_submission.redact_after default
 LLM_CALL_DAYS = 180  # crm-010 crm.lifecycle_purge_expired
 MEMBERSHIP_INBOX_DAYS = 90  # crm-018 crm.lifecycle_purge_expired (DM-7, AA-978)
@@ -21,6 +24,15 @@ BACKUP_PURGE_DAYS = 30  # V1: erased data leaves backups and DEK copies within 3
 EXPORT_FILE_DAYS = 7  # AA-CIS-Infra crm_storage.tf rule exports-7d
 # DM-7 signed-agreement (claim-period) exception: trip end + 3 years (crm-025 keep_until, AA-955; counsel confirms).
 SIGNED_AGREEMENT_MONTHS = 36
+
+
+def owner_ranges() -> dict[str, tuple[int, int]]:
+    """The ranges an agency owner may pick today (platform settings, inside the hard bounds)."""
+    return {
+        "trash_days": ps.int_range(ps.TRASH_DAYS_MIN, ps.TRASH_DAYS_MAX),
+        "auto_archive_months": ps.int_range(ps.ARCHIVE_MONTHS_MIN, ps.ARCHIVE_MONTHS_MAX),
+    }
+
 
 ARCHIVE_REASONS = ("agent", "client_request", "auto_inactive", "duplicate", "other")
 HOLD_SCOPES = ("tenant", "trip", "traveler")

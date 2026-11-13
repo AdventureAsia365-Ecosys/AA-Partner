@@ -5,10 +5,11 @@ Run by the hourly trip date rule (:mod:`app.stages_job`, actor ``job:crm_stage_d
 agency's own timezone. An issued invoice still ``open`` with money due and its due date passed gives the trip owner a
 bell item ``invoice.overdue`` and one open task ``invoice_overdue`` per trip (the agent decides how to chase the client:
 the CRM never writes to the client by itself). Schedule: the first reminder the day after the due date, then every
-:data:`EVERY_DAYS` days, at most :data:`MAX_REMINDERS` per invoice (``crm.invoice.last_reminded_at`` /
-``reminder_count``). Not reminded: a claimed invoice (the client says they paid: the verify task runs), an invoice
-waiting for its AA hold to be placed again, a paid / void one. A deposit whose AA hold ran out says so
-(``pay_window_closed``): the agent re-quotes rather than chases.
+``crm.payments.invoice_reminder_every_days`` days (3), at most ``crm.payments.invoice_reminder_max`` (5) per invoice
+(admin-editable platform settings, AA-1096 L4, crm-064; :func:`every_days`, :func:`max_reminders`;
+``crm.invoice.last_reminded_at`` / ``reminder_count``). Not reminded: a claimed invoice (the client says they paid:
+the verify task runs), an invoice waiting for its AA hold to be placed again, a paid / void one. A deposit whose AA
+hold ran out says so (``pay_window_closed``): the agent re-quotes rather than chases.
 
 The task closes (``done``) once the trip has no invoice left to chase (:data:`STILL_DUE`: issued, ``open`` or
 ``payment_claimed``, not waiting for its AA hold again, past its due date, money due): at once when an invoice leaves
@@ -25,12 +26,11 @@ import datetime as dt
 import uuid
 from typing import Any
 
+from app import platform_settings as ps
 from app.payments import claims
 from app.proposals import events
 from app.tenancy import AnyContext
 
-EVERY_DAYS = 3
-MAX_REMINDERS = 5
 TASK = "invoice_overdue"
 BATCH = 200
 
@@ -89,11 +89,21 @@ RETURNING k.task_id
 """
 
 
+def every_days() -> int:
+    """Days between two reminders of one overdue invoice (platform setting)."""
+    return int(ps.get(ps.INVOICE_REMINDER_EVERY_DAYS))
+
+
+def max_reminders() -> int:
+    """Reminders one overdue invoice gives at most (platform setting; 0 stops them)."""
+    return int(ps.get(ps.INVOICE_REMINDER_MAX))
+
+
 async def overdue(ctx: AnyContext, today: dt.date, now: dt.datetime | None = None) -> int:
     """One pass (inside the date rule's transaction): the reminders due now; returns how many went to the bell."""
     now = now or dt.datetime.now(dt.UTC)
     sent = 0
-    for row in await ctx.conn.fetch(DUE_SQL, today, MAX_REMINDERS, EVERY_DAYS, BATCH):
+    for row in await ctx.conn.fetch(DUE_SQL, today, max_reminders(), every_days(), BATCH):
         count = await ctx.conn.fetchval(REMINDED_SQL, row["invoice_id"])
         await ctx.conn.execute(TASK_SQL, row["trip_id"], TASK)
         detail: dict[str, Any] = {

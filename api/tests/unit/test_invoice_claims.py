@@ -465,7 +465,7 @@ async def test_overdue_reminders() -> None:
     conn.on("RETURNING reminder_count", 2)
     assert await reminders.overdue(system_ctx(conn), today, NOW) == 1
     args = conn.sql("FOR UPDATE OF i SKIP LOCKED")[0]
-    assert args == (today, reminders.MAX_REMINDERS, reminders.EVERY_DAYS, reminders.BATCH)
+    assert args == (today, reminders.max_reminders(), reminders.every_days(), reminders.BATCH)
     event = conn.sql("INSERT INTO crm.metric_event")[0]
     assert event[2] == "invoice.overdue"
     assert '"days":4' in event[3] and '"reminder":2' in event[3] and '"pay_window_closed":true' in event[3]

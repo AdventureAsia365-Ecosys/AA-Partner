@@ -502,7 +502,7 @@ async def test_overdue_reminders_agent_first(app_pool: asyncpg.Pool) -> None:
                    "WHERE invoice_id = $1", invoice_id)  # fmt: skip
         await _remind(app_pool, s, due + dt.timedelta(days=30))
     count = await _raw(app_pool, s, "SELECT reminder_count FROM crm.invoice WHERE invoice_id = $1", invoice_id)
-    assert count[0]["reminder_count"] == reminders.MAX_REMINDERS
+    assert count[0]["reminder_count"] == reminders.max_reminders()
     # A claimed invoice is not chased: the verify task runs instead.
     other = await _text_accepted(app_pool)
     claimed = await _deposit_invoice(app_pool, other)

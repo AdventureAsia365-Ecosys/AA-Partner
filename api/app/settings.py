@@ -206,7 +206,7 @@ import json
 import os
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from decimal import Decimal, InvalidOperation
 
 from app.cis.m2m import CredentialsError, M2mCredentials, parse_credentials
@@ -259,6 +259,20 @@ _REGION = re.compile(r"^[a-z]{2}(-[a-z]+)+-[0-9]$")
 
 
 FX_PROVIDERS = frozenset({"synthetic", "live"})
+
+
+# AA-1096 L4: env var -> Settings field of each value that moved to the admin-editable settings (crm-064 seed column
+# env_override). The env var stays one release as an emergency override (tech lead S279 Q5); the code default of the
+# field is no longer the value in force (the setting's default is: today's effective value).
+SETTINGS_ENV_OVERRIDES: dict[str, str] = {
+    "AI_BUDGET_MAX_USD": "ai_budget_max_usd",
+    "CRM_LLM_MAX_TOKENS": "crm_llm_max_tokens",
+    "RATE_LIMIT_PUBLIC_PER_MINUTE": "rate_limit_public_per_minute",
+    "RATE_LIMIT_INTAKE_PER_MINUTE": "rate_limit_intake_per_minute",
+    "RATE_LIMIT_INTAKE_FORM_PER_HOUR": "rate_limit_intake_form_per_hour",
+    "RATE_LIMIT_MEMBER_PER_MINUTE": "rate_limit_member_per_minute",
+    "RATE_LIMIT_AI_PER_MINUTE": "rate_limit_ai_per_minute",
+}
 
 
 class SettingsError(ValueError):
@@ -338,6 +352,21 @@ class Settings:
     portal_otp_dev_echo: bool = False
     kms_seal_key_id: str = ""
     messaging_hook_base: str = ""
+    # AA-1096 L4: the names of SETTINGS_ENV_OVERRIDES the environment set (load_settings); see settings_env().
+    settings_env_set: frozenset[str] = frozenset()
+
+    def settings_env(self) -> dict[str, str]:
+        """AA-1096 L4 (tech lead S279 Q5): the emergency overrides of the admin-editable settings (crm-064), one
+        release. An env var of :data:`SETTINGS_ENV_OVERRIDES` overrides its setting when the environment set it, or
+        when this Settings was built with a value other than the code default (a test app): ``{env name: value}``.
+        :func:`app.platform_settings.configure_env` hands it to the reader."""
+        defaults = {f.name: f.default for f in fields(self)}
+        out: dict[str, str] = {}
+        for name, attr in SETTINGS_ENV_OVERRIDES.items():
+            value = getattr(self, attr)
+            if name in self.settings_env_set or value != defaults[attr]:
+                out[name] = str(value)
+        return out
 
     def messaging_hooks_origin(self) -> str:
         """AA-958: the origin of the agencies' Twilio webhook URLs ("" = not configured)."""
@@ -743,4 +772,5 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         mail_oauth=_mail_oauth(env.get("MAIL_OAUTH")),
         portal_otp_dev_echo=_flag(env.get("PORTAL_OTP_DEV_ECHO"), False, "PORTAL_OTP_DEV_ECHO"),
         kms_seal_key_id=_text(env, "KMS_SEAL_KEY_ID"),
+        settings_env_set=frozenset(name for name in SETTINGS_ENV_OVERRIDES if (env.get(name) or "").strip()),
     )

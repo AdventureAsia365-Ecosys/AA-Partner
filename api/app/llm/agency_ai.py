@@ -33,8 +33,8 @@ from typing import Any
 
 from app.errors import Conflict, Invalid, NotFound
 from app.llm import ai_drafts
+from app.llm.budget_limits import agency_budget, default_budget_usd
 from app.llm.gateway import (
-    DEFAULT_BUDGET_USD,
     MONTH_SPEND_SQL,
     CallMeta,
     LlmGateway,
@@ -99,7 +99,7 @@ async def ai_settings(
 ) -> dict:
     row = await ctx.conn.fetchrow(SETTINGS_SQL)
     enabled = bool(row["ai_enabled"]) if row else False
-    budget = Decimal(row["ai_budget_usd"]) if row else DEFAULT_BUDGET_USD
+    budget = await agency_budget(ctx, row)  # AA-1096 L4: never above the agency's ceiling
     spent = Decimal(await ctx.conn.fetchval(MONTH_SPEND_SQL) or 0)
     month = month_start()
     raised = row["ai_alert_pct"] if row and row["ai_alert_month"] == month else None
@@ -133,7 +133,7 @@ async def update_ai_settings(
 ) -> dict:
     row = await ctx.conn.fetchrow(SETTINGS_SQL)
     enabled = bool(row["ai_enabled"]) if row else False
-    budget = Decimal(row["ai_budget_usd"]) if row else DEFAULT_BUDGET_USD
+    budget = Decimal(row["ai_budget_usd"]) if row else default_budget_usd()
     if changes.get("ai_enabled") is not None:
         enabled = bool(changes["ai_enabled"])
     if changes.get("ai_budget_usd") is not None:

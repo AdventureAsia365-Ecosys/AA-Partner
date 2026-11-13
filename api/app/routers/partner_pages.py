@@ -80,7 +80,7 @@ async def post_intake(
         token,
         raw,
         origin=origin,
-        form_quota=lambda form_id: form_limiter.allow(intake_public.form_bucket(form_id)),
+        form_quota=lambda form_id, limit=None: form_limiter.allow(intake_public.form_bucket(form_id), limit=limit),
         quota_window_s=int(form_limiter.window_s),
     )
     return _json({"status": "received"}, 202)

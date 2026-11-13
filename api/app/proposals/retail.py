@@ -27,11 +27,11 @@ from typing import Any
 
 import asyncpg
 
+from app import platform_settings as ps
 from app.errors import Invalid
 from app.tenancy import AnyContext, TenantContext
 
 KINDS = ("trip_plan", "hotel_room", "transfer", "guide", "activity", "entrance", "meal")
-MAX_PCT = Decimal("300")
 CENT = Decimal("0.01")
 HUNDRED = Decimal("100")
 BASIS_MARKUP = "agency_markup"
@@ -77,12 +77,18 @@ def _out(values: dict[str, Decimal]) -> dict[str, str]:
 
 
 async def read(ctx: AnyContext) -> dict[str, Any]:
-    return {"retail_markup_pct": _out(await markups(ctx)), "kinds": list(KINDS)}
+    return {
+        "retail_markup_pct": _out(await markups(ctx)),
+        "kinds": list(KINDS),
+        "markup_max_pct": format(ps.decimal(ps.MARKUP_MAX), "f"),
+    }
 
 
 async def update(ctx: TenantContext, changes: dict[str, Any]) -> dict[str, Any]:
     """Merge ``{kind: percent | None}`` into the agency's markups (None removes the kind)."""
     current = await markups(ctx)
+    # AA-1096 L4: the ceiling an owner may set is a platform setting (crm.agency_defaults.markup_max_pct, 0 to 300 %).
+    ceiling = ps.decimal(ps.MARKUP_MAX)
     for kind, value in changes.items():
         if kind not in KINDS:
             raise Invalid("invalid_product_type", f"one of {', '.join(KINDS)}")
@@ -90,8 +96,8 @@ async def update(ctx: TenantContext, changes: dict[str, Any]) -> dict[str, Any]:
             current.pop(kind, None)
             continue
         number = _decimal(value)
-        if number is None or number < 0 or number > MAX_PCT or number != number.quantize(CENT):
-            raise Invalid("invalid_markup", "a percentage from 0 to 300 with at most 2 decimals")
+        if number is None or number < 0 or number > ceiling or number != number.quantize(CENT):
+            raise Invalid("invalid_markup", f"a percentage from 0 to {ceiling:f} with at most 2 decimals")
         current[kind] = number
     stored = {k: float(v) if v != v.to_integral_value() else int(v) for k, v in current.items()}
     try:

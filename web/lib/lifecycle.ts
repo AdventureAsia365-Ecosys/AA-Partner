@@ -62,9 +62,27 @@ export interface Offboarding {
   verified_at?: string | null;
 }
 
+/** AA-1096 L4: the range of each window the owner may pick, set by AA on the platform (an API before it omits it). */
+export interface SettingRanges {
+  trash_days: { min: number; max: number };
+  auto_archive_months: { min: number; max: number };
+}
+
+/** The ranges of ``view`` or, from an API before AA-1096 L4, the column bounds. */
+export function settingRanges(view: { setting_ranges?: SettingRanges }): SettingRanges {
+  return view.setting_ranges ?? { trash_days: { min: 1, max: 30 }, auto_archive_months: { min: 12, max: 120 } };
+}
+
+/** The bounds of a window's number input: the platform range, widened to the agency's current value when AA narrowed
+ *  the range since (the API accepts an unchanged value, so the form still saves the other window). */
+export function inputRange(range: { min: number; max: number }, current: number): { min: number; max: number } {
+  return { min: Math.min(range.min, current), max: Math.max(range.max, current) };
+}
+
 export interface LifecycleView {
   rules: Rule[];
   settings: LifecycleSettings;
+  setting_ranges?: SettingRanges;
   lost_reasons: string[];
   archive_reasons: string[];
   hold_reasons: string[];

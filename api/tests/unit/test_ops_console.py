@@ -147,7 +147,7 @@ async def test_summary_usage_entitlements_requests_and_jobs_are_audited_reads(mo
     conn = agency_conn("offboarded", has_owner=True)
     conn.on("SELECT (SELECT count(*) FROM crm.member", 4)
     conn.on("FROM crm.tenant_entitlement WHERE deleted_at IS NULL", None)
-    conn.on("SELECT ai_budget_usd FROM crm.tenant_settings", Decimal("5.00"))
+    conn.on("SELECT ai_budget_usd FROM crm.tenant_settings", {"ai_budget_usd": Decimal("5.00")})
     conn.on("count(DISTINCT actor_ref)", 2)
     conn.on("SELECT max(at) FROM crm.audit_event", NOW)
     conn.on("sum(size_bytes)", 2048)
@@ -158,7 +158,7 @@ async def test_summary_usage_entitlements_requests_and_jobs_are_audited_reads(mo
     usage = await console.agency_usage(conn, TENANT, staff_sub=STAFF)  # type: ignore[arg-type]
     assert usage["seats_used"] == 4 and usage["seats_allowed"] == 10 and usage["active_members_30d"] == 2
     assert usage["storage_bytes"] == 2048 and usage["inbound_mail_30d"] == 0 and usage["failed_jobs_24h"] == 1
-    assert usage["ai_cost_usd_month"] == "0.1235" and usage["ai_budget_usd_month"] == "5.0000"
+    assert usage["ai_cost_usd_month"] == "0.1235" and usage["ai_budget_usd_month"] == "2.0000"  # AA-1096: ceiling 2
     assert usage["last_activity_at"] == NOW.isoformat()
     assert usage["period_start"].endswith("-01") and usage["period_end"] > usage["period_start"]
     conn.on("SELECT ai_budget_usd FROM crm.tenant_settings", None)

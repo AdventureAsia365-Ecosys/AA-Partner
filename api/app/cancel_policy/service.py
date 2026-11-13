@@ -489,7 +489,7 @@ async def _needs_owner(ctx: TenantContext, a: Assessment) -> bool:
 
     _base, in_base = await payments.base_amount(ctx, lowered, a.currency)
     threshold = await ctx.conn.fetchval(THRESHOLD_SQL)
-    threshold = payments.DEFAULT_THRESHOLD if threshold is None else Decimal(threshold)
+    threshold = payments.default_threshold() if threshold is None else Decimal(threshold)
     return in_base is None or in_base > threshold
 
 

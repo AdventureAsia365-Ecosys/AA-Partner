@@ -1,0 +1,10 @@
+{
+  "why": "AA-1096 lane L4 (S279 thresholds audit section 5.2): the settings reader is one library, owned by AA-CIS-App, vendored here as a byte copy",
+  "canonical": {
+    "repo": "AdventureAsia365-Ecosys/AA-CIS-App",
+    "path": "shared/settings/reader.py"
+  },
+  "ref": "74654932776c2a5cb71f40d075f7552b7559dcd0",
+  "dest": "api/app/platform_settings/reader.py",
+  "sha256": "88fe45e7f9be1e270787eb11a869b908dd84ddab72b238d7df5bf2618974a6d5"
+}

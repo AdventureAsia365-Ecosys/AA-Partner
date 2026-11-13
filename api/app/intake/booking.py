@@ -59,13 +59,14 @@ from typing import Any
 
 import asyncpg
 
+from app import platform_settings as ps
 from app.booking import contract
 from app.booking.client import BookingClient, BookingRefusal, BookingUnavailable
 from app.booking.products import ProductCache
 from app.errors import Conflict, Forbidden, Invalid, NotFound, RateLimited, ServiceError, Unavailable
 from app.esign import terms as esign_terms
 from app.intake import process, stage1
-from app.intake.booking_settings import DEFAULT_PRICE_PER_AGENCY_MINUTE
+from app.intake.booking_settings import default_price_checks
 from app.intake.public import origin_allowed, record_drop
 from app.payments import schedule_plan
 from app.proposals import aa_options, builder, pricing, retail, rules
@@ -435,7 +436,7 @@ async def widget(
         tenant_id = ctx.tenant_id
     if cache is None or client is None:
         raise Unavailable("booking_unavailable", "bookings cannot be checked right now; try again in a minute")
-    ceiling = int(agency.get("public_price_per_minute") or DEFAULT_PRICE_PER_AGENCY_MINUTE)
+    ceiling = int(agency.get("public_price_per_minute") or default_price_checks())
 
     def charge() -> None:
         if agency_quota is not None and not agency_quota(tenant_id, ceiling):
@@ -493,7 +494,7 @@ async def price(
         bands = await pricing.settings(ctx)
         rctx = await _rctx(ctx)
         tenant_id = ctx.tenant_id
-    ceiling = agency.get("public_price_per_minute") or DEFAULT_PRICE_PER_AGENCY_MINUTE
+    ceiling = agency.get("public_price_per_minute") or default_price_checks()
     if agency_quota is not None and not agency_quota(tenant_id, int(ceiling)):
         raise RateLimited("agency_rate_limited", quota_window_s)
     if cache is None or client is None:
@@ -578,7 +579,7 @@ async def submit(
     *,
     origin: str | None,
     client_ip: str,
-    form_quota: Callable[[], bool] | None = None,
+    form_quota: Callable[..., bool] | None = None,
     quota_window_s: int = 3600,
 ) -> dict[str, Any]:
     if settings.intake_origin_check and not settings.intake_page_origins:
@@ -593,7 +594,10 @@ async def submit(
         answers = read_booking(raw)
         # AA-1092: the agency's hourly ceiling (the inquiry form's per-form quota, its own bucket), after the checks a
         # bot fails: each booking makes a client, a trip and a mailed client link from the agency's mailbox.
-        if form_quota is not None and not form_quota():
+        # AA-1096 L4: the agency's own quota (crm.rate.intake_form_per_hour) or the platform's.
+        if form_quota is not None and not form_quota(
+            limit=await ps.tenant_get(ctx.conn, ps.RATE_INTAKE_FORM, ctx.tenant_id)
+        ):
             record_drop("form_quota", form.intake_form_id)
             raise RateLimited("form_rate_limited", quota_window_s)
         started = await _start(ctx, form, Vault(keys, ctx), answers, client_ip=client_ip)

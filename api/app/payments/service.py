@@ -32,6 +32,7 @@ import uuid
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
+from app import platform_settings as ps
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.invoices import service as invoices
 from app.ledger import fx
@@ -127,7 +128,14 @@ SELECT CASE WHEN bool_or(base_amount IS NULL OR base_currency IS DISTINCT FROM $
   FROM crm.refund_request
  WHERE invoice_id = $1 AND refund_id <> $2 AND status IN ('approved', 'executed') AND deleted_at IS NULL
 """
-DEFAULT_THRESHOLD = Decimal("1000")
+
+
+def default_threshold() -> Decimal:
+    """The refund / cancellation-fee owner-approval threshold of an agency with no settings row (AA-1096 L4:
+    ``crm.payments.refund_owner_threshold_default``, admin-editable; a new agency starts with it)."""
+    return ps.decimal(ps.REFUND_THRESHOLD_DEFAULT)
+
+
 ACCOUNTS_SQL = """
 SELECT account_id, provider, status, display_name, instructions, external_account_id, default_currency,
        charges_enabled, connected_at, disconnected_at
@@ -412,7 +420,7 @@ async def decide_refund(ctx: TenantContext, refund_id: uuid.UUID, *, approve: bo
         object_kind="refund_request",
         object_id=str(refund_id),
         amount=judged,
-        threshold=DEFAULT_THRESHOLD if threshold is None else threshold,
+        threshold=default_threshold() if threshold is None else threshold,
     )
     status = "approved" if approve else "rejected"
     await ctx.conn.execute(DECIDE_SQL, refund_id, status, f"member:{ctx.member_id}", text,

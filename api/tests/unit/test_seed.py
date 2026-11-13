@@ -121,6 +121,7 @@ class SeedDb:
         self.conn.on("set_config('app.tenant_id'", self._set)
         self.conn.on("SELECT display_name, default_locale, is_synthetic", lambda tid: self.existing.get(tid))
         self.conn.on("INSERT INTO crm.tenant", self._insert)
+        self.conn.on("INSERT INTO crm.tenant_settings", None)  # AA-1096 L4: a new agency's platform defaults
         self.conn.on("INSERT INTO crm.member", lambda *a: uuid.uuid4())
         self.conn.on("SELECT count(*) FROM crm.member", 1)
         # AA-936: the synthetic inquiry form (none yet, then created).
@@ -188,7 +189,7 @@ async def test_apply_creates_then_reports_unchanged_and_the_name_round_trips() -
         "members_added": 2,
         "members_updated": 0,
     }
-    assert all(args[3] is True for args in db.conn.sql("INSERT INTO crm.tenant"))
+    assert all(args[3] is True for args in db.conn.sql("INSERT INTO crm.tenant ("))
     out2 = io.StringIO()
     assert await seed.run_plan(seed.build_plan(["--apply"], settings()), db.conn, "dev", out2) == 0
     assert {r["action"] for r in lines(out2)[:-1]} == {"unchanged"}
@@ -299,4 +300,4 @@ async def test_load_test_apply_creates_synthetic_agencies_with_the_member() -> N
     rows = lines(out)
     assert [r["agency"] for r in rows[:-1]] == ["lt-01", "lt-02"]
     assert rows[-1]["created"] == 2 and rows[-1]["members_added"] == 2
-    assert all(args[3] is True for args in db.conn.sql("INSERT INTO crm.tenant"))
+    assert all(args[3] is True for args in db.conn.sql("INSERT INTO crm.tenant ("))

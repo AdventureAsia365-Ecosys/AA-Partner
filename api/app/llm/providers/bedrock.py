@@ -28,6 +28,7 @@ import datetime as dt
 import logging
 import re
 import threading
+from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
 
@@ -83,7 +84,7 @@ class BedrockConverseProvider:
         catalog: tuple[Decimal, Decimal] | None = None,
         family: str | None = None,
         region: str = "us-west-1",
-        max_tokens: int = 800,
+        max_tokens: int | Callable[[], int] = 800,
         timeout_s: float = 30.0,
         role_arn: str = "",
         client: Any | None = None,
@@ -182,12 +183,18 @@ class BedrockConverseProvider:
         )
         return pricing.quote(self.model, usage, override, catalog=catalog, on_estimate=_log_estimate)
 
+    def output_cap(self) -> int:
+        """The output token cap of this call: a number, or (AA-1096 L4) the admin-editable setting
+        ``crm.ai.draft_reply_max_tokens`` read at each call (the gateway passes ``platform_settings.limit``)."""
+        cap = self.max_tokens
+        return int(cap()) if callable(cap) else int(cap)
+
     # ── the call ────────────────────────────────────────────────────────────────────────────────
     def _request(self, prompt: str, system: str | None) -> dict[str, Any]:
         request: dict[str, Any] = {
             "modelId": self.model,
             "messages": [{"role": "user", "content": [{"text": prompt}]}],
-            "inferenceConfig": {"maxTokens": self.max_tokens, "temperature": DEFAULT_TEMPERATURE},
+            "inferenceConfig": {"maxTokens": self.output_cap(), "temperature": DEFAULT_TEMPERATURE},
         }
         if system:
             request["system"] = [{"text": system}]
