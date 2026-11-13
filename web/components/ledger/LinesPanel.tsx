@@ -192,6 +192,7 @@ export function LinesPanel({
           <span>{fmt(tr("aa.heldUntil"), { date: formatDate(aa.hold_expires_at.slice(0, 10), locale) })}</span>
         )}
         {aa.no_longer_offered && <Badge tone="danger">{tr("aa.noLongerOffered")}</Badge>}
+        {line.status === "confirmed" && <span data-testid="aa-shown-hint">{tr("ledger.aaShownHint")}</span>}
       </span>
     );
   }
@@ -300,7 +301,6 @@ export function LinesPanel({
         <Button size="sm" variant="ghost" disabled={!hydrated || busy} onClick={() => run("PATCH", `lines/${line.booking_line_id}`, { visible_to_travelers: !on })}>
           {tr(on ? "ledger.hide" : "ledger.show")}
         </Button>
-        {line.supplier_kind === "aa" && <span style={{ fontSize: 11.5, color: K.muted, whiteSpace: "normal" }}>{tr("ledger.aaShownHint")}</span>}
       </span>
     );
   }
