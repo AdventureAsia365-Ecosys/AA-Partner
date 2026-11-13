@@ -9,6 +9,11 @@ fetches, :data:`MAX_RECHECKS` re-checks); an unfinished pass keeps its cursor an
 2. at the end of a pass, every cached tour the pass did not see is asked again: 410 -> ``retired`` (AA lines of it
    read "no longer offered"), 404 with a reason -> ``paused``, 404 without one -> ``paused`` / ``not_in_catalog``.
 
+AA-1093 part 1 (root plan D9: no new CIS feed): a state write that retires a tour (served or paused -> retired) or
+serves a retired one again queues one ``crm_tour_retired_fanout`` row in its own transaction
+(:mod:`app.catalog.retired`), which flags every agency trip that uses the tour; ``paused`` alone does nothing (root
+ADR 0015 decision 5). Counted ``fanout_retired_count`` / ``fanout_reinstated_count``.
+
 The contract's ``updated_since`` is not a full change cursor (AA-976 notes), so the sync always runs full passes
 comparing ``content_hash``. AA-951: after the tour pass (finished or partial) the AA-authored content (prep packs,
 starter templates) is refreshed too (:mod:`app.catalog.content`); its failure is reported, never fatal. A CIS failure
@@ -52,18 +57,24 @@ def backoff_seconds(failures: int) -> int:
 
 
 async def _store_answer(pool: asyncpg.Pool, source_id: str, ans: TourAnswer, counts: Counter[str]) -> None:
+    made: str | None = None
     if ans.state == "served" and ans.body is not None:
-        await store.upsert(pool, summary(ans.body), ans.etag, ans.body)
+        made = await store.upsert(pool, summary(ans.body), ans.etag, ans.body)
         counts["fetched"] += 1
     elif ans.state == "not_modified":
         await store.touch(pool, [source_id])
         counts["unchanged"] += 1
     elif ans.state == "retired":
-        await store.set_state(pool, source_id, "retired", ans.reason)
+        made = await store.set_state(pool, source_id, "retired", ans.reason)
         counts["retired"] += 1
     else:  # paused, or no longer known at all
-        await store.set_state(pool, source_id, "paused", ans.reason or "not_in_catalog")
+        made = await store.set_state(pool, source_id, "paused", ans.reason or "not_in_catalog")
         counts["paused"] += 1
+    if made == "unkeyed":
+        log.warning("crm_tour_retired_fanout_unkeyed reason=source_id_not_uuid")
+        counts["fanout_unkeyed"] += 1
+    elif made is not None:
+        counts[f"fanout_{made}"] += 1  # AA-1093: one crm_tour_retired_fanout row queued with the state write
 
 
 class CatalogSync:

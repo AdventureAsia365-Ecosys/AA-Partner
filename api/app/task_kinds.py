@@ -26,6 +26,7 @@ TASK_KINDS: frozenset[str] = frozenset(
         "aa_incident",
         "aa_line_declined",
         "aa_lines_failed",
+        "aa_tour_discontinued",
         "add_commission",
         "call_scheduled",
         "call_slot_taken",

@@ -110,6 +110,10 @@ TP_LEAD_PULL = "crm_tp_lead_pull"
 # AA-1070: one server-side PDF of a trip (confirmation, invoice, proposal, voucher; app.documents.pdf_job), queued by
 # a member's request. Not deploy-gate exempt (exists only while queued / running, seconds).
 PDF_RENDER = "crm_pdf_render"
+# AA-1093 part 1: one AA tour's retirement or reinstatement fanned out to every agency (app.catalog.retired), queued by
+# crm_catalog_sync in the transaction of the state write, one row per transition. Not deploy-gate exempt (exists only
+# while queued / running, seconds).
+TOUR_RETIRED_FANOUT = "crm_tour_retired_fanout"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -160,6 +164,7 @@ EXPECTED_SECONDS: dict[str, int] = {
     PILOT_BACKUP: 60,
     TP_LEAD_PULL: 120,
     PDF_RENDER: 60,
+    TOUR_RETIRED_FANOUT: 120,
 }
 
 

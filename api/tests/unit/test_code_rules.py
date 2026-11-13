@@ -120,6 +120,8 @@ SYSTEM_MODULES = frozenset(
         "app/workflows/digest.py",
         # AA-1038: the TripPlanner lead pull (one lead per transaction, actor job:crm_tp_lead_pull).
         "app/tripplanner/leads.py",
+        # AA-1093: an AA tour's retirement fanned out (one agency per transaction, actor job:crm_tour_retired_fanout).
+        "app/catalog/retired.py",
     }
 )
 # AA-1072: the "Book now" routes of the public tour page decide the agency by the same form key.

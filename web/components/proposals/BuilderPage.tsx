@@ -288,6 +288,12 @@ export function BuilderPage({
         {o.aa?.below_from_price && <Badge tone="warning">{tr("aa.belowFrom")}</Badge>}
         {o.aa?.quote_expired && <Badge tone="warning">{tr("builder.check.aa_prices_stale")}</Badge>}
         {o.aa?.unpriced && <Badge tone="danger">{tr("builder.option.unpriced")}</Badge>}
+        {/* AA-1093: Adventure Asia no longer offers the tour (the option itself is never changed for it). */}
+        {o.aa?.no_longer_offered && (
+          <span data-testid="builder-option-aa-tour-retired" style={{ display: "contents" }}>
+            <Badge tone="warning">{tr("tourRetired.badge")}</Badge>
+          </span>
+        )}
         {canMoney && o.net_amount !== undefined && (
           <span style={{ color: K.muted }} data-testid="builder-option-net">
             {fmt(tr("builder.option.net"), { amount: money(o.net_amount) })}

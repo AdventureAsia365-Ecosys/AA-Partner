@@ -118,12 +118,31 @@ export interface Card {
   passport_issues?: number;
   /** AA-1070 (crm-13): AA cancelled a departure the trip is on and the agent has not settled it yet. */
   aa_cancelled?: boolean;
+  /** AA-1093: the trip uses an AA tour Adventure Asia no longer offers (an open flag). */
+  aa_tour_retired?: boolean;
   /** AA-960: the trip's tags (agency and system). */
   tags?: TagChip[];
 }
 
 /** AA-1070 (crm-13): the pipeline's issue filters. */
-export type BoardIssue = "passport" | "aa_cancelled";
+export type BoardIssue = "passport" | "aa_cancelled" | "aa_tour_retired";
+const BOARD_ISSUES: readonly BoardIssue[] = ["passport", "aa_cancelled", "aa_tour_retired"];
+
+/** AA-1093: one AA tour of the trip that Adventure Asia no longer offers, with the trip's items on it per kind. */
+export interface TourRetiredView {
+  source_id: string;
+  title: string | null;
+  raised_at: string;
+  items: Record<TourRetiredKind, number>;
+}
+
+export type TourRetiredKind = "open_option" | "held_line" | "quoted_line" | "confirmed_line";
+const TOUR_RETIRED_KINDS: readonly TourRetiredKind[] = ["open_option", "held_line", "quoted_line", "confirmed_line"];
+
+/** AA-1093: the item lines of one retired tour on the trip card, in a fixed order, the kinds with no item left out. */
+export function tourRetiredLines(tour: TourRetiredView): { kind: TourRetiredKind; n: number }[] {
+  return TOUR_RETIRED_KINDS.map((kind) => ({ kind, n: tour.items?.[kind] ?? 0 })).filter((x) => x.n > 0);
+}
 
 export interface ClosedCard extends Omit<Card, "stage"> {
   stage: ClosedStage;
@@ -241,6 +260,8 @@ export interface TripView {
   cancellation?: Cancellation | null;
   /** AA-1070 (crm-13): AA cancelled a departure the trip is on (absent on an older API). */
   aa_cancel?: AaCancelView;
+  /** AA-1093: AA tours of the trip Adventure Asia no longer offers (absent on an older API). */
+  aa_tour_retired?: TourRetiredView[];
 }
 
 /** S262 (C12 §2.7): a trip that is cancelled, or whose cancellation waits for AA, bills the client no more: its
@@ -494,7 +515,7 @@ export function boardHref(filter: { waiting_on?: WaitingOn | null; owner?: "anyo
   const q = new URLSearchParams();
   if (filter.waiting_on) q.set("waiting_on", filter.waiting_on);
   if (filter.owner === "me") q.set("owner", "me");
-  if (filter.issue === "passport" || filter.issue === "aa_cancelled") q.set("issue", filter.issue);
+  if (filter.issue && BOARD_ISSUES.includes(filter.issue)) q.set("issue", filter.issue);
   const s = q.toString();
   return s ? `/pipeline?${s}` : "/pipeline";
 }
@@ -510,7 +531,8 @@ export function parseFilter(params: Record<string, string | string[] | undefined
     owner: params.owner === "me" ? "me" : "anyone",
     // AA-1070: only the booked / pre-departure / travelling trips with a passport issue, or (crm-13) only the trips on
     // a departure AA cancelled.
-    issue: params.issue === "passport" || params.issue === "aa_cancelled" ? params.issue : null,
+    // AA-1093: or only the trips that use an AA tour Adventure Asia no longer offers.
+    issue: typeof params.issue === "string" && (BOARD_ISSUES as readonly string[]).includes(params.issue) ? (params.issue as BoardIssue) : null,
   };
 }
 
