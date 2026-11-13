@@ -46,12 +46,16 @@ The projection (:func:`projection`, one :func:`app.tenancy.entitlement_feed_tx` 
   (absent = no write, the agency keeps its current marker: a CIS before contract 1.0's field, or a partial snapshot,
   must never clear the pilot's protections), also under the adoption guard (it is the tenant's, not the
   plan's). Only this actor may write it (``crm.guard_pilot_marker``, CRM04). The clean-up paths skip the marked agency
-  and ``crm_pilot_backup`` exports it every night (``app.lifecycle.pilot``).
+  and ``crm_pilot_backup`` exports it every night (``app.lifecycle.pilot``);
+- the real marker (AA-1086 G9): an agency that is or was the pilot (the snapshot or the stored marker says so) gets
+  ``crm.tenant.is_synthetic`` false, one way only: Dev creates every agency synthetic, the pilot included, and the
+  E2E identities and the console's test-agency delete read that flag, so clearing the pilot marker at the end of the
+  pilot must not make the former pilot's real data a test agency again (audit ``tenant_real_marker``).
 
 Each applied change writes the agency's audit (``entitlements_projected`` / ``tenant_lock`` / ``tenant_unlock`` /
-``tenant_pilot_marker``, reason ``cis_account``). A database refusal of one agency (CRMxx, an integrity error) is
-counted as rejected and the run goes on; any other database error stops the run before the cursor moves. Payloads and
-results are counts only.
+``tenant_pilot_marker``, reason ``cis_account``; ``tenant_real_marker``, reason ``cis_pilot``). A database refusal of
+one agency (CRMxx, an integrity error) is counted as rejected and the run goes on; any other database error stops the
+run before the cursor moves. Payloads and results are counts only.
 """
 
 from __future__ import annotations
@@ -114,8 +118,10 @@ ON CONFLICT (tenant_id) DO UPDATE
    SET plan = EXCLUDED.plan, member_limit = EXCLUDED.member_limit, allowed_features = EXCLUDED.allowed_features,
        projected_at = EXCLUDED.projected_at, tp_crm_leads = EXCLUDED.tp_crm_leads
 """
-TENANT_LOCK_SQL = "SELECT status, lock_source, is_pilot FROM crm.tenant WHERE tenant_id = $1 FOR UPDATE"
+TENANT_LOCK_SQL = "SELECT status, lock_source, is_pilot, is_synthetic FROM crm.tenant WHERE tenant_id = $1 FOR UPDATE"
 SET_PILOT_SQL = "UPDATE crm.tenant SET is_pilot = $2 WHERE tenant_id = $1"
+# AA-1086 G9: one way only, never back to true (the seeder and the console refuse to flip it, app.agencies).
+SET_REAL_SQL = "UPDATE crm.tenant SET is_synthetic = false WHERE tenant_id = $1 AND is_synthetic"
 SET_LOCK_SQL = "UPDATE crm.tenant SET status = 'locked', lock_source = 'cis_tenant' WHERE tenant_id = $1"
 UNLOCK_SQL = "UPDATE crm.tenant SET status = 'active' WHERE tenant_id = $1"
 DEFAULT_MEMBER_LIMIT = 10
@@ -351,7 +357,16 @@ async def _apply_in(ctx: SystemContext, wanted: Projection, counts: RunCounts) -
             "tenant_pilot_marker", "allowed", "tenant", str(ctx.tenant_id), fields=("is_pilot",), reason="cis_account"
         )
         counts.pilot_changed += 1
-    if changed or change or pilot:
+    # AA-1086 G9: an agency CIS ever marked the pilot holds a real agency's data, so it stops being synthetic for good
+    # (CIS agrees: the pilot's is_canary is false and stays false once the pilot ends). Ending the pilot clears is_pilot
+    # only; the E2E identities (A10b-1, A10c) and the console's test-agency delete read is_synthetic and stay out.
+    real = bool(tenant["is_synthetic"]) and (bool(tenant["is_pilot"]) or wanted.is_pilot is True)
+    if real:
+        await ctx.conn.execute(SET_REAL_SQL, ctx.tenant_id)
+        ctx.audit(
+            "tenant_real_marker", "allowed", "tenant", str(ctx.tenant_id), fields=("is_synthetic",), reason="cis_pilot"
+        )
+    if changed or change or pilot or real:
         return "applied"
     return "awaiting_cis" if awaiting else "unchanged"
 

@@ -7,7 +7,9 @@ from CIS by ``crm_entitlement_pull``, crm-044) now counts as "not synthetic" for
 - every staff context refuses the pilot agency to the E2E identity with 403 ``e2e_synthetic_only`` and the lists leave
   it out, while a normal staff member still reaches it;
 - the studio invitation relay's fact (:func:`app.tenancy.synthetic_agency`, A10b-1) is false for the pilot;
-- once the marker is cleared (CIS ends the pilot, the feed follows) the agency is an ordinary synthetic one again.
+- the first projection that sees the marker also clears ``is_synthetic`` (one way), so once CIS ends the pilot and
+  the feed clears the marker, the former pilot (still the real agency's data) stays out of reach of the E2E
+  identities and of the console's test-agency delete.
 """
 
 from __future__ import annotations
@@ -54,7 +56,7 @@ async def test_e2e_identities_never_reach_the_pilot_agency(app_pool: asyncpg.Poo
 
     await _mark(app_pool, pilot_agency, True)
     try:
-        assert await _flags(admin, pilot_agency) == (True, True)  # still marked synthetic, as every Dev agency
+        assert await _flags(admin, pilot_agency) == (False, True)  # the feed marked it real with the pilot marker
         for attempt in (
             lambda: sessions.start_support(app_pool, e2e, pilot_agency, ticket_ref="SUP-1086"),
             lambda: sessions.my_sessions(app_pool, e2e, pilot_agency),
@@ -77,9 +79,16 @@ async def test_e2e_identities_never_reach_the_pilot_agency(app_pool: asyncpg.Poo
     finally:
         await _mark(app_pool, pilot_agency, False)
 
-    # The pilot ended (CIS cleared the marker, the feed followed): a synthetic agency again for the E2E identities.
-    assert await _flags(admin, pilot_agency) == (True, False)
-    assert await synthetic_agency(app_pool, pilot_agency) is True
-    assert (await sessions.my_sessions(app_pool, e2e, pilot_agency))["sessions"] == []
+    # The pilot ended (CIS cleared the marker, the feed followed): the agency stays real, so the E2E identities and
+    # the console's test-agency delete still leave it alone; a normal staff member is unchanged.
+    assert await _flags(admin, pilot_agency) == (False, False)
+    assert await synthetic_agency(app_pool, pilot_agency) is False
+    with pytest.raises(Forbidden) as refused:
+        await sessions.my_sessions(app_pool, e2e, pilot_agency)
+    assert refused.value.code == "e2e_synthetic_only"
     picker = {i["tenant_id"] for i in (await sessions.breakglass_agencies(app_pool, e2e))["items"]}
-    assert str(pilot_agency) in picker
+    assert str(pilot_agency) not in picker
+    assert (await sessions.my_sessions(app_pool, staff("crm-support"), pilot_agency))["sessions"] == []
+    # A re-projection never sets it back to synthetic.
+    await _mark(app_pool, pilot_agency, False)
+    assert await _flags(admin, pilot_agency) == (False, False)
