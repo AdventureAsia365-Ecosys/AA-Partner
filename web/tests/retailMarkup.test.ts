@@ -18,6 +18,12 @@ describe("retail markup", () => {
     expect(markupInput("ten")).toBeUndefined();
   });
 
+  it("AA-1096 L4: the ceiling is the platform's (from the API), 300 when an older API omits it", () => {
+    expect(markupInput("150", 150)).toBe(150);
+    expect(markupInput("151", 150)).toBeUndefined();
+    expect(markupInput("200")).toBe(200);
+  });
+
   it("lets the settings routes through the BFF and nothing else", () => {
     expect(matchBff("GET", "settings/retail-markup")).not.toBeNull();
     expect(matchBff("PUT", "settings/retail-markup")).not.toBeNull();
