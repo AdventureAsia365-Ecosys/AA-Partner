@@ -78,8 +78,9 @@
 -- crm.setting_definition holds no agency rows: its only honest policy would be USING (true), which the RLS catalogue
 -- guard refuses (rule t). It stays a platform table without RLS (like crm.llm_stage_profile; listed in the platform
 -- tables of tests/integration/test_crm002_tenancy.py), and the file ships as contract: Infra Migration Apply applies it
--- once every job table is idle (root ADR 0017a), before the code PR (MIG-4). Not re-runnable by itself (plain CREATE
--- FUNCTION / POLICY / TRIGGER); DB Migrate never applies a registered key again and the test conftest skips it.
+-- once every job table is idle (root ADR 0017a), before the code PR (MIG-4). Re-runnable as a no-op like every contract
+-- file (tests/integration/test_crm_migrations.py test_reapply_is_a_no_op): IF NOT EXISTS tables and indexes, CREATE OR
+-- REPLACE functions and triggers, DROP POLICY IF EXISTS + CREATE POLICY, the seed ON CONFLICT (key) DO NOTHING.
 --
 -- Rollback (a forward crm- file, after the code that reads it is reverted): DROP TABLE crm.setting_value,
 -- crm.setting_definition; DROP FUNCTION crm.setting_value_guard(),
@@ -188,7 +189,7 @@ CREATE INDEX IF NOT EXISTS setting_value_approved_idx
 CREATE INDEX IF NOT EXISTS setting_value_tenant_idx
     ON crm.setting_value (tenant_id) WHERE tenant_id IS NOT NULL;
 
-CREATE FUNCTION crm.setting_value_guard() RETURNS trigger
+CREATE OR REPLACE FUNCTION crm.setting_value_guard() RETURNS trigger
     LANGUAGE plpgsql AS $fn$
 DECLARE
     d crm.setting_definition%ROWTYPE;
@@ -361,10 +362,10 @@ BEGIN
 END
 $fn$;
 
-CREATE TRIGGER setting_value_guard_trg
+CREATE OR REPLACE TRIGGER setting_value_guard_trg
     BEFORE INSERT OR UPDATE OR DELETE ON crm.setting_value
     FOR EACH ROW EXECUTE FUNCTION crm.setting_value_guard();
-CREATE TRIGGER setting_value_guard_truncate_trg
+CREATE OR REPLACE TRIGGER setting_value_guard_truncate_trg
     BEFORE TRUNCATE ON crm.setting_value
     FOR EACH STATEMENT EXECUTE FUNCTION crm.setting_value_guard();
 
@@ -372,7 +373,7 @@ CREATE TRIGGER setting_value_guard_truncate_trg
 -- new crm table (the trigger holds even after a later blanket GRANT); without this guard the app role (or a script on its DSN) could
 -- widen a bound, switch approval to single or drop evidence_required, and the value trigger reads its bounds from this
 -- table. Only a member of crm_owner (DB Migrate runs crm/ files as crm_owner) may write a definition.
-CREATE FUNCTION crm.setting_definition_guard() RETURNS trigger
+CREATE OR REPLACE FUNCTION crm.setting_definition_guard() RETURNS trigger
     LANGUAGE plpgsql AS $fn$
 BEGIN
     IF NOT pg_has_role(current_user, 'crm_owner', 'MEMBER') THEN
@@ -383,16 +384,17 @@ BEGIN
 END
 $fn$;
 
-CREATE TRIGGER setting_definition_guard_trg
+CREATE OR REPLACE TRIGGER setting_definition_guard_trg
     BEFORE INSERT OR UPDATE OR DELETE ON crm.setting_definition
     FOR EACH ROW EXECUTE FUNCTION crm.setting_definition_guard();
-CREATE TRIGGER setting_definition_guard_truncate_trg
+CREATE OR REPLACE TRIGGER setting_definition_guard_truncate_trg
     BEFORE TRUNCATE ON crm.setting_definition
     FOR EACH STATEMENT EXECUTE FUNCTION crm.setting_definition_guard();
 
 -- RLS: a platform row only outside an agency context, an agency row only inside its own agency's context.
 ALTER TABLE crm.setting_value ENABLE ROW LEVEL SECURITY;
 ALTER TABLE crm.setting_value FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS setting_value_scope ON crm.setting_value;
 CREATE POLICY setting_value_scope ON crm.setting_value
     TO crm_owner, crm_app
     USING ((tenant_id IS NULL AND NULLIF(current_setting('app.tenant_id', true), '') IS NULL)
@@ -445,7 +447,8 @@ SELECT s.key, s.app, s.area, s.label, s.description, s.value_type, s.unit, s.min
 ]$seed$::jsonb) AS s (key text, app text, area text, label text, description text, value_type text, unit text,
                       min_value numeric, max_value numeric, allowed_values jsonb, default_value jsonb, scope_kind text,
                       impact text, approval text, evidence_required boolean, env_override text, cache_s integer,
-                      enforced boolean);
+                      enforced boolean)
+ON CONFLICT (key) DO NOTHING;
 -- settings-seed:end
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
