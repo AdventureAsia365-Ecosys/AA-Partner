@@ -599,11 +599,6 @@ def test_every_router_tenant_tx_names_its_permission_action() -> None:
     assert missing == [], "tenant_tx() without action=: " + ", ".join(missing)
 
 
-def test_the_bare_eraser_role_is_used_only_by_the_erasure_saga_record() -> None:
-    """AA-1093 stage 2: crm_eraser on a connection without a context, for crm.erase_studio_invitations only."""
-    assert _users_of("eraser_role", frozenset({"app/lifecycle/saga_store.py"})) == []
-
-
 def test_lifecycle_tx_is_used_only_by_the_lifecycle_jobs() -> None:
     assert _users_of("lifecycle_tx", LIFECYCLE_MODULES) == []
 

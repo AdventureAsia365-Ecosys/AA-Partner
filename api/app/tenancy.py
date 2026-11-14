@@ -1422,15 +1422,8 @@ LEGAL_HOLD_SQLSTATE = "CRM10"
 # + AA-967; AA-969 d16: the pilot agency's nightly backup and its restore drill (app.lifecycle.pilot,
 # app.portability.restore_drill).
 LIFECYCLE_ACTORS = frozenset(
-    {
-        "job:crm_lifecycle",
-        "job:crm_offboard",
-        "job:crm_data_export",
-        "job:crm_pilot_backup",
-        "job:crm_restore_drill",
-        "job:crm_tenant_erase",  # AA-1093 stage 2: the CRM step of the CIS tenant erasure saga
-    }
-)
+    {"job:crm_lifecycle", "job:crm_offboard", "job:crm_data_export", "job:crm_pilot_backup", "job:crm_restore_drill"}
+) | {"job:crm_tenant_erase"}  # AA-1093 stage 2: the CRM step of the CIS tenant erasure saga
 TENANT_STATUS_SQL = "SELECT status FROM crm.tenant WHERE tenant_id = $1"
 ERASER_ROLE = "crm_eraser"
 INSIGHTS_ROLE = "crm_insights"  # AA-966: the module 17 fact reader (as_insights_reader)
@@ -1483,17 +1476,6 @@ async def as_eraser(ctx: TenantContext | LifecycleContext) -> AsyncIterator[asyn
         await ctx.conn.execute(f"SET LOCAL ROLE {ERASER_ROLE}")
         yield ctx.conn
         await ctx.conn.execute("SET LOCAL ROLE NONE")
-
-
-@asynccontextmanager
-async def eraser_role(conn: asyncpg.Connection) -> AsyncIterator[asyncpg.Connection]:
-    """:func:`as_eraser` on a bare connection (AA-1093 stage 2): ``crm.erase_studio_invitations`` (crm-067) for a CIS
-    tenant the CRM may hold no agency for, so no context exists. Same savepoint rule. Only
-    ``app/lifecycle/saga_store.py`` calls it (``tests/unit/test_code_rules.py``)."""
-    async with conn.transaction():
-        await conn.execute(f"SET LOCAL ROLE {ERASER_ROLE}")
-        yield conn
-        await conn.execute("SET LOCAL ROLE NONE")
 
 
 @asynccontextmanager

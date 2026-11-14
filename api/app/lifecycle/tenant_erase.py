@@ -178,13 +178,7 @@ class TenantErase:
             for _ in range(MAX_PAGES):
                 items, next_cursor = await self._page(cursor)
                 counts["pages"] += 1
-                for item in items:
-                    req = rules.parse_request(item)
-                    if isinstance(req, str):
-                        counts["rejected"] += 1
-                        log.warning("crm_tenant_erase_request_rejected reason=%s", req)
-                    elif await saga_store.upsert_request(pool, req):
-                        counts["stored"] += 1
+                await self._keep(pool, items, counts)
                 if next_cursor and next_cursor != cursor:
                     if not await saga_store.advance(pool, cursor, next_cursor):
                         return "ok"  # another run moved it first
@@ -198,6 +192,16 @@ class TenantErase:
             log.warning("crm_tenant_erase_pull_failed error=%s failures=%d", exc.error_class, failures)
             return "error"
         return "ok"
+
+    async def _keep(self, pool: asyncpg.Pool, items: list[Any], counts: dict[str, int]) -> None:
+        """Each item checked against the contract and stored (the newest state wins); a malformed one is counted."""
+        for item in items:
+            req = rules.parse_request(item)
+            if isinstance(req, str):
+                counts["rejected"] += 1
+                log.warning("crm_tenant_erase_request_rejected reason=%s", req)
+            elif await saga_store.upsert_request(pool, req):
+                counts["stored"] += 1
 
     async def _page(self, cursor: str | None) -> tuple[list[Any], str]:
         config = self._config

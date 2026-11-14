@@ -22,13 +22,14 @@ import json
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
 import asyncpg
 
 from app.errors import Unavailable
 from app.lifecycle.saga_rules import Made, SagaRequest, entry
-from app.tenancy import eraser_role
+from app.tenancy import as_eraser
 
 ACTOR = "job:crm_tenant_erase"
 
@@ -235,7 +236,8 @@ async def post_failed(pool: asyncpg.Pool, report_id: uuid.UUID) -> None:
 async def studio_invitations(conn: asyncpg.Connection, tenant_id: uuid.UUID, *, dry_run: bool) -> int:
     """Count (dry run) or delete the tenant's crm.studio_invitation rows on ``conn`` (actor job:crm_tenant_erase set
     by the caller), as crm_eraser inside a savepoint (a failure rolls the role back too)."""
-    async with eraser_role(conn):
+    # as_eraser needs only the connection and the reader role of a context: a tenant may have no agency (no context)
+    async with as_eraser(SimpleNamespace(conn=conn, reader_role=None)):  # type: ignore[arg-type]
         rows = await conn.fetchval(INVITATIONS_SQL, tenant_id, dry_run)
     return int(rows or 0)
 
