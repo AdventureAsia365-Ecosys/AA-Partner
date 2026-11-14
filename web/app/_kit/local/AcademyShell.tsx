@@ -56,7 +56,7 @@ export function AcademyShell({
   /** The learner's display name from the learning API (GET /learn/v1/me), or null. */
   learnerName: string | null;
   testLearner: boolean;
-  children: React.ReactNode;
+  children?: React.ReactNode;
 }) {
   const pathname = usePathname() ?? "/academy";
   const active = activeSection(pathname);

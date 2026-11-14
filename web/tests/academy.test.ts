@@ -287,14 +287,16 @@ describe("academy BFF", () => {
   });
 
   it("forwards an allowed call to CIS /learn/v1 with the academy token, only the lang query", async () => {
-    const upstream = vi.fn(async (_url: string, _init: RequestInit) => Response.json({ id: "F3-01" }));
+    const upstream = vi.fn<typeof fetch>(async () => Response.json({ id: "F3-01" }));
     vi.stubGlobal("fetch", upstream);
     const res = await bffGet(req(`${ACADEMY}/academy/bff/lessons/F3-01?lang=vi&x=1`, { cookie: academyCookie(), headers: PAGE_CALL }), params("lessons", "F3-01"));
     expect(res.status).toBe(200);
     const [url, init] = upstream.mock.calls[0];
     expect(url).toBe("https://cis-api.example.test/learn/v1/lessons/F3-01?lang=vi");
-    expect(new Headers(init.headers).get("authorization")).toBe(`Bearer ${academyToken()}`.slice(0, 7) + new Headers(init.headers).get("authorization")!.slice(7));
-    expect(new Headers(init.headers).get("authorization")!.startsWith("Bearer ")).toBe(true);
+    const auth = new Headers(init?.headers).get("authorization")!;
+    expect(auth.startsWith("Bearer ")).toBe(true);
+    const claims = JSON.parse(Buffer.from(auth.slice(7).split(".")[1], "base64url").toString("utf8"));
+    expect(claims.client_id).toBe("academyclient789");
   });
 
   it("passes the learning API's Problem body and status through", async () => {

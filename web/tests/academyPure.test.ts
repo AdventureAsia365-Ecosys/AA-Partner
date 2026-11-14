@@ -55,7 +55,7 @@ describe("verify page limit", () => {
 
   it("calls CIS without a token, learns the limit, passes 404 / 429 / errors on, never calls for a bad code", async () => {
     const l = new VisitorLimiter();
-    const ok = vi.fn(async (_url: string, _init?: RequestInit) =>
+    const ok = vi.fn<typeof fetch>(async () =>
       Response.json(
         { path_id: "fundamentals", path_title: "Fundamentals", holder_display_name: "Test Learner", issued_at: "2026-11-01T00:00:00Z", expires_at: null, status: "valid", module_versions: [] },
         { headers: { "X-RateLimit-Limit": "30" } },
@@ -244,7 +244,7 @@ describe("page components", () => {
 
   it("the shell shows the academy, its three sections and the academy sign-out", () => {
     const html = renderToStaticMarkup(
-      createElement(AcademyShell, { dict: MESSAGES.en, locale: "en-AU", environment: "dev", learnerName: "Test Learner", testLearner: true, children: "x" }),
+      createElement(AcademyShell, { dict: MESSAGES.en, locale: "en-AU", environment: "dev", learnerName: "Test Learner", testLearner: true }, "x"),
     );
     expect(html).toContain("AA Academy");
     expect(html).toContain('action="/academy/auth/sign-out"');
