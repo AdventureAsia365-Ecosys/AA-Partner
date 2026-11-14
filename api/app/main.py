@@ -44,6 +44,7 @@ from app.cis.membership_feed import FeedConfig
 from app.db import Database
 from app.documents.store import DocumentStore, MemoryDocumentStore, S3DocumentStore
 from app.errors import ServiceError, service_error_handler
+from app.esign.pades import build_pades
 from app.esign.seal import build_sealer
 from app.jobs import handlers as job_handlers
 from app.jobs.metrics import JobMetricsSampler
@@ -295,6 +296,8 @@ def create_app(
     # AA-955 (CRM-25): the platform seal of signed envelopes (KMS alias/crm-<env>/seal; the HMAC stub on dev / test /
     # local without KMS_SEAL_KEY_ID; None on stg / prod without it: signing answers 503 esign_not_configured).
     app.state.sealer = build_sealer(settings)
+    # AA-1012: PAdES-B-B signed PDFs of signed envelopes (the KMS seal key + the environment's certificate chain).
+    app.state.pades = build_pades(settings, app.state.sealer)
     app.state.public_limiter = FixedWindowLimiter(ps.limit(ps.RATE_PUBLIC))
     # AA-958: the Twilio webhooks count only unknown hook ids per address (app.routers.public), never genuine callbacks.
     app.state.hook_miss_limiter = FixedWindowLimiter(HOOK_MISSES_PER_MINUTE)

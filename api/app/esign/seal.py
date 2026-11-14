@@ -9,8 +9,8 @@ Provider-neutral: a :class:`Sealer` signs the SHA-256 of the rendered envelope a
   party; it exists so dev / test / local sign end to end without the seal key. Refused on stg / prod
   (:func:`build_sealer` answers None there, and signing is 503 ``esign_not_configured``).
 
-A seal is not a PAdES signature yet: the envelope is canonical UTF-8 text, not a PDF. PAdES (a PDF with the CMS
-signature embedded) is the follow-up the implementation notes describe; the same key signs it.
+A seal is not a PAdES signature: the envelope is canonical UTF-8 text, not a PDF. The PAdES-B-B PDF of a signed
+envelope (AA-1012, :mod:`app.esign.pades`) is signed with the same key through :meth:`KmsSealer.seal`.
 """
 
 from __future__ import annotations
@@ -122,6 +122,12 @@ class KmsSealer:
                 return False
             raise
         return bool(out.get("SignatureValid"))
+
+    async def public_key(self) -> bytes:
+        """The seal key's public key (DER SubjectPublicKeyInfo, ``kms:GetPublicKey``; AA-1012 checks the PDF signing
+        certificate against it). Unavailable when KMS cannot answer."""
+        out = await self._call("get_public_key", KeyId=self.key_id)
+        return bytes(out["PublicKey"])
 
 
 def _kms_error_code(exc: BaseException | None) -> str | None:

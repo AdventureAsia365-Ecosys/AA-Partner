@@ -52,6 +52,7 @@ from app.settings import Settings
 from app.tenancy import system_tx, tenant_tx
 from app.travellers import service as travellers
 from app.vault import Vault
+from tests.integration.conftest import SET_AGENCY_TZ
 from tests.integration.test_crm005_intake import _agency, _keys
 from tests.unit.mail_fakes import FakeProvider
 
@@ -90,6 +91,7 @@ async def _setup(pool: asyncpg.Pool) -> dict[str, Any]:
                 )
             )["traveler_id"]
         )
+        await ctx.conn.execute(SET_AGENCY_TZ)  # the cancel policy counts days before start in the agency zone
         await ctx.conn.execute(
             "INSERT INTO crm.trip (trip_id, title, owner_member_id, start_date, end_date, intake_completeness) "
             "VALUES ($1, 'Laos 10 nights', $2, current_date + 90, current_date + 100, "
