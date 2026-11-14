@@ -114,6 +114,11 @@ PDF_RENDER = "crm_pdf_render"
 # crm_catalog_sync in the transaction of the state write, one row per transition. Not deploy-gate exempt (exists only
 # while queued / running, seconds).
 TOUR_RETIRED_FANOUT = "crm_tour_retired_fanout"
+# AA-1093 stage 2 (decision D2): the CRM step of the CIS tenant offboarding erasure saga (app.lifecycle.tenant_erase):
+# pull the CIS erasure requests, then DRY RUN / apply / verify the agency's erase and report each to CIS. Queued due-now
+# once per 2-minute slot by a maintenance hook. Not deploy-gate or DB Migrate exempt: a row exists only while due or
+# running (an apply holds one transaction for the agency).
+TENANT_ERASE = "crm_tenant_erase"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -165,6 +170,7 @@ EXPECTED_SECONDS: dict[str, int] = {
     TP_LEAD_PULL: 120,
     PDF_RENDER: 60,
     TOUR_RETIRED_FANOUT: 120,
+    TENANT_ERASE: 600,
 }
 
 

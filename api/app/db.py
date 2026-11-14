@@ -99,6 +99,8 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     "crm-063",  # AA-1093 part 1: crm.tour_retired_flag, the fan-out of a retired AA tour (expand, MIG-4 chain)
     "crm-064",  # AA-1096 L4: crm.setting_definition / setting_value, the admin-editable settings (contract, MIG-4)
     "crm-065",  # AA-1086: a member shows or hides a confirmed AA line (guard_booking_line; contract, MIG-4)
+    "crm-066",  # AA-1093 stage 2: the CIS tenant erasure saga's record (three platform tables; expand, MIG-4)
+    "crm-067",  # AA-1093 stage 2: crm.erase_studio_invitations (contract, MIG-4)
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 
