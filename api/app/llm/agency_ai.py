@@ -32,7 +32,7 @@ from decimal import Decimal
 from typing import Any
 
 from app.errors import Conflict, Invalid, NotFound
-from app.llm import ai_drafts
+from app.llm import ai_drafts, voices
 from app.llm.budget_limits import agency_budget, default_budget_usd
 from app.llm.gateway import (
     MONTH_SPEND_SQL,
@@ -48,6 +48,7 @@ from app.tenancy import TenantContext
 DRAFT_STAGE = "crm_draft_reply"
 DRAFT_ROLE = "writer"
 PROMPT_VERSION = "crm-draft-1"
+VOICE_PROMPT_VERSION = "crm-draft-voice-1"  # AA-965 R41: the draft prompt with a voice block
 DRAFT_KINDS = ("reply", "follow_up")
 MAX_TEXT = 8000
 MAX_INSTRUCTION = 500
@@ -178,6 +179,7 @@ async def draft(
     kind: str,
     text: str,
     instruction: str | None = None,
+    voice_profile_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     if kind not in DRAFT_KINDS:
         raise Invalid("invalid_kind", ", ".join(DRAFT_KINDS))
@@ -189,6 +191,8 @@ async def draft(
     row = await ctx.conn.fetchrow(SETTINGS_SQL)
     if not (row and row["ai_enabled"]):
         raise Conflict("ai_disabled", "AI drafts are off for this agency (Settings > AI)")
+    # AA-965 R41: a voice adds fixed sentences of ours to the system block (codes only, never member text).
+    voice = voices.voice_instruction(await voices.for_draft(ctx, voice_profile_id))
     known = await known_values_for_trip(ctx, vault, trip_id)
     result = await gateway.call(
         ctx,
@@ -196,8 +200,8 @@ async def draft(
         role=DRAFT_ROLE,
         prompt=build_prompt(kind, text, instruction),
         known=known,
-        system=SYSTEM_PROMPT,
-        meta=CallMeta(prompt_version=PROMPT_VERSION),
+        system=f"{SYSTEM_PROMPT}\n\n{voice}" if voice else SYSTEM_PROMPT,
+        meta=CallMeta(prompt_version=VOICE_PROMPT_VERSION if voice else PROMPT_VERSION),
     )
     out_text = result.text
     draft_id = None
@@ -214,8 +218,9 @@ async def draft(
                     trip_id,
                     kind=kind,
                     llm_call_id=result.llm_call_id,
-                    prompt_version=PROMPT_VERSION,
+                    prompt_version=VOICE_PROMPT_VERSION if voice else PROMPT_VERSION,
                     output=out_text,
+                    voice_profile_id=voice_profile_id,
                 )
         except Exception as exc:  # noqa: BLE001 — class only, never the text
             log.warning("crm ai draft: draft row not stored (%s), call stays logged", type(exc).__name__)
@@ -235,6 +240,7 @@ async def draft(
         "budget_alert": result.budget_alert,
         "truncated": result.truncated,
         "approval_required": True,
+        "voice_profile_id": str(voice_profile_id) if voice_profile_id else None,
         "drafted_at": drafted_at,
         # AA-1040 (EU AI Act Art. 50(2)): the machine-readable mark of the model's text; None when there is no text.
         "ai": ai_mark(drafted_at) if result.outcome == "ok" and out_text is not None else None,

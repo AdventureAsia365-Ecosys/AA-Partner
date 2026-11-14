@@ -195,6 +195,20 @@ class CallMeta:
     job_id: uuid.UUID | None = None
 
 
+# AA-965: the output token cap of each stage that has its own (admin-editable settings, read at each call; the
+# gateway holds the cap, never the call site). crm_draft_reply keeps crm.ai.draft_reply_max_tokens on the provider.
+STAGE_OUTPUT_CAPS = {
+    "crm_supplier_confirm": ps.AI_SUPPLIER_CONFIRM_MAX_TOKENS,
+    "crm_notes_options": ps.AI_NOTES_OPTIONS_MAX_TOKENS,
+}
+
+
+def stage_output_cap(stage: str) -> int | None:
+    """The output token cap of ``stage`` when it has its own setting, else None (the provider's own cap)."""
+    key = STAGE_OUTPUT_CAPS.get(stage)
+    return int(ps.get(key)) if key else None
+
+
 def prompt_hash(prompt: str, system: str | None = None) -> str:
     """sha256 hex of what the model is sent (the fixed system text and the scrubbed prompt): never the prompt."""
     return hashlib.sha256(f"{system or ''}\x00{prompt}".encode()).hexdigest()
@@ -257,7 +271,7 @@ class StubProvider:
     def for_route(self, entry: RouteEntry) -> StubProvider:
         return StubProvider(entry.model, entry.family, entry.position)
 
-    async def complete(self, prompt: str, *, system: str | None = None) -> Completion:
+    async def complete(self, prompt: str, *, system: str | None = None, max_tokens: int | None = None) -> Completion:
         if STUB_FAIL_FIRST in prompt and self.position == 0:
             raise StubThrottled()
         words = len(prompt.split())
@@ -526,8 +540,12 @@ class LlmGateway:
                 break
             who = self._entry_provider(entry)
             begun = self.clock()
+            cap = stage_output_cap(stage)
             try:
-                done = await (who.complete(text, system=system) if system else who.complete(text))
+                if cap is not None:  # AA-965: a stage with its own output cap (a setting, read at each call)
+                    done = await who.complete(text, system=system, max_tokens=cap)
+                else:
+                    done = await (who.complete(text, system=system) if system else who.complete(text))
             except Exception as exc:  # noqa: BLE001 — recorded by class only
                 billed = getattr(exc, "billed", None)
                 billed = billed if isinstance(billed, Completion) else None

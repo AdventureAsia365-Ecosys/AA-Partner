@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 
@@ -28,14 +29,18 @@ DECISIONS = {"accept": "accepted", "discard": "discarded"}
 FEEDBACK_CODES = ("good", "wrong_facts", "wrong_tone", "not_relevant", "too_long", "other")
 
 INSERT_SQL = """
-INSERT INTO crm.ai_draft (ai_draft_id, trip_id, kind, llm_call_id, prompt_version, output_enc)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO crm.ai_draft (ai_draft_id, trip_id, kind, llm_call_id, prompt_version, output_enc, voice_profile_id,
+                          validation)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
 """
 DRAFT_SQL = """
-SELECT d.ai_draft_id, d.trip_id, d.decision, t.owner_member_id
+SELECT d.ai_draft_id, d.trip_id, d.kind, d.decision, d.validation, t.owner_member_id
 FROM crm.ai_draft d JOIN crm.trip t ON t.trip_id = d.trip_id
 WHERE d.ai_draft_id = $1
 """
+# AA-965: the kinds a member accepts or discards here; a supplier confirmation is accepted by applying it
+# (app.llm.supplier_confirm.apply), so a bare "accept" cannot mark a proposed line update as done.
+PLAIN_ACCEPT_KINDS = ("reply", "follow_up", "notes_to_options")
 DECIDE_SQL = """
 UPDATE crm.ai_draft
 SET decision = $2, feedback_code = $3, decided_at = now(), decided_by = current_setting('app.actor', true)
@@ -65,11 +70,16 @@ async def store(
     llm_call_id: str,
     prompt_version: str,
     output: str,
+    voice_profile_id: uuid.UUID | None = None,
+    validation: dict[str, Any] | None = None,
 ) -> str:
-    """Write the draft row (pending) and return its id. ``output`` is the model's text with its placeholders."""
+    """Write the draft row (pending) and return its id. ``output`` is the model's text with its placeholders;
+    ``validation`` (AA-965) the code's check of it (ids, codes, numbers, placeholders kept)."""
     draft_id = uuid.uuid4()
     output_enc = await vault.encrypt("ai_draft", "output_enc", draft_id, output)
-    await ctx.conn.execute(INSERT_SQL, draft_id, trip_id, kind, uuid.UUID(llm_call_id), prompt_version, output_enc)
+    checked = json.dumps(validation) if validation is not None else None
+    await ctx.conn.execute(INSERT_SQL, draft_id, trip_id, kind, uuid.UUID(llm_call_id), prompt_version, output_enc,
+                           voice_profile_id, checked)  # fmt: skip
     ctx.audit("create", "allowed", "ai_draft", str(draft_id), object_ids=(str(trip_id),))
     return str(draft_id)
 
@@ -84,6 +94,8 @@ async def decide(
     row = await ctx.conn.fetchrow(DRAFT_SQL, draft_id)
     if row is None:
         raise NotFound("draft_not_found", "no AI draft with this id")
+    if action == "accept" and row["kind"] not in PLAIN_ACCEPT_KINDS:
+        raise Conflict("draft_needs_apply", "a supplier confirmation is accepted by applying its line updates")
     if action == "accept":
         owner = row["owner_member_id"]
         require(

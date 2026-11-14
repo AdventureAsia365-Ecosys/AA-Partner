@@ -432,6 +432,134 @@
     "when": "Bật khi ra mắt môi trường production đầu tiên hoặc có đại lý trả tiền đầu tiên, khi đã đủ nhân sự làm người duyệt thứ hai.",
     "example": "Với mặc định là tắt, quản trị viên được tự duyệt các thay đổi thiết lập CRM của mình kèm lý do."
    }
+  },
+  "crm.ai.supplier_confirm_max_tokens": {
+   "en": {
+    "what": "The longest answer, in tokens, the CRM asks the model for when it reads a supplier's confirmation into a proposed update of the trip's lines. An answer cut at this length is marked as cut and the agent records the confirmation by hand.",
+    "raise": "Confirmations that cover many lines are cut less often. Each run can cost a little more.",
+    "lower": "Each run costs less, but a confirmation with many lines is cut more often and the agent records it by hand.",
+    "when": "Raise it when agents often see cut-off answers on normal supplier confirmations; lower it if runs cost more than expected.",
+    "example": "With the default of 800 tokens, one run can propose updates for about twenty lines before it is cut."
+   },
+   "vi": {
+    "what": "Độ dài tối đa của câu trả lời, tính bằng token, mà CRM yêu cầu mô hình khi đọc xác nhận của nhà cung cấp thành đề xuất cập nhật các dòng của chuyến đi. Câu trả lời bị cắt ở độ dài này được đánh dấu là bị cắt và nhân viên tự ghi xác nhận.",
+    "raise": "Xác nhận có nhiều dòng ít bị cắt hơn. Mỗi lượt chạy có thể tốn hơn một chút.",
+    "lower": "Mỗi lượt chạy rẻ hơn, nhưng xác nhận nhiều dòng hay bị cắt hơn và nhân viên phải tự ghi.",
+    "when": "Tăng khi nhân viên hay thấy câu trả lời bị cắt với xác nhận nhà cung cấp bình thường; giảm nếu chi phí mỗi lượt cao hơn dự kiến.",
+    "example": "Với mặc định 800 token, một lượt chạy đề xuất cập nhật được khoảng hai mươi dòng trước khi bị cắt."
+   }
+  },
+  "crm.ai.supplier_confirm_max_chars": {
+   "en": {
+    "what": "The longest supplier confirmation text the AI reads in one run: the supplier's e-mail on the trip's supplier request thread, or text the agent pastes. A longer text is refused before anything is checked for privacy or paid.",
+    "raise": "Long confirmations (several bookings in one e-mail) can be read. Each run sends more text, so it costs more.",
+    "lower": "Runs stay cheap, but long supplier e-mails are refused and the agent records them by hand or pastes the relevant part.",
+    "when": "Raise it when suppliers often send long confirmations that get refused; lower it if runs are costly and the texts are short.",
+    "example": "With the default of 12000 characters, a supplier e-mail of about two printed pages can be read in one run."
+   },
+   "vi": {
+    "what": "Văn bản xác nhận dài nhất của nhà cung cấp mà AI đọc trong một lượt: e-mail của nhà cung cấp trong luồng yêu cầu đặt dịch vụ của chuyến đi, hoặc văn bản nhân viên dán vào. Văn bản dài hơn bị từ chối trước khi kiểm tra quyền riêng tư hay tính phí.",
+    "raise": "Đọc được xác nhận dài (nhiều đặt chỗ trong một e-mail). Mỗi lượt gửi nhiều chữ hơn nên tốn hơn.",
+    "lower": "Lượt chạy rẻ, nhưng e-mail dài của nhà cung cấp bị từ chối và nhân viên tự ghi hoặc dán phần cần thiết.",
+    "when": "Tăng khi nhà cung cấp hay gửi xác nhận dài bị từ chối; giảm nếu chi phí lượt chạy cao mà văn bản thường ngắn.",
+    "example": "Với mặc định 12000 ký tự, một e-mail nhà cung cấp dài khoảng hai trang in đọc được trong một lượt."
+   }
+  },
+  "crm.ai.supplier_confirm_max_lines": {
+   "en": {
+    "what": "The most open lines of one supplier on one trip that one AI run may propose an update for. These lines are the closed list the model picks from; it can never touch an Adventure Asia line.",
+    "raise": "Trips with many services from one supplier can be read in one run. The model has more lines to tell apart, so mistakes are a little more likely.",
+    "lower": "The model picks from a short list and makes fewer mistakes, but a supplier with many open lines is refused and recorded by hand.",
+    "when": "Raise it when one supplier (an airline, an insurer) often has more open lines on a trip than allowed; lower it if the model mixes lines up.",
+    "example": "With the default of 20 lines, a family trip with flights for every leg from one airline fits in one run."
+   },
+   "vi": {
+    "what": "Số dòng đang mở tối đa của một nhà cung cấp trên một chuyến đi mà một lượt AI được đề xuất cập nhật. Các dòng này là danh sách đóng để mô hình chọn; mô hình không bao giờ đụng tới dòng của Adventure Asia.",
+    "raise": "Chuyến có nhiều dịch vụ từ một nhà cung cấp đọc được trong một lượt. Mô hình phải phân biệt nhiều dòng hơn nên dễ nhầm hơn một chút.",
+    "lower": "Mô hình chọn trong danh sách ngắn và ít nhầm, nhưng nhà cung cấp có nhiều dòng mở bị từ chối và phải ghi tay.",
+    "when": "Tăng khi một nhà cung cấp (hãng bay, bảo hiểm) hay có nhiều dòng mở hơn mức cho phép; giảm nếu mô hình hay nhầm dòng.",
+    "example": "Với mặc định 20 dòng, một chuyến gia đình có vé bay cho mọi chặng của một hãng vừa trong một lượt."
+   }
+  },
+  "crm.ai.notes_options_max_tokens": {
+   "en": {
+    "what": "The longest answer, in tokens, the CRM asks the model for when it proposes Adventure Asia options for one proposal day from the trip's notes. An answer cut at this length is marked as cut and the agent picks options by hand.",
+    "raise": "Answers with several options and their reasons are cut less often. Each run can cost a little more.",
+    "lower": "Each run costs less, but answers are cut more often and the agent picks options by hand.",
+    "when": "Raise it when agents often see cut-off option ideas; lower it if the reasons are long and runs cost more than expected.",
+    "example": "With the default of 600 tokens, one run can propose about five options, each with a short reason."
+   },
+   "vi": {
+    "what": "Độ dài tối đa của câu trả lời, tính bằng token, mà CRM yêu cầu mô hình khi đề xuất lựa chọn Adventure Asia cho một ngày của đề xuất từ ghi chú của chuyến đi. Câu trả lời bị cắt ở độ dài này được đánh dấu là bị cắt và nhân viên tự chọn.",
+    "raise": "Câu trả lời có nhiều lựa chọn kèm lý do ít bị cắt hơn. Mỗi lượt có thể tốn hơn một chút.",
+    "lower": "Mỗi lượt rẻ hơn, nhưng câu trả lời hay bị cắt hơn và nhân viên tự chọn lựa chọn.",
+    "when": "Tăng khi nhân viên hay thấy gợi ý bị cắt; giảm nếu lý do dài dòng và chi phí mỗi lượt cao hơn dự kiến.",
+    "example": "Với mặc định 600 token, một lượt đề xuất được khoảng năm lựa chọn, mỗi lựa chọn kèm lý do ngắn."
+   }
+  },
+  "crm.ai.notes_options_max_chars": {
+   "en": {
+    "what": "The longest notes text one notes-to-options run reads: the trip's own notes, newest first, or a text the agent types. Older notes beyond this length are left out; a longer typed text is refused.",
+    "raise": "More of the trip's history (call logs, the inquiry) is read, so ideas can fit better. Each run sends more text and costs more.",
+    "lower": "Runs stay cheap and use only the latest notes, but older wishes of the client are not read.",
+    "when": "Raise it when ideas miss wishes written in older notes; lower it if runs are costly and the newest notes are enough.",
+    "example": "With the default of 8000 characters, about the last ten call notes of a trip are read."
+   },
+   "vi": {
+    "what": "Văn bản ghi chú dài nhất mà một lượt gợi ý lựa chọn từ ghi chú đọc: ghi chú của chuyến đi, mới nhất trước, hoặc văn bản nhân viên gõ vào. Ghi chú cũ vượt độ dài này bị bỏ qua; văn bản gõ dài hơn bị từ chối.",
+    "raise": "Đọc được nhiều lịch sử chuyến đi hơn (ghi chú cuộc gọi, yêu cầu ban đầu) nên gợi ý sát hơn. Mỗi lượt gửi nhiều chữ hơn và tốn hơn.",
+    "lower": "Lượt chạy rẻ và chỉ dùng ghi chú mới nhất, nhưng mong muốn cũ của khách không được đọc.",
+    "when": "Tăng khi gợi ý bỏ sót mong muốn ghi trong ghi chú cũ; giảm nếu chi phí cao mà ghi chú mới nhất là đủ.",
+    "example": "Với mặc định 8000 ký tự, khoảng mười ghi chú cuộc gọi gần nhất của chuyến đi được đọc."
+   }
+  },
+  "crm.ai.notes_options_max_candidates": {
+   "en": {
+    "what": "The most Adventure Asia components (the agency's live AA tours and their parts in the trip's countries) offered to the model as the day's closed list. The model may pick only from this list; any other code is rejected.",
+    "raise": "The model sees more of the AA range, so ideas can fit better. Each run sends a longer list and costs more.",
+    "lower": "Runs are cheaper and the list is easier to pick from, but some AA tours of the trip's countries are not offered.",
+    "when": "Raise it when good AA tours of a country are often missing from the ideas; lower it if runs cost more than expected.",
+    "example": "With the default of 80 components, the list holds about twenty AA tours with their hotels and activities."
+   },
+   "vi": {
+    "what": "Số thành phần Adventure Asia tối đa (các tour AA đang bán cho đại lý và các phần của tour ở các nước của chuyến đi) đưa cho mô hình làm danh sách đóng của ngày. Mô hình chỉ được chọn trong danh sách này; mã khác bị từ chối.",
+    "raise": "Mô hình thấy nhiều sản phẩm AA hơn nên gợi ý sát hơn. Mỗi lượt gửi danh sách dài hơn và tốn hơn.",
+    "lower": "Lượt chạy rẻ hơn và danh sách dễ chọn, nhưng một số tour AA của các nước trong chuyến không được đưa vào.",
+    "when": "Tăng khi gợi ý hay thiếu các tour AA tốt của một nước; giảm nếu chi phí lượt chạy cao hơn dự kiến.",
+    "example": "Với mặc định 80 thành phần, danh sách chứa khoảng hai mươi tour AA cùng khách sạn và hoạt động của chúng."
+   }
+  },
+  "crm.ai.notes_options_max_suggestions": {
+   "en": {
+    "what": "The most Adventure Asia options one notes-to-options run proposes for a proposal day. Extra picks of the model are dropped; the agent adds the ones they like to the day.",
+    "raise": "The agent sees more ideas per day to choose from. The list gets longer to read.",
+    "lower": "The agent sees only the best few ideas, which is quicker to read, but good alternatives may be dropped.",
+    "when": "Raise it when agents often ask again for more ideas; lower it if the list is too long to be useful.",
+    "example": "With the default of 5 options, a day gets up to five AA ideas with a short reason each."
+   },
+   "vi": {
+    "what": "Số lựa chọn Adventure Asia tối đa mà một lượt gợi ý từ ghi chú đề xuất cho một ngày. Lựa chọn thừa của mô hình bị bỏ; nhân viên thêm những lựa chọn mình thích vào ngày đó.",
+    "raise": "Nhân viên có nhiều gợi ý hơn mỗi ngày để chọn. Danh sách dài hơn để đọc.",
+    "lower": "Nhân viên chỉ thấy vài gợi ý tốt nhất, đọc nhanh hơn, nhưng có thể mất phương án tốt khác.",
+    "when": "Tăng khi nhân viên hay phải chạy lại để có thêm gợi ý; giảm nếu danh sách quá dài để hữu ích.",
+    "example": "Với mặc định 5 lựa chọn, mỗi ngày có tối đa năm gợi ý AA, mỗi gợi ý kèm lý do ngắn."
+   }
+  },
+  "crm.ai.voice_profiles_per_member_max": {
+   "en": {
+    "what": "The most writing voices one agency member may keep for the AI reply draft (Settings > AI > Voices). A voice is a few fixed choices such as formal or casual and short or long; a new one above this number is refused until the member deletes one.",
+    "raise": "Members can keep a voice for more kinds of clients or channels. The voice picker gets longer.",
+    "lower": "The voice picker stays short and simple, but members cannot keep a voice for every kind of client.",
+    "when": "Raise it when members ask for more voices (for example one per language and channel); lower it if voices pile up unused.",
+    "example": "With the default of 4 voices, a member can keep an English and a Vietnamese voice for both e-mail and WhatsApp."
+   },
+   "vi": {
+    "what": "Số giọng văn tối đa mà một thành viên đại lý được giữ cho bản nháp trả lời bằng AI (Settings > AI > Voices). Một giọng văn là vài lựa chọn cố định như trang trọng hay thân mật, ngắn hay dài; giọng mới vượt số này bị từ chối tới khi thành viên xoá bớt.",
+    "raise": "Thành viên giữ được giọng văn cho nhiều kiểu khách hoặc kênh hơn. Danh sách chọn giọng dài hơn.",
+    "lower": "Danh sách chọn giọng ngắn gọn, nhưng thành viên không giữ được giọng văn cho mọi kiểu khách.",
+    "when": "Tăng khi thành viên cần thêm giọng văn (ví dụ mỗi ngôn ngữ và kênh một giọng); giảm nếu giọng văn tạo ra mà không dùng.",
+    "example": "Với mặc định 4 giọng văn, một thành viên giữ được giọng tiếng Anh và tiếng Việt cho cả e-mail và WhatsApp."
+   }
   }
  }
 }

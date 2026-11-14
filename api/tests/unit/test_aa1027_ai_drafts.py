@@ -110,8 +110,9 @@ async def test_an_answered_draft_is_one_pending_row_with_its_placeholders_under_
     ctx = tenant_ctx(c)
     out = await agency_ai.draft(ctx, ok_gateway(), FakeVault(), TRIP, kind="follow_up", text="Any news?")
     [row] = c.sql("INSERT INTO crm.ai_draft")
-    draft_id, trip_id, kind, call_id, version, blob = row
+    draft_id, trip_id, kind, call_id, version, blob, voice, validation = row
     assert (trip_id, kind, str(call_id), version) == (TRIP, "follow_up", CALL_ID, agency_ai.PROMPT_VERSION)
+    assert (voice, validation) == (None, None)  # AA-965: no voice asked for, no structured check on a message draft
     # Stored as the model wrote it (placeholder kept), encrypted; the member's answer is restored.
     assert blob == b"enc:ai_draft.output_enc:Dear <PERSON_1>, the day in Fakeville is free."
     assert out["text"] == "Dear Odile Brank, the day in Fakeville is free."
@@ -205,7 +206,9 @@ async def test_a_stored_draft_releases_its_savepoint(monkeypatch: pytest.MonkeyP
 # ── The decision ────────────────────────────────────────────────────────────────────────────────
 
 
-def decide_conn(decision: str = "pending", owner: uuid.UUID | None = MEMBER, updated: bool = True) -> ScriptedConn:
+def decide_conn(
+    decision: str = "pending", owner: uuid.UUID | None = MEMBER, updated: bool = True, kind: str = "reply"
+) -> ScriptedConn:
     def update(draft_id: uuid.UUID, new: str, feedback: str | None) -> dict[str, Any] | None:
         if not updated:
             return None
@@ -216,7 +219,8 @@ def decide_conn(decision: str = "pending", owner: uuid.UUID | None = MEMBER, upd
         ScriptedConn()
         .on(
             "FROM crm.ai_draft d JOIN crm.trip t",
-            {"ai_draft_id": DRAFT, "trip_id": TRIP, "decision": decision, "owner_member_id": owner},
+            {"ai_draft_id": DRAFT, "trip_id": TRIP, "kind": kind, "decision": decision, "validation": None,
+             "owner_member_id": owner},  # fmt: skip
         )
         .on("UPDATE crm.ai_draft", update)
     )
