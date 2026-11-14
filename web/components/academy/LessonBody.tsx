@@ -2,7 +2,7 @@
 // as React elements (lib/academyMarkdown.ts: no HTML is ever injected). Server-safe: no hooks.
 import { Fragment, type ReactNode } from "react";
 import { K, mono, sans } from "@/app/_kit";
-import { parseBlocks, parseInline, type MdInline } from "@/lib/academyMarkdown";
+import { dropLeadingObjective, parseBlocks, parseInline, type MdInline } from "@/lib/academyMarkdown";
 
 const HEADING_SIZE: Record<number, number> = { 1: 20, 2: 17, 3: 15, 4: 14, 5: 14, 6: 14 };
 
@@ -49,10 +49,22 @@ const preStyle: React.CSSProperties = {
   color: K.ink,
 };
 
-/** `skipFirstHeading`: drop a leading H1 (the page title already shows it). */
-export function LessonBody({ text, skipFirstHeading = false, testId }: { text: string; skipFirstHeading?: boolean; testId?: string }) {
+/** `skipFirstHeading`: drop a leading H1 (the page title already shows it). `skipObjective`: drop a leading
+ * "**Objective:**" paragraph (the page shows the API's objective above the body). */
+export function LessonBody({
+  text,
+  skipFirstHeading = false,
+  skipObjective = false,
+  testId,
+}: {
+  text: string;
+  skipFirstHeading?: boolean;
+  skipObjective?: boolean;
+  testId?: string;
+}) {
   let blocks = parseBlocks(text);
   if (skipFirstHeading && blocks[0]?.kind === "heading" && blocks[0].level === 1) blocks = blocks.slice(1);
+  if (skipObjective) blocks = dropLeadingObjective(blocks);
   return (
     <div style={{ fontFamily: sans, fontSize: 14.5, lineHeight: 1.65, color: K.body, overflowWrap: "anywhere", minWidth: 0 }} data-testid={testId}>
       {blocks.map((b, i) => {
