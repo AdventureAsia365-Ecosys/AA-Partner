@@ -91,7 +91,7 @@ def test_every_key_constant_is_a_compiled_key_and_defaults_are_todays_values() -
 
 
 def test_the_retired_env_vars_change_nothing() -> None:
-    """AA-1096 l5 (crm-070): no definition names an env var; the old names are ignored, the setting rules."""
+    """AA-1096 l5 (crm-068): no definition names an env var; the old names are ignored, the setting rules."""
     assert all(ps.definition(k).env_override is None for k in ps.keys())
     ps.configure_env({"RATE_LIMIT_PUBLIC_PER_MINUTE": "70", "CRM_LLM_MAX_TOKENS": "900"})
     assert (ps.resolve(ps.RATE_PUBLIC).source, ps.get(ps.RATE_PUBLIC)) == ("default", 60)

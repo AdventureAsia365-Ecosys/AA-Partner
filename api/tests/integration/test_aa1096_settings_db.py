@@ -141,7 +141,7 @@ async def test_an_agency_value_is_refused_under_an_env_override(
 ) -> None:
     from tests import settings_serve
 
-    settings_serve.lay_retired_overrides(monkeypatch)  # crm-070 retired them; the mechanism stays
+    settings_serve.lay_retired_overrides(monkeypatch)  # crm-068 retired them; the mechanism stays
     tenant_id, _ = await _agency(app_pool)
     ps.configure_env({"RATE_LIMIT_INTAKE_FORM_PER_HOUR": "200"})
     try:

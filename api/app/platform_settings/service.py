@@ -16,7 +16,7 @@ token, as the L1 console and the app profile are).
   a group share one advisory lock, so two changes of one group never pass the check side by side.
 - An agency's own value of a key whose env override is in force is refused (409 ``env_override_active``): the env var
   wins over every agency's value (the emergency override, one release only, tech lead S279 Q5; no definition carries
-  one since crm-070), so the change would be recorded as approved and have no effect.
+  one since crm-068), so the change would be recorded as approved and have no effect.
 - :func:`decide`: approve or reject an open change. ``maker_checker``: the approver is not the proposer, unless
   ``crm.settings.two_person_approval`` is off (the dev phase, tech lead S279 Q2): then the administrator approves their
   own change (``self_approved``), and a high-impact one raises an AA ops e-mail (``setting_self_approved``). An approval

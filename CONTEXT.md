@@ -2920,7 +2920,7 @@ secret `MAIL_OAUTH` (`crm/<env>/mail-oauth`, mapped only once it has a value), a
 for the synthetic Dev agencies that have no mailbox), and the AI gateway (AA-964) `CRM_LLM_PROVIDER` (default `stub`),
 `CRM_LLM_MODEL_ID`, `CRM_LLM_USD_PER_MTOK_IN` / `CRM_LLM_USD_PER_MTOK_OUT`, `CRM_LLM_REGION`, `CRM_LLM_ROLE_ARN`,
 while the draft output cap, the AI calls per agency per minute, the AI budget ceiling and the public / intake / form /
-member rate limits are admin-editable settings (AA-1096 L4; their env vars were retired by crm-070, AA-1096 l5;
+member rate limits are admin-editable settings (AA-1096 L4; their env vars were retired by crm-068, AA-1096 l5;
 section "Admin-editable platform settings"); on Dev, AA-CIS-Infra
 `crm_llm.tf` (AA-1027 F4) sets the provider `bedrock`, the model Amazon Nova Lite on acc2 with its catalogue prices, the
 region and the output cap, and grants the task role `bedrock:InvokeModel` on that inference profile only (no
@@ -2941,7 +2941,7 @@ or an env var alone. The CRM keeps its own registry in `crm` (root ADR 0008a: no
   an agency's rows go with its `crm.tenant_settings` row). The 27 seeded keys are today's effective values
   (Terraform's where it differed: `crm.rate.public_per_minute` 60).
 - **Reader** (`app/platform_settings/`): `reader.py` is a byte copy of AA-CIS-App `shared/settings/reader.py`
-  (`api/settings_reader.lock.json`); the binding resolves env override (one release only, tech lead Q5; none since crm-070:
+  (`api/settings_reader.lock.json`); the binding resolves env override (one release only, tech lead Q5; none since crm-068:
   the process env var of a definition that names one) -> the agency's approved value (read through the caller's own context connection,
   `tenant_get`) -> the approved platform value (process snapshot, refreshed every 30 s by the API lifespan) -> the
   compiled default (`compiled_defaults.json`, generated from the migration seed by `scripts/gen_settings_defaults.py`;
@@ -2962,7 +2962,7 @@ or an env var alone. The CRM keeps its own registry in `crm` (root ADR 0008a: no
   window equal to the agency's current value is accepted even after AA narrowed the range.
 - **Env override vs agency values**: an env override in force wins over every agency's value, so an agency's own value
   of such a key is refused (409 `env_override_active`) instead of recorded with no effect.
-- **Env overrides live one release** (AA-1096 l5, crm-070): crm-070 retired the seven crm-064 overrides (env_override
+- **Env overrides live one release** (AA-1096 l5, crm-068): crm-068 retired the seven crm-064 overrides (env_override
   null, the `Settings` fields and env reads gone; list in `api/tests/unit/snapshots/aa1096_retired_env_overrides.json`).
   The mechanism stays; the required "Settings Lint" check (`tests/unit/test_aa1096_settings_lint.py` rule 4) refuses a
   retired override coming back, a literal of a retired env name in `app/` or `scripts/`, and any new override without

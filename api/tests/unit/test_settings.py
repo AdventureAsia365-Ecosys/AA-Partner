@@ -20,7 +20,7 @@ def test_defaults_without_environment() -> None:
     assert (s.cognito_workforce_issuer, s.cognito_partner_issuer) == ("", "")
     assert s.rate_limit_xff_hops == 2
     assert s.rate_limit_portal_write_per_minute == 30  # AA-953 follow-up
-    # AA-1096 l5 (crm-070): the public, intake, member and AI limits are settings, never a Settings field or env var
+    # AA-1096 l5 (crm-068): the public, intake, member and AI limits are settings, never a Settings field or env var
     assert not hasattr(s, "rate_limit_public_per_minute") and not hasattr(s, "rate_limit_intake_per_minute")
 
 

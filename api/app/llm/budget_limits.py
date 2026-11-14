@@ -3,7 +3,7 @@ agency's Settings > AI and the L1 usage meter.
 
 - ``crm.ai.budget_default_usd``: the budget of an agency without a settings row (and of a new agency);
 - ``crm.ai.budget_max_usd``: the highest budget an owner may set, a ``platform+tenant`` key (an administrator may give
-  one agency its own ceiling), read in the agency's own context (its env override was retired by crm-070).
+  one agency its own ceiling), read in the agency's own context (its env override was retired by crm-068).
 
 The gateway enforces ``min(agency budget, ceiling)``: lowering the ceiling lowers every budget above it at once.
 """

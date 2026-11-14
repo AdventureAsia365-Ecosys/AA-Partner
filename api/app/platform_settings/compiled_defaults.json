@@ -1,5 +1,5 @@
 {
- "_generated": "scripts/gen_settings_defaults.py from the settings seed of 064_crm_settings_registry.sql, 070_crm_retire_settings_env_overrides.sql; do not edit by hand",
+ "_generated": "scripts/gen_settings_defaults.py from the settings seed of 064_crm_settings_registry.sql, 068_crm_retire_settings_env_overrides.sql; do not edit by hand",
  "definitions": [
   {
    "key": "crm.agency_defaults.auto_archive_months",

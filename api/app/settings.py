@@ -55,7 +55,7 @@ Field encryption (AA-934, design v3 §4.1; ``app.vault``):
 Rate limits (ADR 0010 decision 2: CloudFront → VPC origin bypasses API Gateway throttling):
 
 - The public, intake, intake-form, member and AI limits are admin-editable settings (``app.platform_settings``,
-  crm-064: ``crm.rate.*``); their env vars were retired by crm-070 (AA-1096 l5).
+  crm-064: ``crm.rate.*``); their env vars were retired by crm-068 (AA-1096 l5).
 - ``RATE_LIMIT_XFF_HOPS``: **fallback only**. The limiter keys on ``CloudFront-Viewer-Address`` (set by CloudFront,
   not by the viewer); only when that header is missing does it use the ``X-Forwarded-For`` entry this many from the
   right (default 2: the viewer address CloudFront appended, then the address the ALB appended). See ``app.ratelimit``.

@@ -7,9 +7,9 @@ format). Migrations are read in number order and a later row of a key replaces a
 (app.platform_settings) serves these defaults when the database cannot be read, so they must equal the seed:
 ``--check`` exits 1 when the committed file differs (tests/unit/test_aa1096_settings_seed_parity.py runs it in CI).
 
-AA-1096 l5 (crm-070): a later file changes some fields of existing keys between ``-- settings-edit:begin`` and
+AA-1096 l5 (crm-068): a later file changes some fields of existing keys between ``-- settings-edit:begin`` and
 ``-- settings-edit:end``, one JSON array of ``{"key", <field>: <value>, ...}`` inside ``$edit$ … $edit$`` (an UPDATE of
-the existing rows; crm-070 retires the one-release env overrides). Applied in file order after the seed rows of the
+the existing rows; crm-068 retires the one-release env overrides). Applied in file order after the seed rows of the
 same file; a field outside the definition's fields (or ``key`` / ``app``), or a key no earlier file seeds, fails.
 
     python3 scripts/gen_settings_defaults.py           # rewrite the file (from api/)

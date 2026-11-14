@@ -1,10 +1,10 @@
--- Migration crm-070: AA-1096 (lane l5, tech lead S279: "env vars stay for one release as an emergency override, then
+-- Migration crm-068: AA-1096 (lane l5, tech lead S279: "env vars stay for one release as an emergency override, then
 -- go") — the one-release env overrides of the CRM settings registry are retired.
 --
--- Owner: AA-Partner (api/migrations/070_crm_retire_settings_env_overrides.sql). AA-CIS-Infra db/migrations/crm/ holds
--- the byte copy Migration Apply runs. Key crm-070: crm-066..crm-069 are taken by other lanes of this wave (crm main max
+-- Owner: AA-Partner (api/migrations/068_crm_retire_settings_env_overrides.sql). AA-CIS-Infra db/migrations/crm/ holds
+-- the byte copy Migration Apply runs. Key crm-068: crm-066..crm-067 are taken by other lanes of this wave (crm main max
 -- is crm-065 on 15/11/2026); if main moves, renumber: file name, this header, Guard 0 and the registration below, and
--- the tests that name it (git grep '070_' and 'crm-070').
+-- the tests that name it (git grep '068_' and 'crm-068').
 --
 -- Why: crm-064 gave 7 definitions an env_override (AI_BUDGET_MAX_USD, CRM_LLM_MAX_TOKENS, RATE_LIMIT_PUBLIC_PER_MINUTE,
 -- RATE_LIMIT_INTAKE_PER_MINUTE, RATE_LIMIT_INTAKE_FORM_PER_HOUR, RATE_LIMIT_MEMBER_PER_MINUTE, RATE_LIMIT_AI_PER_MINUTE),
@@ -16,7 +16,7 @@
 -- What: the block between "settings-edit:begin" and "settings-edit:end" (read by api/scripts/gen_settings_defaults.py
 -- into app/platform_settings/compiled_defaults.json, the file the reader serves; the seed-parity test keeps the two
 -- equal): env_override null on the 7 keys, and two descriptions without the env var name. A post-check: every row of
--- the block is in force and no definition names an env var any more. Register crm-070.
+-- the block is in force and no definition names an env var any more. Register crm-068.
 --
 -- Behaviour on apply: none for running code. The reader serves the compiled defaults (regenerated from this block in
 -- the same PR), not this table's column; no value, bound, approval rule or enforcement flag changes. The env_override
@@ -44,20 +44,20 @@ SET LOCAL statement_timeout = '1min';
 DO $$
 BEGIN
     IF current_user <> 'crm_owner' THEN
-        RAISE EXCEPTION 'crm-070: must run as crm_owner (DB Migrate live-owner switch), runs as %', current_user;
+        RAISE EXCEPTION 'crm-068: must run as crm_owner (DB Migrate live-owner switch), runs as %', current_user;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM shared.schema_versions WHERE version = 'crm-064') THEN
-        RAISE EXCEPTION 'crm-070: crm-064 (AA-1096 settings registry) lands first';
+        RAISE EXCEPTION 'crm-068: crm-064 (AA-1096 settings registry) lands first';
     END IF;
     IF EXISTS (SELECT 1 FROM shared.schema_versions
-                WHERE version = 'crm-070' AND description NOT LIKE 'AA-1096 l5: retire%') THEN
-        RAISE EXCEPTION 'crm-070: the key crm-070 is already held by another migration (not AA-1096 l5): renumber one';
+                WHERE version = 'crm-068' AND description NOT LIKE 'AA-1096 l5: retire%') THEN
+        RAISE EXCEPTION 'crm-068: the key crm-068 is already held by another migration (not AA-1096 l5): renumber one';
     END IF;
 END $$;
 
 -- settings-edit:begin (api/scripts/gen_settings_defaults.py reads the JSON array of the dollar-quoted block)
-CREATE TEMP TABLE IF NOT EXISTS m070_edit (key text PRIMARY KEY, doc jsonb NOT NULL) ON COMMIT DROP;
-INSERT INTO m070_edit (key, doc)
+CREATE TEMP TABLE IF NOT EXISTS m068_edit (key text PRIMARY KEY, doc jsonb NOT NULL) ON COMMIT DROP;
+INSERT INTO m068_edit (key, doc)
 SELECT e.doc ->> 'key', e.doc
   FROM jsonb_array_elements($edit$[
 {"key": "crm.ai.budget_max_usd", "env_override": null, "description": "The highest monthly AI budget an agency owner may set on Settings > AI (AA pays for the calls). An administrator may give one agency its own ceiling. Seeded at 2 USD (the old code default)."},
@@ -74,7 +74,7 @@ ON CONFLICT (key) DO UPDATE SET doc = EXCLUDED.doc;
 UPDATE crm.setting_definition AS d
    SET env_override = CASE WHEN e.doc ? 'env_override' THEN e.doc ->> 'env_override' ELSE d.env_override END,
        description  = COALESCE(e.doc ->> 'description', d.description)
-  FROM m070_edit AS e
+  FROM m068_edit AS e
  WHERE d.key = e.key
    AND (d.env_override IS DISTINCT FROM CASE WHEN e.doc ? 'env_override' THEN e.doc ->> 'env_override'
                                              ELSE d.env_override END
@@ -87,25 +87,25 @@ DECLARE
     still text;
 BEGIN
     SELECT string_agg(e.key, ', ' ORDER BY e.key) INTO missing
-      FROM m070_edit AS e
+      FROM m068_edit AS e
      WHERE NOT EXISTS (
            SELECT 1 FROM crm.setting_definition AS d
             WHERE d.key = e.key
               AND (NOT e.doc ? 'env_override' OR d.env_override IS NULL)
               AND (NOT e.doc ? 'description' OR d.description = e.doc ->> 'description'));
     IF missing IS NOT NULL THEN
-        RAISE EXCEPTION 'crm-070: no definition or not edited: %', missing;
+        RAISE EXCEPTION 'crm-068: no definition or not edited: %', missing;
     END IF;
     SELECT string_agg(d.key || ' (' || d.env_override || ')', ', ' ORDER BY d.key) INTO still
       FROM crm.setting_definition AS d
      WHERE d.env_override IS NOT NULL;
     IF still IS NOT NULL THEN
-        RAISE EXCEPTION 'crm-070: definitions still name an env override: %', still;
+        RAISE EXCEPTION 'crm-068: definitions still name an env override: %', still;
     END IF;
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('crm-070', now(), 'AA-1096 l5: retire the one-release env overrides of the CRM settings registry')
+VALUES ('crm-068', now(), 'AA-1096 l5: retire the one-release env overrides of the CRM settings registry')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

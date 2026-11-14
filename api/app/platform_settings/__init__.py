@@ -11,7 +11,7 @@ defaults come from ``compiled_defaults.json``, generated from the crm migration 
 
 Resolution of ``get(key, tenant_id=None)``:
   1. the definition's emergency env override, when a definition names one (one release only, tech lead S279 Q5; none
-     does since crm-070, AA-1096 l5): the process env var, or the mapping :func:`configure_env` gave (tests). A warning
+     does since crm-068, AA-1096 l5): the process env var, or the mapping :func:`configure_env` gave (tests). A warning
      is logged and the CIS page shows "overridden by env";
   2. the approved value of the agency (``tenant_id`` given, a ``platform+tenant`` key) whose ``effective_from`` has
      come, from the per-agency cache :func:`tenant_refresh` fills. crm.setting_value is FORCE RLS: an agency's rows are
@@ -137,7 +137,7 @@ _clock: Callable[[], float] = time.monotonic
 
 
 def configure_env(environ: Mapping[str, str] | None) -> None:
-    """The env the reader reads a definition's emergency override from (tests; None = the process env). Since crm-070
+    """The env the reader reads a definition's emergency override from (tests; None = the process env). Since crm-068
     no definition names one: this only matters for a future one-release override."""
     READER.environ = None if environ is None else dict(environ)
 

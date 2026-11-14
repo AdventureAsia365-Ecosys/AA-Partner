@@ -1,6 +1,6 @@
-"""AA-1096 l5 (crm-070) — serve chosen CRM setting values in a test, as an approved platform row would.
+"""AA-1096 l5 (crm-068) — serve chosen CRM setting values in a test, as an approved platform row would.
 
-crm-070 retired the env overrides of the seven settings below, and with them the ``Settings`` fields a test app used
+crm-068 retired the env overrides of the seven settings below, and with them the ``Settings`` fields a test app used
 to pass them through (``Settings(rate_limit_intake_per_minute=3)`` -> ``settings_env()`` -> the reader). Tests now
 serve the value itself:
 
@@ -69,7 +69,7 @@ def lay_retired_overrides(monkeypatch: Any) -> None:
 
     For the tests of the env-override mechanism itself (the reader's step 1, the 409 ``env_override_active`` refusal,
     the "overridden by env" source), which stays for a future one-release override although no definition carries one
-    since crm-070. Snapshot: ``tests/unit/snapshots/aa1096_retired_env_overrides.json``."""
+    since crm-068. Snapshot: ``tests/unit/snapshots/aa1096_retired_env_overrides.json``."""
     import dataclasses
     import json
     from pathlib import Path

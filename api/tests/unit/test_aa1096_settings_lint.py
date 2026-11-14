@@ -18,8 +18,8 @@ tests/unit/test_s279_settings_lint.py.
    constant is used outside the binding), and every constant names a compiled key.
 3. **The baseline only shrinks.** A baseline entry whose constant is gone (or now reads a setting) fails until it is
    removed from the file.
-4. **An env override lives one release** (AA-1096 l5, crm-070; tech lead S279: "env vars stay for one release as an
-   emergency override, then go"). crm-070 retired the seven crm-064 overrides
+4. **An env override lives one release** (AA-1096 l5, crm-068; tech lead S279: "env vars stay for one release as an
+   emergency override, then go"). crm-068 retired the seven crm-064 overrides
    (``snapshots/aa1096_retired_env_overrides.json``): no compiled definition of a retired key names an env var again,
    no definition names a retired env var, and no string literal of ``app/`` or ``scripts/`` (docstrings aside) is a
    retired env name, so no code reads one directly. A future override needs its window in
@@ -154,7 +154,7 @@ def test_the_lint_catches_a_new_cap(tmp_path: Path, monkeypatch: object) -> None
     assert findings() == ["app/zz_lint/m.py:RETRY_MAX", "app/zz_lint/m.py:RUN_CAP_USD"]
 
 
-# ── 4. env overrides live one release (AA-1096 l5, crm-070) ─────────────────────────────────────────────────────────
+# ── 4. env overrides live one release (AA-1096 l5, crm-068) ─────────────────────────────────────────────────────────
 
 SNAPSHOTS = Path(__file__).resolve().parent / "snapshots"
 RETIRED = SNAPSHOTS / "aa1096_retired_env_overrides.json"
@@ -173,7 +173,7 @@ def retired_findings(definitions: list[dict] | None = None, gone: dict[str, str]
     out = []
     for key, env in sorted(_overrides(definitions).items()):
         if key in gone or env in gone.values():
-            out.append(f"{key}: {env} is an env override crm-070 retired; it may not come back")
+            out.append(f"{key}: {env} is an env override crm-068 retired; it may not come back")
     return out
 
 
@@ -219,7 +219,7 @@ def literal_findings(files: list[Path] | None = None, gone: dict[str, str] | Non
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docs:
                 if node.value.strip() in names:
-                    out.append(f"{path.name}:{node.lineno}: {node.value!r} is a retired env override (crm-070)")
+                    out.append(f"{path.name}:{node.lineno}: {node.value!r} is a retired env override (crm-068)")
     return out
 
 

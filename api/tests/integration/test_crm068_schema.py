@@ -1,4 +1,4 @@
-"""AA-1096 lane l5 (S281) — crm-070: the one-release env overrides of the CRM settings registry are retired (conftest
+"""AA-1096 lane l5 (S281) — crm-068: the one-release env overrides of the CRM settings registry are retired (conftest
 replays every migration as crm_owner). Registered; no definition names an env var; each definition equals the compiled
 default the reader serves; a re-run changes nothing. Invented values only."""
 
@@ -13,13 +13,13 @@ import pytest
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 API = Path(__file__).resolve().parents[2]
-M070 = API / "migrations" / "070_crm_retire_settings_env_overrides.sql"
+M070 = API / "migrations" / "068_crm_retire_settings_env_overrides.sql"
 DEFAULTS = API / "app" / "platform_settings" / "compiled_defaults.json"
 RETIRED = API / "tests" / "unit" / "snapshots" / "aa1096_retired_env_overrides.json"
 
 
-async def test_crm070_is_registered_and_no_definition_names_an_env_var(admin: asyncpg.Connection) -> None:
-    assert await admin.fetchval("SELECT 1 FROM shared.schema_versions WHERE version = 'crm-070'") == 1
+async def test_crm068_is_registered_and_no_definition_names_an_env_var(admin: asyncpg.Connection) -> None:
+    assert await admin.fetchval("SELECT 1 FROM shared.schema_versions WHERE version = 'crm-068'") == 1
     assert await admin.fetchval("SELECT count(*) FROM crm.setting_definition WHERE env_override IS NOT NULL") == 0
 
 
