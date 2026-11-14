@@ -86,6 +86,12 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
 ON CONFLICT (request_id, round, mode) DO NOTHING
 RETURNING report_id
 """
+# The work of one request is serialised (two runs at once: a rolling deploy, a reaped lease, a slot run longer than the
+# slot): a transaction-scoped advisory lock, then the round's report of the mode is read again under it.
+CLAIM_SQL = "SELECT pg_advisory_xact_lock(hashtextextended('crm_tenant_erase:' || $1::uuid::text, 0))"
+HAS_REPORT_SQL = """
+SELECT EXISTS (SELECT 1 FROM crm.tenant_erasure_report WHERE request_id = $1 AND round = $2 AND mode = $3) AS made
+"""
 POSTED_SQL = """
 UPDATE crm.tenant_erasure_report
    SET post_outcome = $2, posted_at = CASE WHEN $2 = 'accepted' THEN now() END, post_attempts = post_attempts + 1
@@ -220,6 +226,13 @@ async def insert_report(conn: asyncpg.Connection | asyncpg.Pool, body: dict[str,
         )
         is not None
     )
+
+
+async def claim(conn: asyncpg.Connection, request_id: uuid.UUID, round_: int, mode: str) -> bool:
+    """Take the request's work lock on ``conn`` (held to the end of its transaction) and read the record again under it:
+    False when this request, round and mode has a report already (another run made it; it is posted from the record)."""
+    await conn.execute(CLAIM_SQL, request_id)
+    return not await conn.fetchval(HAS_REPORT_SQL, request_id, round_, mode)
 
 
 async def posted(pool: asyncpg.Pool, report_id: uuid.UUID, outcome: str) -> None:

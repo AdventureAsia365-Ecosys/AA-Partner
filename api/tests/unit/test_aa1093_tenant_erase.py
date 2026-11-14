@@ -440,9 +440,13 @@ async def test_a_refused_work_is_reported_in_its_own_transaction(monkeypatch: py
         recorded.append(body)
         return True
 
+    async def claim(*_args: Any) -> bool:
+        return True
+
     monkeypatch.setattr(saga_store, "agency_status", agency_status)
     monkeypatch.setattr(saga_store, "without_agency", without_agency)
     monkeypatch.setattr(saga_store, "insert_report", insert_report)
+    monkeypatch.setattr(saga_store, "claim", claim)
     handler = _handler(Cis())
     monkeypatch.setattr(handler, "_step", step)
     out = await handler._report(None, _req(), "dry_run", _job())  # type: ignore[arg-type]
@@ -454,6 +458,106 @@ async def test_a_refused_work_is_reported_in_its_own_transaction(monkeypatch: py
     monkeypatch.setattr(handler, "_step", failing)
     out = await handler._report(None, _req(), "verify", _job())  # type: ignore[arg-type]
     assert (out["status"], out["error_code"]) == ("failed", "internal_error")
+
+    # Another run recorded this report first (claimed after it, or the insert met the row): nothing to post.
+    recorded.clear()
+
+    async def taken(*_args: Any) -> bool:
+        return False
+
+    monkeypatch.setattr(saga_store, "claim", taken)
+    assert await handler._report(None, _req(), "dry_run", _job()) is None  # type: ignore[arg-type]
+    assert recorded == []
+    monkeypatch.setattr(saga_store, "claim", claim)
+    monkeypatch.setattr(saga_store, "insert_report", taken)
+    assert await handler._report(None, _req(), "dry_run", _job()) is None  # type: ignore[arg-type]
+
+
+class Conn:
+    """A work transaction's connection: the claim's lock and re-read, the report insert, nothing else."""
+
+    def __init__(self, *, made: bool = False, inserted: bool = True) -> None:
+        self.made, self.inserted = made, inserted
+        self.sql: list[str] = []
+
+    async def execute(self, sql: str, *args: Any) -> str:
+        self.sql.append(sql)
+        return "SELECT 1"
+
+    async def fetchval(self, sql: str, *args: Any) -> Any:
+        self.sql.append(sql)
+        if sql == saga_store.HAS_REPORT_SQL:
+            return self.made
+        if "SELECT crm.erase_studio_invitations" in sql:
+            return 0
+        return uuid.uuid4() if self.inserted else None
+
+
+@pytest.mark.asyncio
+async def test_a_report_made_by_another_run_is_neither_made_again_nor_posted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two runs at once (a rolling deploy, a reaped lease): the second waits for the request's lock, reads the record
+    again and finds the report: it rolls back and posts nothing (the next run posts the stored report)."""
+    handler = _handler(Cis())
+    done = handler._step(Conn(made=True), None, _req(), "dry_run", lambda *a, **k: {})  # type: ignore[arg-type]
+    with pytest.raises(tenant_erase._AlreadyMade):
+        await done
+    monkeypatch.setattr(tenant_erase.rules, "guard", lambda *a, **k: "apply_disabled")
+    with pytest.raises(tenant_erase._AlreadyMade):  # the insert met the row: never post a report not recorded
+        await handler._step(
+            Conn(inserted=False), None, _req(phase="apply"), "apply",
+            lambda outcome, **kw: _body("apply") | {"status": outcome, "error_code": kw.get("error_code")},
+        )  # fmt: skip
+
+    async def agency_status(_pool: Any, _tenant: uuid.UUID) -> str | None:
+        return None
+
+    async def without_agency(_pool: Any, _tenant: uuid.UUID, work: Any) -> Any:
+        return await work(Conn(made=True))
+
+    monkeypatch.setattr(saga_store, "agency_status", agency_status)
+    monkeypatch.setattr(saga_store, "without_agency", without_agency)
+    assert await handler._report(None, _req(), "dry_run", _job()) is None  # type: ignore[arg-type]
+    # _work stops at a report another run made: nothing posted, nothing counted.
+    store = Store()
+    store.install(monkeypatch)
+    store.requests = [_req()]
+
+    async def report(*_args: Any) -> None:
+        return None
+
+    monkeypatch.setattr(tenant_erase.TenantErase, "_report", report)
+    cis = Cis(_page())
+    result = await _handler(cis)(None, _job())  # type: ignore[arg-type]
+    assert result["reports_count"] == 0 and result["posted_count"] == 0 and len(cis.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_bucket_error_rolls_the_apply_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The objects are deleted inside the work transaction, after the report: a bucket error raises out of it (not a
+    ServiceError, so never reported as a refusal) and the next run redoes the apply."""
+
+    async def dry_or_apply(*_args: Any) -> dict[str, Any]:
+        return _body("apply") | {"_objects": ["tenants/x/documents/1"]}
+
+    async def delete_objects(_store: Any, keys: list[str]) -> None:
+        raise Unavailable("documents_unavailable")
+
+    handler = _handler(Cis())
+    monkeypatch.setattr(handler, "_dry_or_apply", dry_or_apply)
+    monkeypatch.setattr(tenant_erase.erase, "delete_objects", delete_objects)
+    monkeypatch.setattr(tenant_erase.rules, "guard", lambda *a, **k: None)
+    conn = Conn()
+    with pytest.raises(tenant_erase._ObjectsNotDeleted):
+        await handler._step(conn, None, _req(phase="apply"), "apply", lambda *a, **k: {})  # type: ignore[arg-type]
+    assert saga_store.INSERT_REPORT_SQL in conn.sql  # the report was in the transaction that rolls back
+    deleted: list[str] = []
+
+    async def deletes(_store: Any, keys: list[str]) -> None:
+        deleted.extend(keys)
+
+    monkeypatch.setattr(tenant_erase.erase, "delete_objects", deletes)
+    out = await handler._step(Conn(), None, _req(phase="apply"), "apply", lambda *a, **k: {})  # type: ignore[arg-type]
+    assert deleted == ["tenants/x/documents/1"] and "_objects" not in out
 
 
 @pytest.mark.asyncio
@@ -508,6 +612,8 @@ async def test_the_record_calls() -> None:
     await saga_store.succeed(pool)  # type: ignore[arg-type]
     assert await saga_store.upsert_request(pool, _req())  # type: ignore[arg-type]
     assert await saga_store.insert_report(pool, _body())  # type: ignore[arg-type]
+    assert not await saga_store.claim(pool, uuid.UUID(RID), 3, "apply")  # type: ignore[arg-type]  # made: not claimed
+    assert pool.sql[-2:] == [saga_store.CLAIM_SQL, saga_store.HAS_REPORT_SQL]
     await saga_store.posted(pool, uuid.uuid4(), "accepted")  # type: ignore[arg-type]
     await saga_store.post_failed(pool, uuid.uuid4())  # type: ignore[arg-type]
     row = {

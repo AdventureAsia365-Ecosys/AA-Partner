@@ -7,11 +7,15 @@ erasure saga, against a fake CIS (the feed and the reports route of ``tenant.era
   (census 0) — each report posted once, a 503 posts the same report again;
 - a plan that changed after the approval is refused and erases nothing; a legal hold blocks the DRY RUN;
 - the pilot is refused in every mode; on Dev a tenant that is not synthetic is never applied;
-- a tenant with no CRM agency: its studio invitations only.
+- a tenant with no CRM agency: its studio invitations only;
+- an agency the owner already erased (AA-942): the apply's entries equal the DRY RUN's, the name is replaced;
+- a bucket error at the end of an apply rolls the whole apply back and the next run redoes it;
+- two runs at once: the request's work lock serialises them, the second makes and posts nothing.
 """
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import hashlib
 import json
@@ -26,12 +30,13 @@ from app.cis.http import HttpResponse
 from app.cis.membership_feed import FeedConfig
 from app.documents import service as documents
 from app.documents.store import MemoryDocumentStore
+from app.errors import Unavailable
 from app.jobs.queue import Job
-from app.lifecycle import policy, saga_rules, tenant_erase
+from app.lifecycle import offboarding, policy, saga_rules, saga_store, tenant_erase
 from app.tenancy import tenant_tx
 from app.vault import Vault
 from tests.integration.test_crm005_intake import _keys, _owner_fetch
-from tests.integration.test_crm010_lifecycle import JPEG, _inquiry, _sql
+from tests.integration.test_crm010_lifecycle import JPEG, _inquiry, _jobs, _sql
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -329,3 +334,113 @@ async def test_a_tenant_without_an_agency_erases_its_studio_invitations(
     assert applied["status"] == "ok" and verified["status"] == "ok"
     assert verified["census"]["pii_rows_found"] == 0
     assert await _invitations(admin, tenant) == 0
+
+
+async def test_an_agency_the_owner_erased_applies_the_entries_of_its_plan(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    """Review S281: the owner's own erase (AA-942) leaves the agency offboarded with its name. The saga's DRY RUN and
+    apply then give the same entries (all erase counts 0, no live key, the name replaced, the invitations deleted)."""
+    keys, store, cis = _keys(), MemoryDocumentStore(), FakeCis()
+    a = await _inquiry(app_pool, keys)
+    tenant, rid = a["tenant"], uuid.uuid4()
+    await _invitation(app_pool, tenant)
+    async with tenant_tx(app_pool, a["owner"], tenant) as ctx:
+        req = await offboarding.request(ctx, export_waived=True)
+        await offboarding.confirm_erase(ctx, uuid.UUID(req["request_id"]), confirm_tenant_id=tenant, dry_run=False)
+    owner_erase = offboarding.build_handler(keys=keys, store=store, dry_run=False, dek_cache_ttl_s=300)
+    [erase_job] = await _jobs(app_pool, "crm_offboard", tenant)
+    await owner_erase(app_pool, erase_job)
+    [agency] = await _owner_fetch(admin, tenant, "SELECT status, display_name FROM crm.tenant")
+    assert agency["status"] == "offboarded" and agency["display_name"] != saga_rules.erased_name(tenant)
+
+    cis.request(rid, tenant)
+    await _handler(cis, keys, store, apply=True)(app_pool, _job())
+    [dry] = cis.mine(rid)
+    tables = {(t["table"], t["action"]): t["rows"] for t in dry["tables"]}
+    assert dry["status"] == "ok" and tables[("crm.tenant", "anonymise")] == 1
+    assert tables[("crm.studio_invitation", "delete")] == 1 and tables[("crm.tenant_key", "shred")] == 0
+    assert tables[("crm.traveler", "delete")] == 0
+    cis.request(rid, tenant, phase="apply", approved=dry["plan_hash"], expires="2026-11-16T03:00:00Z")
+    await _handler(cis, keys, store, apply=True)(app_pool, _job())
+    applied, verified = cis.mine(rid)[1:]
+    assert (applied["status"], applied["plan_hash"]) == ("ok", dry["plan_hash"])
+    assert applied["tables"] == dry["tables"]  # the apply did what the approved plan said, entry by entry
+    assert verified["status"] == "ok" and verified["census"]["pii_rows_found"] == 0
+    [agency] = await _owner_fetch(admin, tenant, "SELECT status, display_name FROM crm.tenant")
+    assert (agency["status"], agency["display_name"]) == ("offboarded", saga_rules.erased_name(tenant))
+    assert await _invitations(admin, tenant) == 0
+
+
+class FlakyStore(MemoryDocumentStore):
+    """The bucket refuses the first ``fail`` deletes."""
+
+    def __init__(self, fail: int) -> None:
+        super().__init__()
+        self.fail = fail
+
+    async def delete(self, key: str) -> None:
+        if self.fail:
+            self.fail -= 1
+            raise Unavailable("documents_unavailable")
+        await super().delete(key)
+
+
+async def test_a_bucket_error_at_the_end_of_an_apply_rolls_it_back_and_the_next_run_redoes_it(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    """Review S281: the objects are deleted last inside the apply's transaction (as the owner's offboarding erase): a
+    bucket error keeps the rows, the keys and no apply report, so the next run applies again and no file is left."""
+    keys, store, cis = _keys(), FlakyStore(fail=0), FakeCis()
+    a = await _agency_with_data(app_pool, keys, store)
+    tenant, rid = a["tenant"], uuid.uuid4()
+    cis.request(rid, tenant)
+    await _handler(cis, keys, store, apply=True)(app_pool, _job())
+    [dry] = cis.mine(rid)
+    cis.request(rid, tenant, phase="apply", approved=dry["plan_hash"], expires="2026-11-16T03:00:00Z")
+    store.fail = 1
+    with pytest.raises(tenant_erase._ObjectsNotDeleted):
+        await _handler(cis, keys, store, apply=True)(app_pool, _job())
+    assert [r["mode"] for r in await _record(admin, rid)] == ["dry_run"] and len(cis.mine(rid)) == 1
+    assert len(await _sql(app_pool, tenant, "SELECT 1 FROM crm.traveler")) == 2
+    assert [k for k in store.objects if k.startswith(f"tenants/{tenant}/")], "no file deleted"
+    keys_left = await _owner_fetch(admin, tenant, "SELECT destroyed_at FROM crm.tenant_key")
+    assert keys_left and all(k["destroyed_at"] is None for k in keys_left), "the key destroy rolled back"
+
+    await _handler(cis, keys, store, apply=True)(app_pool, _job())
+    applied, verified = cis.mine(rid)[1:]
+    assert (applied["status"], applied["plan_hash"], verified["status"]) == ("ok", dry["plan_hash"], "ok")
+    assert not [k for k in store.objects if k.startswith(f"tenants/{tenant}/")], "documents erased"
+
+
+async def test_two_runs_at_once_make_one_report(app_pool: asyncpg.Pool, admin: asyncpg.Connection) -> None:
+    """Review S281: a rolling deploy or a reaped lease runs two workers at once. The request's work lock makes the
+    second wait; under it the second reads the report the first made, and neither records nor posts a second one."""
+    keys, store, cis = _keys(), MemoryDocumentStore(), FakeCis()
+    tenant, rid = uuid.uuid4(), uuid.uuid4()
+    cis.request(rid, tenant)
+    req = saga_rules.parse_request(cis.items[str(rid)])
+    assert isinstance(req, saga_rules.SagaRequest) and await saga_store.upsert_request(app_pool, req)
+    body = saga_rules.report_body(
+        req, report_id=uuid.uuid4(), mode="dry_run", outcome="refused", error_code="pilot_refused", reported_at=NOW
+    )
+
+    async with app_pool.acquire() as first, app_pool.acquire() as second:
+
+        async def other_run() -> bool:
+            async with second.transaction():
+                return await saga_store.claim(second, rid, req.round, "dry_run")
+
+        async with first.transaction():
+            assert await saga_store.claim(first, rid, req.round, "dry_run")
+            waiting = asyncio.create_task(other_run())
+            await asyncio.sleep(0.3)
+            assert not waiting.done(), "the second run waits for the lock"
+            assert await saga_store.insert_report(first, body)
+        assert await waiting is False  # under the lock it reads the report the first run made
+
+    # A run that read the record before the other committed: its work finds the report and keeps nothing.
+    handler = _handler(cis, keys, store, apply=True)
+    assert await handler._report(app_pool, req, "dry_run", _job()) is None
+    assert [(r["mode"], r["outcome"]) for r in await _record(admin, rid)] == [("dry_run", "refused")]
+    assert cis.reports == []

@@ -18,7 +18,10 @@ Migrate exempt: a row exists only while it is due or running):
 2. **Work**, per stored request with an active crm step (CIS decides the round) or a report not posted yet: first the
    reports not posted yet are posted again (same report id and body), then the report the step owes now
    (:func:`app.lifecycle.saga_rules.next_mode`), each written to ``crm.tenant_erasure_report`` in the transaction that
-   did the work, then posted to ``POST /tenant/v1/erasure-requests/{id}/reports``:
+   did the work, then posted to ``POST /tenant/v1/erasure-requests/{id}/reports``. Each work transaction first takes
+   the request's work lock and reads the record again under it (:func:`app.lifecycle.saga_store.claim`): two runs at
+   once (a rolling deploy, a reaped lease, a run longer than its slot) never make one report twice, and a run that finds
+   the report made by the other posts nothing (the next run posts the stored one):
 
    - **dry_run**: the plan (:func:`plan`): every count of ``crm.erase_subject('tenant')`` in DRY RUN, the keys the
      crypto-shred would destroy, the agency row whose name is replaced, the tenant's Content studio invitations
@@ -32,9 +35,14 @@ Migrate exempt: a row exists only while it is due or running):
      every tenant table outside the crm-010 keep list (as ``crm_eraser``; CRM16 if a table is left), the agency's
      keys are destroyed (crypto-shred) and a canary sealed before must no longer open, the agency row keeps no name
      (:func:`app.lifecycle.saga_rules.erased_name`) and becomes ``offboarded``, the tenant's studio invitations are
-     deleted, the report and the audit row are written; the bucket objects (documents, exports) are deleted last, so a
-     refusal deletes no file. A refusal of the database (a hold placed meanwhile, CRM16, a failed canary) rolls it all
-     back and is reported ``refused`` / ``failed`` with its code.
+     deleted, the report and the audit row are written, and last, still before the commit, the bucket objects
+     (documents, exports) are deleted (as the owner's offboarding erase): a refusal deletes no file, and a bucket error
+     rolls the rows, the key destroy and the report back, so the next run redoes the whole apply (a missing object
+     counts as deleted). A refusal of the database (a hold placed meanwhile, CRM16, a failed canary) rolls it all back
+     and is reported ``refused`` / ``failed`` with its code.
+     An agency the owner already erased (``offboarded``, AA-942) is applied with the same entries as its plan: the DRY
+     RUN counts read again (crm.erase_subject runs only on an agency in ``offboarding``; that erase left no row, CRM16,
+     so a count above 0 is ``failed`` ``rows_left_after_offboarding``), a key still live destroyed, the name replaced.
    - **verify**, right after an apply CIS accepted: the census (:func:`app.lifecycle.saga_store.census`) reads, from a
      new transaction, every ``pii:`` column (DM-6.1) of every crm table with a tenant column, and the tenant's studio
      invitations, and counts the tenant's rows that still hold a value: ``ok`` at 0, else ``failed``
@@ -103,6 +111,7 @@ SELECT request_id, export_object_key FROM crm.erasure_request
 CANCEL_REQUEST_SQL = "UPDATE crm.erasure_request SET status = 'cancelled' WHERE request_id = $1"
 OFFBOARDING_SQL = "UPDATE crm.tenant SET status = 'offboarding' WHERE tenant_id = $1 AND status IN ('active', 'locked')"
 ERASED_SQL = "UPDATE crm.tenant SET display_name = $2, status = 'offboarded' WHERE tenant_id = $1"
+NAME_SQL = "UPDATE crm.tenant SET display_name = $2 WHERE tenant_id = $1"
 
 
 class _FeedError(Exception):
@@ -112,7 +121,12 @@ class _FeedError(Exception):
 
 
 class _ObjectsNotDeleted(RuntimeError):
-    """A bucket refused an object delete at the end of an apply: retried by the worker, not a refusal."""
+    """A bucket refused an object delete at the end of an apply, before the commit: the apply rolls back (rows, keys,
+    report) and the worker retries it whole. Not a ServiceError, so it is never reported as a refusal."""
+
+
+class _AlreadyMade(RuntimeError):
+    """Another run made this request's report of the mode for the round first: this run's work rolls back."""
 
 
 # ── the plan and the census ──────────────────────────────────────────────────────────────────────────────────────
@@ -244,6 +258,8 @@ class TenantErase:
             if mode is None:
                 return
             body = await self._report(pool, req, mode, job)
+            if body is None:
+                return  # another run made it: the next run posts the stored report
             counts["reports"] += 1
             log.info(
                 "crm_tenant_erase_report request_id=%s round=%d mode=%s status=%s code=%s",
@@ -280,8 +296,9 @@ class TenantErase:
         log.error("crm_tenant_erase_report_refused request_id=%s code=%s", body["request_id"], code)
         return True
 
-    async def _report(self, pool: asyncpg.Pool, req: rules.SagaRequest, mode: str, job: Job) -> dict[str, Any]:
-        """Compute, record (in the work's transaction) and return the report of ``mode``."""
+    async def _report(self, pool: asyncpg.Pool, req: rules.SagaRequest, mode: str, job: Job) -> dict[str, Any] | None:
+        """Compute, record (in the work's transaction) and return the report of ``mode``; None when another run made it
+        first (nothing of this run is kept)."""
         report_id, now = uuid.uuid4(), self._now()
 
         def body(outcome: str, **kw: Any) -> dict[str, Any]:
@@ -299,18 +316,20 @@ class TenantErase:
             else:
                 async with lifecycle_tx(pool, req.tenant_id, actor=ACTOR, statuses=STATUSES) as ctx:
                     out = await self._step(ctx.conn, ctx, req, mode, body)
-            objects = out.pop("_objects", [])
+        except _AlreadyMade:
+            return None
         except ServiceError as exc:
             # The work rolled back (a hold placed meanwhile, CRM16, a failed canary, an unreadable census table):
-            # nothing was erased; the report says why, in a transaction of its own.
+            # nothing was erased; the report says why, in a transaction of its own (under the same work lock).
             outcome = "refused" if isinstance(exc, Conflict) else "failed"
-            out = body(outcome, error_code=_code(exc.code))
-            await saga_store.without_agency(pool, req.tenant_id, lambda conn: saga_store.insert_report(conn, out))
-            return out
-        try:
-            await erase.delete_objects(self._store, objects)  # last: after the commit of rows, report and audit
-        except ServiceError as exc:
-            raise _ObjectsNotDeleted(exc.code) from exc
+            refused = body(outcome, error_code=_code(exc.code))
+
+            async def record(conn: asyncpg.Connection) -> dict[str, Any] | None:
+                if not await saga_store.claim(conn, req.request_id, req.round, mode):
+                    return None
+                return refused if await saga_store.insert_report(conn, refused) else None
+
+            return await saga_store.without_agency(pool, req.tenant_id, record)
         return out
 
     async def _step(
@@ -321,6 +340,8 @@ class TenantErase:
         mode: str,
         body: Callable[..., dict[str, Any]],
     ) -> dict[str, Any]:
+        if not await saga_store.claim(conn, req.request_id, req.round, mode):
+            raise _AlreadyMade  # before any work: another run made this report while this one waited for the lock
         agency = await _agency(ctx) if ctx is not None else None
         code = rules.guard(
             req, mode, environment=self._environment, agency=agency, apply_enabled=flag(self._apply_enabled),
@@ -336,7 +357,8 @@ class TenantErase:
         else:
             out = await self._dry_or_apply(conn, ctx, agency, req, mode, body)
         objects = out.pop("_objects", [])
-        await saga_store.insert_report(conn, out)
+        if not await saga_store.insert_report(conn, out):
+            raise _AlreadyMade  # under the lock this cannot happen; never post a report the record does not hold
         if ctx is not None:
             ctx.audit(
                 f"tenant_erasure_{mode}",
@@ -346,7 +368,13 @@ class TenantErase:
                 reason=out["error_code"] or out["status"],
                 object_ids=(f"cis_erasure:{req.request_id}",),
             )
-        return {**out, "_objects": objects}
+        # Last, still before the commit (as offboarding._erase): the bucket objects of the apply. A bucket error is not
+        # a refusal (not a ServiceError): rows, keys and report roll back and the next run redoes the apply.
+        try:
+            await erase.delete_objects(self._store, objects)
+        except ServiceError as exc:
+            raise _ObjectsNotDeleted(exc.code) from exc
+        return out
 
     async def _dry_or_apply(
         self,
@@ -381,11 +409,25 @@ class TenantErase:
         agency: dict[str, Any] | None,
         req: rules.SagaRequest,
     ) -> tuple[list[dict[str, Any]], list[str]]:
-        """The erase itself, in the caller's transaction (the bucket objects are returned, deleted after the commit)."""
+        """The erase itself, in the caller's transaction (the bucket objects are returned: deleted last, before the
+        commit). Its entries are the plan's: the same erase-count keys, the keys shredded, the name replaced."""
         objects: list[str] = []
         counts = None
         destroyed = name = 0
-        if ctx is not None and agency is not None and agency["status"] != "offboarded":
+        if ctx is not None and agency is not None and agency["status"] == "offboarded":
+            # Erased before by the owner's own offboarding (AA-942): crm.erase_subject runs on an agency in offboarding
+            # only, and that erase left no row outside the keep list (CRM16). The plan's DRY RUN counts are read again
+            # (the same keys, all 0); a row left would be erased by nobody, so it is a failure, not an ok report.
+            counts = await erase.erase(ctx, "tenant", ctx.tenant_id, dry_run=True)
+            if any(counts.values()):
+                raise Unavailable("rows_left_after_offboarding", "an offboarded agency still holds rows to erase")
+            if await ctx.conn.fetchval(LIVE_KEYS_SQL):
+                assert self._keys is not None  # noqa: S101 — checked before the transaction
+                destroyed = await self._keys.destroy(ctx)  # type: ignore[arg-type]
+            name = 0 if agency["display_name"] == rules.erased_name(ctx.tenant_id) else 1
+            if name:
+                await ctx.conn.execute(NAME_SQL, ctx.tenant_id, rules.erased_name(ctx.tenant_id))
+        elif ctx is not None and agency is not None:
             for row in await ctx.conn.fetch(OPEN_REQUESTS_SQL):
                 await ctx.conn.execute(CANCEL_REQUEST_SQL, row["request_id"])
                 if row["export_object_key"]:
@@ -401,8 +443,6 @@ class TenantErase:
                 raise Unavailable("verify_failed", "a value sealed before the key destroy still opens")
             name = 0 if agency["display_name"] == rules.erased_name(ctx.tenant_id) else 1
             await ctx.conn.execute(ERASED_SQL, ctx.tenant_id, rules.erased_name(ctx.tenant_id))
-        elif ctx is not None:
-            counts = {}  # erased before (the owner's own offboarding): nothing of the agency is left to erase
         invitations = await saga_store.studio_invitations(conn, req.tenant_id, dry_run=False)
         tables = rules.plan_entries(counts, live_keys=destroyed, name_to_erase=name, invitations=invitations)
         return tables, objects

@@ -35,7 +35,21 @@ did not exist. Two PRs: crm-066 / crm-067 (migration-only, MIG-4), then this cod
   DRY RUN needs no switch.
 - **The owner's own flow** (AA-942 / AA-967) stays: while the owner's erase runs (agency `offboarding`) the saga is
   `blocked` / `refused` with `owner_erasure_running`; the owner's open requests (requested, export ready, failed) are
-  cancelled by the saga's apply; an agency the owner already erased (`offboarded`) applies only the invitations.
+  cancelled by the saga's apply. An agency the owner already erased (`offboarded`) is applied with the entries of its
+  plan (review S281): the DRY RUN counts read again (all 0: `crm.erase_subject` runs only on an agency in
+  `offboarding`, and the owner's erase left no row, CRM16; a count above 0 is `failed` `rows_left_after_offboarding`),
+  a key still live destroyed, the name replaced (`crm.tenant anonymise 1`), the invitations deleted. The apply's
+  tables equal the DRY RUN's.
+- **One run per request at a time** (review S281): each work transaction starts with
+  `pg_advisory_xact_lock(hashtextextended('crm_tenant_erase:' || request_id, 0))` and reads the round's report of the
+  mode again under it (`saga_store.claim`). Two runs at once (a rolling deploy with WORKER_ENABLED on both tasks, a
+  reaped lease, a run longer than its slot) never make a report twice: the second rolls back and posts nothing; the
+  next run posts the stored report. An insert that meets the row also rolls back instead of posting an unrecorded body.
+- **Bucket objects deleted last, inside the apply's transaction** (review S281, as `offboarding._erase`): after the
+  report and audit rows, before the commit. A bucket error (`_ObjectsNotDeleted`, not a ServiceError) rolls back the
+  rows, the key destroy and the report, and the worker retries the whole apply (a missing object counts as deleted).
+  Before the fix the objects were deleted after the commit: a bucket error left the files with an `ok` report that no
+  run would redo.
 
 ## Changed (vs the lane brief)
 
@@ -62,4 +76,5 @@ did not exist. Two PRs: crm-066 / crm-067 (migration-only, MIG-4), then this cod
   Infra flag true for the CRM API, then back to false.
 - Tests: `tests/unit/test_aa1093_tenant_erase.py` (rules, feed, posting, schedule, record SQL),
   `tests/integration/test_aa1093_tenant_erase_db.py` (full rounds on a real agency, plan changed, guards, a tenant
-  without an agency).
+  without an agency, an agency the owner erased first, a bucket error that rolls the apply back, two runs at once on
+  the work lock).
