@@ -50,7 +50,9 @@ async def _erase(pool: asyncpg.Pool, actor: str, cis_tenant: uuid.UUID, dry_run:
 async def _count(pool: asyncpg.Pool, cis_tenant: uuid.UUID) -> int:
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.actor', $1, true)", PLATFORM)
-        return int(await conn.fetchval("SELECT count(*) FROM crm.studio_invitation WHERE cis_tenant_id = $1", cis_tenant))
+        return int(
+            await conn.fetchval("SELECT count(*) FROM crm.studio_invitation WHERE cis_tenant_id = $1", cis_tenant)
+        )
 
 
 async def test_registered_and_platform_tables(admin: asyncpg.Connection) -> None:
@@ -72,8 +74,9 @@ async def test_one_report_per_request_round_and_mode(app_pool: asyncpg.Pool) -> 
     async with app_pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.actor', $1, true)", JOB)
         await conn.execute(
-            "INSERT INTO crm.tenant_erasure_saga (request_id, subject_tenant_id, phase, round, step_status, not_before, "
-            "is_pilot, is_synthetic, cis_updated_at) VALUES ($1, $2, 'dry_run', 2, 'active', now(), false, true, now())",
+            "INSERT INTO crm.tenant_erasure_saga (request_id, subject_tenant_id, phase, round, step_status, "
+            "not_before, is_pilot, is_synthetic, cis_updated_at) "
+            "VALUES ($1, $2, 'dry_run', 2, 'active', now(), false, true, now())",
             rid,
             uuid.uuid4(),
         )
