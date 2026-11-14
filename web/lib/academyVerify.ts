@@ -7,10 +7,14 @@
 // cap for the whole host. One visitor refreshing in a loop would then lock everybody out. So the web counts each
 // visitor (CloudFront-Viewer-Address, IPv6 per /64, lib/intakeForms.ts viewerKey) before it calls CIS:
 //
-//   - the per-minute limit is the CIS setting itself, read from the X-RateLimit-Limit header CIS sends with its verify
-//     answers (never a literal or an env var here; the tech lead changes it on the CIS settings page);
-//   - until CIS has sent that header (an older CIS release), a visitor may have one verify call in flight at a time
-//     and no more (a structural rule, not a number), and CIS's own limit still caps the host;
+//   - the per-minute limit is the CIS setting cis.learn.verify_visitor_requests_per_minute, read from the
+//     X-Learn-Visitor-Limit header CIS sends on every verify answer, 200, 404, 429 and 503 alike (contract
+//     learn.http.v1 1.1). CIS clamps it to its per-address limit minus one, so one visitor can never take the whole
+//     host budget. Never a literal or an env var here: the tech lead changes it on the CIS settings page, and the web
+//     follows on the next answer;
+//   - until CIS has sent that header (the first call of a process, or a CIS release before contract 1.1), a visitor
+//     may make one verify call per minute and have one in flight (a structural "one until told", not a tunable
+//     number); CIS's own limit still caps the host;
 //   - a CIS 429 is passed on with its Retry-After.
 //
 // State is per process (one web task on Dev; each task counts its own visitors, like the CRM API's in-process limits).
@@ -21,7 +25,10 @@ import { CERT_CODE, LEARN_PUBLIC_VERIFY_PREFIX } from "./academyBff";
 
 const VERIFY_TIMEOUT_MS = 10_000; // technical constant: one public CIS call
 const MAX_TRACKED_VISITORS = 10_000; // technical constant: memory bound of the window map (cleared past it)
-const LIMIT_HEADER = "x-ratelimit-limit";
+/** The per-visitor limit header of the CIS verify answers (learn.http.v1 1.1 components/headers/VisitorLimit). */
+export const VISITOR_LIMIT_HEADER = "x-learn-visitor-limit";
+/** Calls one visitor may make per minute before CIS has stated its limit: one, until told (not a tunable value). */
+const UNTIL_TOLD_PER_MINUTE = 1; // technical constant: structural fallback, the real limit is the CIS setting
 const CODE_RE = new RegExp(`^${CERT_CODE}$`);
 
 export function isCertificateCode(code: string): boolean {
@@ -34,12 +41,13 @@ interface Window {
 }
 
 export class VisitorLimiter {
-  /** The per-visitor, per-minute limit last reported by CIS; null until CIS sent one. */
+  /** The per-visitor, per-minute limit last reported by CIS (X-Learn-Visitor-Limit); null until CIS sent one. */
   limit: number | null = null;
   private windows = new Map<string, Window>();
   private inflight = new Map<string, number>();
 
-  /** Take the limit CIS reported (a positive integer header value); anything else leaves the known limit. */
+  /** Take the limit CIS reported (a positive integer header value, raised or lowered); anything else leaves the known
+   * limit. */
   learn(headerValue: string | null | undefined): void {
     const raw = (headerValue ?? "").trim();
     if (!/^\d{1,6}$/.test(raw)) return;
@@ -53,10 +61,12 @@ export class VisitorLimiter {
     return w && w.minute === minute ? w.count : 0;
   }
 
-  /** Seconds to wait when `visitor` may not call now, or null. */
+  /** Seconds to wait when `visitor` may not call now, or null. Until CIS stated its limit: one call per minute and
+   * none while one is in flight. */
   private refusal(visitor: string, nowMs: number, minute: number): number | null {
-    if (this.limit === null) return (this.inflight.get(visitor) ?? 0) > 0 ? 1 : null;
-    return this.count(visitor, minute) >= this.limit ? 60 - (Math.floor(nowMs / 1000) % 60) : null;
+    if (this.limit === null && (this.inflight.get(visitor) ?? 0) > 0) return 1;
+    const perMinute = this.limit ?? UNTIL_TOLD_PER_MINUTE;
+    return this.count(visitor, minute) >= perMinute ? 60 - (Math.floor(nowMs / 1000) % 60) : null;
   }
 
   private release(visitor: string): void {
@@ -131,7 +141,7 @@ export async function verifyCertificate(
       redirect: "manual",
       signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
     });
-    limiter.learn(res.headers.get(LIMIT_HEADER));
+    limiter.learn(res.headers.get(VISITOR_LIMIT_HEADER));
     return await outcomeOf(res);
   } catch {
     return { kind: "unavailable" };

@@ -1,5 +1,5 @@
 // AA-1105: the pure parts of the AA Academy web: the public verify page's per-visitor limit (from the CIS setting the
-// API reports, never a literal), the verify call, the lesson Markdown reader (no HTML, only https links open), the FSRS
+// API reports in X-Learn-Visitor-Limit, never a literal), the verify call, the lesson Markdown reader (no HTML, only https links open), the FSRS
 // review submission the CIS checks accept, the quiz helpers, the EN/VI strings and the page components' rendering.
 // Fake names and values only.
 import { createElement } from "react";
@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { errorKind, lessonNeighbours, pathProgress, quizResponses, retakeWaiting, toggleChoice, verifyUrl, type PathSummary, type ReviewCard } from "@/lib/academy";
 import { parseBlocks, parseInline, safeHref } from "@/lib/academyMarkdown";
 import { reviewSubmission, retention } from "@/lib/academyReview";
-import { isCertificateCode, verifyCertificate, VisitorLimiter } from "@/lib/academyVerify";
+import { isCertificateCode, verifyCertificate, VISITOR_LIMIT_HEADER, VisitorLimiter } from "@/lib/academyVerify";
 import { academyEn, academyVi, say } from "@/lib/i18nAcademy";
 import { MESSAGES } from "@/lib/i18n";
 
@@ -22,14 +22,42 @@ const CODE = "Abcdefghij_klmnopqr-12";
 const CIS = "https://cis-api.example.test";
 
 describe("verify page limit", () => {
-  it("before CIS reports its limit: one call in flight per visitor, others are free", () => {
+  it("before CIS states its limit: one call per visitor per minute and none while one is in flight", () => {
     const l = new VisitorLimiter();
     const a = l.admit("v1", 0);
     expect(a.ok).toBe(true);
     expect(l.admit("v1", 0)).toEqual({ ok: false, retryAfterS: 1 });
     expect(l.admit("v2", 0).ok).toBe(true);
     if (a.ok) a.release();
-    expect(l.admit("v1", 0).ok).toBe(true);
+    // S281 review: a visitor reloading one call after another is still held to a per-minute window.
+    expect(l.admit("v1", 30_000)).toEqual({ ok: false, retryAfterS: 30 });
+    expect(l.admit("v1", 60_000).ok).toBe(true);
+  });
+
+  it("reads the per-visitor header of contract learn.http.v1 1.1, never the generic rate limit header", () => {
+    expect(VISITOR_LIMIT_HEADER).toBe("x-learn-visitor-limit");
+  });
+
+  it("a sequential reload loop is refused by the web once the minute's allowance is used", async () => {
+    const l = new VisitorLimiter();
+    // CIS answers every call (404 here) with its per-visitor limit, as api/routers/learn.py does on 200/404/429/503.
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 404, headers: { "X-Learn-Visitor-Limit": "6" } }));
+    const kinds: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      kinds.push((await verifyCertificate(CIS, CODE, "198.51.100.20:1000", { limiter: l, fetchImpl, nowMs: 120_000 + i * 100 })).kind);
+    }
+    expect(kinds.filter((k) => k === "not_found")).toHaveLength(6);
+    expect(kinds.slice(6).every((k) => k === "rate_limited")).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(6);
+    // Another visitor behind the same web still gets through.
+    expect((await verifyCertificate(CIS, CODE, "198.51.100.21:1000", { limiter: l, fetchImpl, nowMs: 121_000 })).kind).toBe("not_found");
+  });
+
+  it("follows a lowered setting on the next answer", () => {
+    const l = new VisitorLimiter();
+    l.learn("6");
+    l.learn("2");
+    expect(l.limit).toBe(2);
   });
 
   it("after CIS reports its limit: that many calls per visitor per minute, then the next minute", () => {
@@ -58,14 +86,14 @@ describe("verify page limit", () => {
     const ok = vi.fn<typeof fetch>(async () =>
       Response.json(
         { path_id: "fundamentals", path_title: "Fundamentals", holder_display_name: "Test Learner", issued_at: "2026-11-01T00:00:00Z", expires_at: null, status: "valid", module_versions: [] },
-        { headers: { "X-RateLimit-Limit": "30" } },
+        { headers: { "X-Learn-Visitor-Limit": "29" } },
       ),
     );
     const res = await verifyCertificate(CIS, CODE, "198.51.100.7:443", { limiter: l, fetchImpl: ok });
     expect(res.kind).toBe("ok");
     expect(ok.mock.calls[0][0]).toBe(`${CIS}/learn/public/v1/certificates/${CODE}`);
     expect(new Headers(ok.mock.calls[0][1]?.headers).get("authorization")).toBeNull();
-    expect(l.limit).toBe(30);
+    expect(l.limit).toBe(29);
 
     const nf = vi.fn(async () => new Response("{}", { status: 404 }));
     expect((await verifyCertificate(CIS, CODE, null, { limiter: l, fetchImpl: nf })).kind).toBe("not_found");

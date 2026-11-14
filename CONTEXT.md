@@ -2896,8 +2896,10 @@ Root ADR 0022 decisions 2 and 6 (D17): one learner front door on its own host `a
   from the academy origin (`/academy/captions/<lesson>/<lang>`: fresh presigned URLs, S3 hosts only, WebVTT only); the
   video plays straight from S3.
 - **Public verify page** `/verify/<code>`: no sign-in, no Referer, not indexed; the web limits its own visitors
-  (`web/lib/academyVerify.ts`, per CloudFront viewer address) with the CIS setting `cis.learn.verify_requests_per_minute`
-  as CIS reports it in `X-RateLimit-Limit` (one call in flight per visitor until it does).
+  (`web/lib/academyVerify.ts`, per CloudFront viewer address) with the CIS setting
+  `cis.learn.verify_visitor_requests_per_minute` as CIS reports it in `X-Learn-Visitor-Limit` on every verify answer
+  (contract `learn.http.v1` 1.1; CIS clamps it below its per-address limit `cis.learn.verify_requests_per_minute`, which
+  all the web's visitors share); until CIS has said it, one call per visitor per minute and none while one is in flight.
 - **Pages** (kit only: `app/_kit/local/AcademyShell.tsx` over `PageFrame`; EN with VI in `web/lib/i18nAcademy.ts`):
   catalogue `/academy`, module, lesson reader (cited sources, video, progress), module and final quiz (started on
   click, graded on the server), spaced review (ts-fsrs in the browser), certificates with a share link.
