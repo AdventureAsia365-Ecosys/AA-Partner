@@ -451,8 +451,11 @@ async def test_an_agent_lowering_the_charge_above_the_threshold_needs_the_owner(
     with pytest.raises(Forbidden) as err:
         policy.require_allowed(tenant_ctx(_world(), role="agent"), agent, TRIP)
     assert err.value.code == "cancel_charge_owner_only"
+    # AA-1096 S280: the dry run and the refusal name the limit the agent is held to, in the base currency
+    assert agent.view()["owner_limit"] == {"limit": "100.00", "limit_currency": "USD"}
+    assert (err.value.extra["limit"], err.value.extra["limit_currency"]) == ("100.00", "USD")
     owner = await policy.assess(tenant_ctx(_world(), role="owner"), TRIP, PAID, waive)
-    assert not owner.needs_owner
+    assert not owner.needs_owner and owner.view()["owner_limit"] is None
     policy.require_allowed(tenant_ctx(_world(), role="owner"), owner, TRIP)
     small = await policy.assess(tenant_ctx(_world(), role="agent"), TRIP, PAID,
                                 rules.Decision("override", D("200"), "Partial rebook"))  # fmt: skip

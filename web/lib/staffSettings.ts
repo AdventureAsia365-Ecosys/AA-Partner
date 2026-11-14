@@ -11,6 +11,10 @@ import { formatMoney } from "./ledger";
 export const SETTING_KEYS = [
   "ai_enabled",
   "ai_budget_usd",
+  "ai_budget_max_usd",
+  "ai_budget_max_own",
+  "intake_form_per_hour",
+  "intake_form_per_hour_own",
   "timezone",
   "base_currency",
   "booking_validation_level",
@@ -54,30 +58,59 @@ function count(value: unknown): number | null {
   return Number.isFinite(n) && String(value).trim() !== "" ? n : null;
 }
 
-/** The value as staff read it: On / Off, "2.00 USD a month", "Basic", "30 days", the setup steps by name, "—" when
- * the agency has none. Never re-computes money (the API sends the decimal string). */
-export function settingValue(lang: Lang, key: string, value: unknown, locale: string): string {
-  if (value === null || value === undefined || value === "") return "—";
+type Format = (lang: Lang, key: string, value: unknown, locale: string) => string;
+
+function countText(key: string): Format {
+  return (lang, _key, value) => {
+    const n = count(value);
+    if (n === null) return String(value);
+    return plural(lang, DAYS.has(key) ? "staff.setting.days" : "staff.setting.months", n);
+  };
+}
+
+const perMonth: Format = (lang, _key, value, locale) =>
+  fmt(t(lang, "staff.setting.perMonth"), { amount: formatMoney(String(value), "USD", locale) });
+// AA-1096 S280: whether a registry value is the agency's own (set by AA) or the platform's
+const own: Format = (lang, _key, value) =>
+  typeof value === "boolean" ? t(lang, value ? "staff.setting.own.true" : "staff.setting.own.false") : String(value);
+
+/** Keys with a format of their own; every other key by its value's shape (:func:`byShape`). */
+const FORMATS: Record<string, Format> = {
+  ai_budget_usd: perMonth,
+  ai_budget_max_usd: perMonth,
+  ai_budget_max_own: own,
+  intake_form_per_hour_own: own,
+  intake_form_per_hour: (lang, _key, value) => {
+    const n = count(value);
+    if (n === null) return String(value);
+    return n === 0 ? t(lang, "staff.setting.noLimit") : fmt(t(lang, "staff.setting.perHour"), { n });
+  },
+  trash_days: countText("trash_days"),
+  invoice_due_days: countText("invoice_due_days"),
+  auto_archive_months: countText("auto_archive_months"),
+  booking_validation_level: (lang, _key, value) => codeText(lang, "staff.setting.level", String(value)),
+  fx_mode: (lang, _key, value) => codeText(lang, "staff.setting.fx", String(value)),
+};
+
+function byShape(lang: Lang, key: string, value: unknown): string {
   if (BOOLEANS.has(key) || typeof value === "boolean") {
     if (typeof value !== "boolean") return String(value);
     return t(lang, value ? "staff.setting.on" : "staff.setting.off");
   }
-  if (key === "ai_budget_usd") {
-    return fmt(t(lang, "staff.setting.perMonth"), { amount: formatMoney(String(value), "USD", locale) });
-  }
-  if (DAYS.has(key) || key === "auto_archive_months") {
-    const n = count(value);
-    if (n === null) return String(value);
-    return plural(lang, DAYS.has(key) ? "staff.setting.days" : "staff.setting.months", n);
-  }
-  if (key === "booking_validation_level") return codeText(lang, "staff.setting.level", String(value));
-  if (key === "fx_mode") return codeText(lang, "staff.setting.fx", String(value));
   if (Array.isArray(value)) {
     if (value.length === 0) return t(lang, "staff.setting.none");
     const prefix = STEP_LISTS.has(key) ? "onb.step" : "";
     return value.map((v) => (prefix ? codeText(lang, prefix, String(v)) : String(v))).join(", ");
   }
   return String(value);
+}
+
+/** The value as staff read it: On / Off, "2.00 USD a month", "Basic", "30 days", the setup steps by name, "—" when
+ * the agency has none. Never re-computes money (the API sends the decimal string). */
+export function settingValue(lang: Lang, key: string, value: unknown, locale: string): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const format = FORMATS[key];
+  return format ? format(lang, key, value, locale) : byShape(lang, key, value);
 }
 
 /** The rows of the card: the known keys in the API's order, then any key this web does not know yet (never hidden). */

@@ -37,6 +37,7 @@ import { partnersEn, partnersVi } from "./i18nPartners";
 import { bookNowEn, bookNowVi } from "./i18nBookNow";
 import { inclusionsEn, inclusionsVi } from "./i18nInclusions";
 import { tagsEn, tagsVi } from "./i18nTags";
+import { settingsUxEn, settingsUxVi } from "./i18nSettingsUx";
 
 export type Lang = "en" | "vi";
 export const LOCALE_COOKIE = "aa_crm_locale";
@@ -87,6 +88,7 @@ const en = {
   ...bookNowEn, // AA-1072: Book now on the tour page, Pay online, Settings > online payment and booking
   ...inclusionsEn, // AA-1070 crm-35: Settings > Proposal lines, the builder picker, the client lists (lib/i18nInclusions.ts)
   ...tagsEn, // AA-960: tags, system tags, bulk tagging, Settings > Tags, coverage, ready to travel again (lib/i18nTags.ts)
+  ...settingsUxEn, // AA-1096 S280: per-form fields and quota, refund limit, markup / price-check notes (lib/i18nSettingsUx.ts)
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Home",
@@ -484,7 +486,7 @@ const en = {
   "forms.copy": "Copy",
   "forms.copied": "Copied",
   "forms.origins": "Websites that may show the form",
-  "forms.originsHelp": "One https:// address per line, e.g. https://www.your-agency.com",
+  "forms.originsHelp": "One address per line, at most 10: https://host or https://host:port, with no path, e.g. https://www.your-agency.com",
   "forms.privacy": "Privacy notice link (shown on the form)",
   "forms.active": "On",
   "forms.disabled": "Off",
@@ -2812,6 +2814,7 @@ const vi: Record<MessageKey, string> = {
   ...bookNowVi,
   ...inclusionsVi,
   ...tagsVi,
+  ...settingsUxVi,
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Trang chủ",
@@ -3209,7 +3212,7 @@ const vi: Record<MessageKey, string> = {
   "forms.copy": "Sao chép",
   "forms.copied": "Đã sao chép",
   "forms.origins": "Website được nhúng biểu mẫu",
-  "forms.originsHelp": "Mỗi dòng một địa chỉ https://, ví dụ https://www.dai-ly-cua-ban.vn",
+  "forms.originsHelp": "Mỗi dòng một địa chỉ, tối đa 10: https://tên-miền hoặc https://tên-miền:cổng, không có đường dẫn phía sau, ví dụ https://www.dai-ly-cua-ban.vn",
   "forms.privacy": "Đường dẫn thông báo quyền riêng tư (hiện trên biểu mẫu)",
   "forms.active": "Đang bật",
   "forms.disabled": "Đã tắt",

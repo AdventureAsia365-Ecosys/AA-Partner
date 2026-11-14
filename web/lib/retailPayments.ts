@@ -5,7 +5,10 @@
 // strings the API computed; nothing is re-computed here (only the typed input is checked before it is sent).
 
 import type { Tone } from "@/app/_kit";
+import type { DateLocale } from "@/lib/dates";
 import { fmt } from "@/lib/i18n";
+import { thresholdLimit } from "@/lib/invoices";
+import { formatAmount } from "@/lib/proposals";
 
 export type ScheduleKind = "deposit" | "instalment" | "balance";
 export const SCHEDULE_KINDS: readonly ScheduleKind[] = ["deposit", "instalment", "balance"];
@@ -92,6 +95,8 @@ export interface CancelCharge {
   invoice_amount: string;
   warnings: string[];
   needs_owner: boolean;
+  /** AA-1096 S280: with needs_owner, the refund threshold the agent is held to (base currency). */
+  owner_limit?: { limit: string; limit_currency: string } | null;
   aa_fee_amount?: string | null;
   /** AA-1070 (crm-13): AA cancelled the departure: the charge is 0 by rule (waived), the dialog cannot change it. */
   forced?: boolean;
@@ -286,4 +291,12 @@ export function paymentsErrorKey(detail: string): string | null {
     "no_starter_mail",
   ]);
   return known.has(detail) ? `payments.err.${detail}` : null;
+}
+
+/** The owner-only words of the cancel dialog (``key``: the dry run's note or the refusal's), naming the limit an agent
+ *  is held to when the API sends it (``limit`` / ``limit_currency`` of the charge's owner_limit or of the 403 body;
+ *  AA-1096 S280). */
+export function ownerOnlyText(tr: (key: string) => string, locale: DateLocale, key: string, source: unknown): string {
+  const limit = thresholdLimit(source);
+  return limit ? fmt(tr("cancelCharge.needsOwnerLimit"), { limit: formatAmount(limit.amount, limit.currency, locale) }) : tr(key);
 }

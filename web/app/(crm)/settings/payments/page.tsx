@@ -5,7 +5,7 @@
 // own online gateway (VNPay) and the "Book now" switch. Owner only: other roles see why without calling the API.
 import Link from "next/link";
 import { ErrorState, K } from "@/app/_kit";
-import { PageTitle } from "@/components/PageTitle";
+import { PageTitle, Panel } from "@/components/PageTitle";
 import { InvoiceSettingsForm } from "@/components/invoices/InvoiceSettingsForm";
 import { PaymentMethodsForm } from "@/components/invoices/PaymentMethodsForm";
 import { PaymentsView } from "@/components/ledger/PaymentsView";
@@ -15,7 +15,7 @@ import { OnlineBookingForm, type OnlineBookingView } from "@/components/settings
 import { OnlinePaymentForm, type GatewayStatus } from "@/components/settings/OnlinePaymentForm";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
-import { t } from "@/lib/i18n";
+import { t, type MessageKey } from "@/lib/i18n";
 import type { InvoiceSettings, PaymentMethodsView } from "@/lib/invoices";
 import type { FxOverride, PaymentSettings } from "@/lib/ledger";
 import type { ScheduleSettings } from "@/lib/retailPayments";
@@ -55,6 +55,11 @@ export default async function PaymentsSettingsPage() {
     crmCall<OnlineBookingView>(ctx.cfg, session, "GET", "settings/online-booking"),
   ]);
   const stubAllowed = ["dev", "test", "local"].includes(ctx.cfg.environment);
+  const unavailable = (title: MessageKey, testId: string) => (
+    <Panel title={t(ctx.lang, title)} testId={`${testId}-unavailable`}>
+      <ErrorState message={t(ctx.lang, "payments.unavailable")} />
+    </Panel>
+  );
   return (
     <div data-testid="crm-payments-settings" style={{ display: "grid", gap: 14, maxWidth: 820 }}>
       {back}
@@ -69,12 +74,21 @@ export default async function PaymentsSettingsPage() {
           locale={ctx.locale}
         />
       )}
-      {methods.ok && <PaymentMethodsForm view={methods.data} lang={ctx.lang} />}
-      {gateway.ok && <OnlinePaymentForm status={gateway.data} lang={ctx.lang} stubAllowed={stubAllowed} />}
-      {booking.ok && <OnlineBookingForm view={booking.data} lang={ctx.lang} />}
-      {invoiceSettings.ok && <InvoiceSettingsForm settings={invoiceSettings.data} lang={ctx.lang} />}
-      {markup.ok && <RetailMarkupForm view={markup.data} lang={ctx.lang} />}
-      {schedule.ok && <ScheduleTemplateForm view={schedule.data} lang={ctx.lang} />}
+      {/* AA-1096 S280: a section whose read failed says so under its own title instead of vanishing */}
+      {methods.ok ? <PaymentMethodsForm view={methods.data} lang={ctx.lang} /> : unavailable("methods.title", "payment-methods")}
+      {gateway.ok ? (
+        <OnlinePaymentForm status={gateway.data} lang={ctx.lang} stubAllowed={stubAllowed} />
+      ) : (
+        unavailable("gateway.title", "online-payment")
+      )}
+      {booking.ok ? <OnlineBookingForm view={booking.data} lang={ctx.lang} /> : unavailable("onlineBooking.title", "online-booking")}
+      {invoiceSettings.ok ? (
+        <InvoiceSettingsForm settings={invoiceSettings.data} lang={ctx.lang} />
+      ) : (
+        unavailable("invoice.settings.title", "invoice-settings")
+      )}
+      {markup.ok ? <RetailMarkupForm view={markup.data} lang={ctx.lang} /> : unavailable("markup.title", "retail-markup")}
+      {schedule.ok ? <ScheduleTemplateForm view={schedule.data} lang={ctx.lang} /> : unavailable("schedule.settings.title", "schedule-template")}
     </div>
   );
 }

@@ -140,7 +140,11 @@ class SessionRef(_Out):
 
 class SettingsOut(_Out):
     ai_enabled: bool
-    ai_budget_usd: str
+    ai_budget_usd: str  # AA-1096 S280: the budget the gateway enforces (min(saved budget, ceiling))
+    ai_budget_max_usd: str | None
+    ai_budget_max_own: bool | None
+    intake_form_per_hour: int | None
+    intake_form_per_hour_own: bool | None
     timezone: str
     base_currency: str
     booking_validation_level: str

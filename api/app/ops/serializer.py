@@ -182,7 +182,7 @@ OPS_ALLOWED_KEYS: frozenset[str] = frozenset(
         "degrade_mode",
         "disabled_reason",
         "updated_at",
-        # the admin-editable CRM settings (crm.ops.v1 1.13, AA-1096 L4, crm-064): definitions, values and their change
+        # the admin-editable CRM settings (crm.ops.v1 1.13/1.14, AA-1096, crm-064): definitions, values and their change
         # rows; the staff actors are platform:<staff sub> ids (maker-checker), never an e-mail or a name
         "areas",
         "settings",
@@ -226,6 +226,13 @@ OPS_ALLOWED_KEYS: frozenset[str] = frozenset(
         "decided_at",
         "decision_note",
         "previous_value",
+        # AA-1096 S280: the agencies with their own value of a platform+tenant key and their open changes, and what a
+        # change must carry
+        "agency_overrides",
+        "agency_pending",
+        "reason_min",
+        "evidence_min",
+        "evidence_max",
         # the operator's guide of a CRM setting (the CIS 416 shape the Settings page reads): plain text per language
         "guide",
         "en",

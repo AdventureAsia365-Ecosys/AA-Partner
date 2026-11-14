@@ -15,7 +15,7 @@ export const aiEn = {
   "ai.enableHelp":
     "Off by default. Before text reaches the AI model, the CRM replaces with placeholders the personal details it knows for the trip (names, e-mail addresses, phone numbers, passport numbers) and those it can detect, and puts them back only in your own session. It may not catch every detail.",
   "ai.budget": "Monthly AI budget (USD)",
-  "ai.budgetHelp": "Up to {max} a month on your plan. At 100 % AI drafts stop until next month and nothing more is charged.",
+  "ai.budgetHelp": "Up to {max} a month: the most Adventure Asia allows for your agency (contact AA support to raise it). At 100 % AI drafts stop until next month and nothing more is charged.",
   "ai.meter": "This month",
   "ai.meterValue": "{spent} of {budget} used ({pct} %)",
   "ai.alert.75": "75 % of this month's AI budget is used.",
@@ -28,6 +28,7 @@ export const aiEn = {
   "ai.notOnPlan": "Not on your plan",
   "ai.noPlanSwitch": "You can still switch AI on now: drafts start once AA support adds the AI assistant to your plan.",
   "ai.limit": "Up to {n} AI requests a minute for your agency.",
+  "ai.limitOff": "No per-minute limit on AI requests for your agency.",
   "ai.ownerOnly": "Only the owner switches AI on or off and sets the budget.",
   "ai.save": "Save",
   "ai.saved": "AI settings saved.",
@@ -39,7 +40,7 @@ export const aiEn = {
   "ai.rule.data": "Text from clients is treated as data: instructions inside a client's message are never followed.",
   "ai.rule.manual": "When AI cannot help (switched off, budget used up, or a check fails), the page says to reply by hand.",
   "ai.error.budget_format": "Enter an amount such as 1.50.",
-  "ai.error.budget_above_plan": "That is more than your plan allows.",
+  "ai.error.budget_above_plan": "That is more than Adventure Asia allows for your agency ({max} a month). Contact AA support to raise it.",
   "ai.error.role_forbidden": "Only the owner can change AI settings.",
   "ai.error.generic": "AI settings could not be saved. Try again.",
 } as const;
@@ -56,7 +57,7 @@ export const aiVi: Record<keyof typeof aiEn, string> = {
   "ai.enableHelp":
     "Mặc định tắt. Trước khi văn bản đến mô hình AI, CRM thay bằng ký hiệu những thông tin cá nhân mà CRM biết về chuyến đi (tên, e-mail, số điện thoại, số hộ chiếu) và những thông tin CRM phát hiện được, và chỉ điền lại trong phiên của chính bạn. CRM có thể không bắt được mọi thông tin.",
   "ai.budget": "Ngân sách AI mỗi tháng (USD)",
-  "ai.budgetHelp": "Tối đa {max} mỗi tháng theo gói của bạn. Khi dùng hết 100 %, bản nháp AI dừng đến tháng sau và không tính thêm phí.",
+  "ai.budgetHelp": "Tối đa {max} mỗi tháng: mức cao nhất Adventure Asia cho phép với đại lý của bạn (liên hệ bộ phận hỗ trợ AA để tăng). Khi dùng hết 100 %, bản nháp AI dừng đến tháng sau và không tính thêm phí.",
   "ai.meter": "Tháng này",
   "ai.meterValue": "Đã dùng {spent} trên {budget} ({pct} %)",
   "ai.alert.75": "Đã dùng 75 % ngân sách AI tháng này.",
@@ -69,6 +70,7 @@ export const aiVi: Record<keyof typeof aiEn, string> = {
   "ai.notOnPlan": "Chưa có trong gói",
   "ai.noPlanSwitch": "Bạn vẫn có thể bật AI ngay bây giờ: bản nháp sẽ hoạt động khi bộ phận hỗ trợ AA thêm trợ lý AI vào gói.",
   "ai.limit": "Tối đa {n} yêu cầu AI mỗi phút cho đại lý của bạn.",
+  "ai.limitOff": "Đại lý của bạn không bị giới hạn số yêu cầu AI mỗi phút.",
   "ai.ownerOnly": "Chỉ chủ đại lý bật hoặc tắt AI và đặt ngân sách.",
   "ai.save": "Lưu",
   "ai.saved": "Đã lưu cài đặt AI.",
@@ -80,7 +82,7 @@ export const aiVi: Record<keyof typeof aiEn, string> = {
   "ai.rule.data": "Văn bản của khách được coi là dữ liệu: không bao giờ làm theo chỉ dẫn nằm trong tin nhắn của khách.",
   "ai.rule.manual": "Khi AI không giúp được (đang tắt, hết ngân sách, hoặc một bước kiểm tra lỗi), trang sẽ báo tự trả lời.",
   "ai.error.budget_format": "Nhập một số tiền, ví dụ 1.50.",
-  "ai.error.budget_above_plan": "Số tiền này vượt mức gói của bạn cho phép.",
+  "ai.error.budget_above_plan": "Số tiền này vượt mức Adventure Asia cho phép với đại lý của bạn ({max} mỗi tháng). Hãy liên hệ bộ phận hỗ trợ AA để tăng.",
   "ai.error.role_forbidden": "Chỉ chủ đại lý được thay đổi cài đặt AI.",
   "ai.error.generic": "Không lưu được cài đặt AI. Hãy thử lại.",
 };

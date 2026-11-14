@@ -26,7 +26,7 @@ Route                                          What                             
 ``DELETE /lines/{id}``                         a planning line to the trash                   owner, agent
 ``PUT    /lines/{id}/money``                   cost / sell / commission (new row)             owner, agent
 ``GET    /bookings``                           A-11 ledger, base-currency totals (margin)     every role
-``GET    /settings/payments``                  base currency, validation level, FX mode       owner
+``GET    /settings/payments``                  currency, validation, FX, refund threshold     owner
 ``PUT    /settings/payments``                  change them                                    owner
 ``GET    /fx/overrides``                       the owner's rates                              owner
 ``POST   /fx/overrides``                       add a rate for a day                           owner
@@ -151,6 +151,10 @@ class PaymentSettings(_Body):
     base_currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
     booking_validation_level: Literal["off", "basic", "strict"] | None = None
     fx_mode: Literal["automatic", "manual"] | None = None
+    # AA-1096 S280: an agent approves a refund up to this amount in the base currency (the crm-008 column CHECK bounds)
+    refund_owner_threshold_base: Decimal | None = Field(
+        default=None, ge=0, le=Decimal("10000000"), max_digits=10, decimal_places=2, allow_inf_nan=False
+    )
 
 
 MarkupPct = Annotated[Decimal, Field(ge=0, le=300, max_digits=5, decimal_places=2, allow_inf_nan=False)]

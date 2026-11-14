@@ -9,7 +9,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { AiNotice, Badge, Button, Checkbox, Field, Input, K, useHydrated } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
-import { aiErrorKey, budgetError, meterTone, meterWidth, notOnPlan, testModeNote, usd, type AiSettings } from "@/lib/ai";
+import { aiErrorKey, budgetError, meterTone, meterWidth, notOnPlan, rateLimitLine, testModeNote, usd, type AiSettings } from "@/lib/ai";
 import { bffSend } from "@/lib/bffClient";
 import type { DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
@@ -28,12 +28,15 @@ export function AiSettingsView({ settings, lang, locale }: { settings: AiSetting
   const tone = meterTone(settings.budget_used_pct);
   const note = testModeNote(settings);
   const noPlan = notOnPlan(settings);
+  // AA-1096 S280: the ceiling is AA's limit for this agency (platform setting or the agency's own), not a plan limit
+  const ceiling = usd(settings.budget_max_usd, locale);
+  const rateLimit = rateLimitLine(settings.rate_limit_per_minute);
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const error = budgetError(budget, settings.budget_max_usd);
     if (error) {
-      setMessage({ tone: "danger", text: tr(error) });
+      setMessage({ tone: "danger", text: fmt(tr(error), { max: ceiling }) });
       return;
     }
     setBusy(true);
@@ -41,7 +44,7 @@ export function AiSettingsView({ settings, lang, locale }: { settings: AiSetting
     const res = await bffSend("PUT", "settings/ai", { ai_enabled: enabled, ai_budget_usd: budget.trim() });
     setBusy(false);
     if (!res.ok) {
-      setMessage({ tone: "danger", text: tr(aiErrorKey(res.detail)) });
+      setMessage({ tone: "danger", text: fmt(tr(aiErrorKey(res.detail)), { max: ceiling }) });
       return;
     }
     setMessage({ tone: "success", text: tr("ai.saved") });
@@ -106,7 +109,9 @@ export function AiSettingsView({ settings, lang, locale }: { settings: AiSetting
               pct: settings.budget_used_pct,
             })}
           </span>
-          <span style={{ fontSize: 12.5, color: K.muted }}>{fmt(tr("ai.limit"), { n: settings.rate_limit_per_minute })}</span>
+          <span style={{ fontSize: 12.5, color: K.muted }} data-testid="ai-rate-limit">
+            {fmt(tr(rateLimit.key), { n: rateLimit.n })}
+          </span>
         </div>
       </Panel>
 
@@ -117,7 +122,7 @@ export function AiSettingsView({ settings, lang, locale }: { settings: AiSetting
               <Checkbox label={tr("ai.enable")} checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
               <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{tr("ai.enableHelp")}</p>
             </div>
-            <Field label={tr("ai.budget")} hint={fmt(tr("ai.budgetHelp"), { max: usd(settings.budget_max_usd, locale) })}>
+            <Field label={tr("ai.budget")} hint={fmt(tr("ai.budgetHelp"), { max: ceiling })}>
               <Input
                 size="sm"
                 inputMode="decimal"

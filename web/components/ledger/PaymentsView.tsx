@@ -10,8 +10,8 @@ import { DateInput } from "@/components/DateInput";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
-import { t, type Lang, type MessageKey } from "@/lib/i18n";
-import { CURRENCY, errorKey, type FxOverride, type PaymentSettings } from "@/lib/ledger";
+import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
+import { CURRENCY, errorKey, thresholdInput, type FxOverride, type PaymentSettings } from "@/lib/ledger";
 
 const field: React.CSSProperties = {
   font: "inherit",
@@ -69,10 +69,17 @@ export function PaymentsView({
               setMessage({ ok: false, text: tr("payments.invalid") });
               return;
             }
+            const raw = data.get("refund_owner_threshold_base");
+            const threshold = raw === null ? undefined : thresholdInput(String(raw));
+            if (threshold === null) {
+              setMessage({ ok: false, text: tr("payments.thresholdInvalid") });
+              return;
+            }
             void send("PUT", "settings/payments", {
               base_currency: base,
               booking_validation_level: String(data.get("booking_validation_level")),
               fx_mode: String(data.get("fx_mode")),
+              ...(threshold === undefined ? {} : { refund_owner_threshold_base: threshold }),
             });
           }}
           style={{ display: "grid", gap: 10, maxWidth: 520 }}
@@ -82,6 +89,23 @@ export function PaymentsView({
             <input name="base_currency" style={field} maxLength={3} defaultValue={settings.base_currency} />
             <span style={{ color: K.muted, fontSize: 12 }}>{tr("payments.baseHelp")}</span>
           </label>
+          {settings.refund_owner_threshold_base !== undefined && (
+            <label style={{ display: "grid", gap: 2, fontSize: 12.5 }}>
+              {fmt(tr("payments.threshold"), { currency: settings.base_currency })}
+              <input
+                name="refund_owner_threshold_base"
+                inputMode="decimal"
+                style={{ ...field, maxWidth: 200 }}
+                maxLength={14}
+                defaultValue={settings.refund_owner_threshold_base}
+                aria-describedby="payments-threshold-help"
+                data-testid="payments-threshold"
+              />
+              <span id="payments-threshold-help" style={{ color: K.muted, fontSize: 12 }}>
+                {tr("payments.thresholdHelp")}
+              </span>
+            </label>
+          )}
           <fieldset style={{ border: "none", padding: 0, margin: 0, display: "grid", gap: 4 }}>
             <legend style={{ fontSize: 12.5, marginBottom: 4 }}>{tr("payments.level")}</legend>
             {settings.levels.map((level) => (

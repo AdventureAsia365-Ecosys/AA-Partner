@@ -94,6 +94,12 @@ async def test_an_agency_value_lives_in_its_own_context(app_pool: asyncpg.Pool, 
     assert [tuple(r) for r in actions] == [("setting_change", "platform_setting", "approved")]
     has_row = await _owner_fetch(admin, tenant_id, "SELECT count(*) AS n FROM crm.tenant_settings")
     assert has_row[0]["n"] == 1  # the agency's settings row was made first (the foreign key)
+    # AA-1096 S280: the settings list names the agency with its own value (read in its own context, through RLS)
+    listing = await service.list_settings(app_pool, staff_sub=SUB)
+    form = next(r for r in listing["settings"] if r["key"] == key)
+    mine = [r for r in form["agency_overrides"] if r["tenant_id"] == str(tenant_id)]
+    assert [(r["value"], r["id"]) for r in mine] == [(900, out["id"])] and mine[0]["agency_name"]
+    assert history["history"][0]["previous_value"] == 200  # the platform value it replaced, not a guess
 
 
 async def test_a_rejected_change_keeps_the_value_in_force(app_pool: asyncpg.Pool) -> None:

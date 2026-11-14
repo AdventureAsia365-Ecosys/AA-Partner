@@ -3,14 +3,14 @@
  "guides": {
   "crm.agency_defaults.auto_archive_months": {
    "en": {
-    "what": "How many months a client can go without any activity before the daily lifecycle run archives it. This is the window a new agency starts with, and the window of any agency that has not saved its own on Settings > Data and privacy.",
+    "what": "How many months a client can go without any activity before the daily lifecycle run archives it: the window a new agency starts with. A change applies to agencies created after it (and to the few older agencies that have no settings yet); an existing agency keeps the window it started with until its owner changes it on Settings > Data and privacy.",
     "raise": "Inactive clients stay in the active lists longer. Fewer clients are archived by surprise, but the lists get longer and old personal data stays in active view for more time.",
     "lower": "Inactive clients are archived sooner, which keeps lists short and limits how long old data stays in view. Too low and agents find clients archived while a slow sale is still alive.",
     "when": "Raise it when agencies often restore clients the run archived; lower it when a privacy review asks for a shorter active window. It must stay between the shortest and the longest window an owner may set.",
     "example": "With the default of 36 months, a client with no activity for three years is archived by the daily run; an agency that saved its own window uses that instead."
    },
    "vi": {
-    "what": "Số tháng một khách hàng không có hoạt động nào trước khi lượt chạy vòng đời hằng ngày lưu trữ (archive) khách đó. Đây là giá trị một đại lý mới nhận lúc tạo, và là giá trị của mọi đại lý chưa tự lưu giá trị riêng ở Settings > Data and privacy.",
+    "what": "Số tháng một khách hàng không có hoạt động nào trước khi lượt chạy vòng đời hằng ngày lưu trữ (archive) khách đó: giá trị đại lý mới nhận lúc tạo. Thay đổi áp dụng cho đại lý tạo sau thay đổi (và vài đại lý cũ chưa có cài đặt nào); đại lý đang có giữ giá trị đã nhận lúc tạo cho tới khi chủ đại lý tự đổi ở Settings > Data and privacy.",
     "raise": "Khách không hoạt động ở lại danh sách đang dùng lâu hơn. Ít khách bị lưu trữ bất ngờ hơn, nhưng danh sách dài ra và dữ liệu cá nhân cũ hiện lâu hơn.",
     "lower": "Khách không hoạt động được lưu trữ sớm hơn, danh sách gọn và dữ liệu cũ ít hiện hơn. Quá thấp thì nhân viên thấy khách bị lưu trữ khi một thương vụ chậm vẫn còn đang theo.",
     "when": "Tăng khi các đại lý hay phải khôi phục khách bị lưu trữ; giảm khi rà soát quyền riêng tư yêu cầu thời gian hiển thị ngắn hơn. Giá trị phải nằm giữa mức ngắn nhất và dài nhất chủ đại lý được chọn.",
@@ -51,14 +51,14 @@
   },
   "crm.agency_defaults.discount_owner_limit_pct": {
    "en": {
-    "what": "A discount on a proposal above this percent needs the agency owner's approval before it goes out. This is the limit a new agency starts with; each owner may change their own on Settings > Pricing (0 to 100 %).",
+    "what": "A discount on a proposal above this percent needs the agency owner's approval before it goes out. This is the limit a new agency starts with (each owner may change their own on Settings > Pricing, 0 to 100 %). A change applies to agencies created after it (and to the few older agencies that have no settings yet); an existing agency keeps the limit it started with until its owner changes it.",
     "raise": "Agents can give bigger discounts without waiting for the owner. Quotes go out faster, but larger discounts leave without a second look.",
     "lower": "More discounts wait for the owner. Tighter control of the agency's margin, but quotes slow down when the owner is busy; 0 sends every discount to the owner.",
     "when": "Change it when new agencies report owner approvals piling up (raise) or agents giving away too much (lower). Agencies that already saved their own limit keep it.",
     "example": "With the default of 10 %, an agent may publish a 10 % discount alone; an 11 % discount waits for the owner."
    },
    "vi": {
-    "what": "Mức giảm giá trên một báo giá vượt phần trăm này cần chủ đại lý duyệt trước khi gửi. Đây là giới hạn một đại lý mới nhận lúc tạo; mỗi chủ đại lý tự đổi giới hạn của mình ở Settings > Pricing (0 đến 100 %).",
+    "what": "Mức giảm giá trên một báo giá vượt phần trăm này cần chủ đại lý duyệt trước khi gửi. Đây là giới hạn một đại lý mới nhận lúc tạo (mỗi chủ đại lý tự đổi giới hạn của mình ở Settings > Pricing, 0 đến 100 %). Thay đổi áp dụng cho đại lý tạo sau thay đổi (và vài đại lý cũ chưa có cài đặt nào); đại lý đang có giữ giới hạn đã nhận lúc tạo cho tới khi chủ đại lý tự đổi.",
     "raise": "Nhân viên được giảm giá nhiều hơn mà không phải chờ chủ đại lý. Báo giá đi nhanh hơn, nhưng mức giảm lớn không có người xem lại.",
     "lower": "Nhiều mức giảm phải chờ chủ đại lý hơn. Kiểm soát biên lợi nhuận chặt hơn, nhưng báo giá chậm khi chủ đại lý bận; 0 thì mọi mức giảm đều chờ chủ đại lý.",
     "when": "Đổi khi các đại lý mới báo việc duyệt dồn ứ (tăng) hoặc nhân viên giảm giá quá tay (giảm). Đại lý đã lưu giới hạn riêng vẫn giữ giới hạn đó.",
@@ -83,14 +83,14 @@
   },
   "crm.agency_defaults.price_checks_per_minute": {
    "en": {
-    "what": "How many Book now price checks a minute an agency's public page accepts from all visitors together. This is the limit a new agency starts with, and the limit of any agency that has not saved its own on Settings > Online booking.",
+    "what": "How many Book now price checks a minute an agency's public page accepts from all visitors together: the limit a new agency starts with. A change applies to agencies created after it (and to the few older agencies that have no settings yet); an existing agency keeps the limit it started with until its owner changes it on Settings > Online booking.",
     "raise": "Busy agency pages answer more price checks before visitors are asked to try again. A bot can also ask for more prices a minute, which puts more load on AA pricing.",
     "lower": "Limits how fast a bot can scrape prices from an agency page. Too low and real visitors at a busy moment see their price check refused.",
     "when": "Raise it when agencies report visitors refused during campaigns; lower it when the logs show price scraping. It is checked together with the lowest and highest limit an owner may set.",
     "example": "With the default of 60 checks a minute, the 61st price check within one minute on one agency page is refused until the next minute."
    },
    "vi": {
-    "what": "Số lượt kiểm giá Book now mỗi phút mà trang công khai của một đại lý nhận từ tất cả khách truy cập cộng lại. Đây là giới hạn đại lý mới nhận lúc tạo, và là giới hạn của mọi đại lý chưa tự lưu ở Settings > Online booking.",
+    "what": "Số lượt kiểm giá Book now mỗi phút mà trang công khai của một đại lý nhận từ tất cả khách truy cập cộng lại: giới hạn đại lý mới nhận lúc tạo. Thay đổi áp dụng cho đại lý tạo sau thay đổi (và vài đại lý cũ chưa có cài đặt nào); đại lý đang có giữ giới hạn đã nhận lúc tạo cho tới khi chủ đại lý tự đổi ở Settings > Online booking.",
     "raise": "Trang đại lý đông khách trả lời được nhiều lượt kiểm giá hơn trước khi khách bị báo thử lại. Bot cũng hỏi được nhiều giá hơn mỗi phút, làm tăng tải lên hệ thống giá của AA.",
     "lower": "Giới hạn tốc độ bot dò giá từ trang đại lý. Quá thấp thì khách thật vào lúc đông sẽ bị từ chối kiểm giá.",
     "when": "Tăng khi đại lý báo khách bị từ chối trong đợt khuyến mãi; giảm khi log cho thấy có dò giá. Giá trị được kiểm cùng mức thấp nhất và cao nhất chủ đại lý được chọn.",
@@ -131,14 +131,14 @@
   },
   "crm.agency_defaults.trash_days": {
    "en": {
-    "what": "How many days a deleted record stays in the trash and can be restored before the daily lifecycle run purges it for good. This is the window a new agency starts with, and the window of any agency that has not saved its own on Settings > Data and privacy.",
+    "what": "How many days a deleted record stays in the trash and can be restored before the daily lifecycle run purges it for good: the window a new agency starts with. A change applies to agencies created after it (and to the few older agencies that have no settings yet); an existing agency keeps the window it started with until its owner changes it on Settings > Data and privacy.",
     "raise": "Agents have longer to undo a mistaken delete. Deleted personal data stays in the database longer before it is gone.",
     "lower": "Deleted data leaves sooner, which helps privacy, but a mistaken delete noticed late can no longer be restored.",
     "when": "Raise it when agencies often ask to restore records after the window closed; lower it when a privacy review asks deleted data to go faster. It must stay between the shortest and the longest window an owner may set.",
     "example": "With the default of 7 days, a client deleted on a Monday can be restored until the next Monday; then the daily run purges it (unless lifecycle deletes are in dry run)."
    },
    "vi": {
-    "what": "Số ngày một bản ghi đã xoá nằm trong thùng rác và còn khôi phục được trước khi lượt chạy vòng đời hằng ngày xoá hẳn. Đây là giá trị đại lý mới nhận lúc tạo, và là giá trị của mọi đại lý chưa tự lưu ở Settings > Data and privacy.",
+    "what": "Số ngày một bản ghi đã xoá nằm trong thùng rác và còn khôi phục được trước khi lượt chạy vòng đời hằng ngày xoá hẳn: giá trị đại lý mới nhận lúc tạo. Thay đổi áp dụng cho đại lý tạo sau thay đổi (và vài đại lý cũ chưa có cài đặt nào); đại lý đang có giữ giá trị đã nhận lúc tạo cho tới khi chủ đại lý tự đổi ở Settings > Data and privacy.",
     "raise": "Nhân viên có nhiều thời gian hơn để hoàn tác một lần xoá nhầm. Dữ liệu cá nhân đã xoá nằm lâu hơn trong cơ sở dữ liệu.",
     "lower": "Dữ liệu đã xoá biến mất sớm hơn, tốt cho quyền riêng tư, nhưng xoá nhầm mà phát hiện muộn thì không khôi phục được nữa.",
     "when": "Tăng khi các đại lý hay xin khôi phục bản ghi sau khi đã hết hạn; giảm khi rà soát quyền riêng tư yêu cầu dữ liệu đã xoá đi nhanh hơn. Giá trị phải nằm giữa mức ngắn nhất và dài nhất chủ đại lý được chọn.",
@@ -179,14 +179,14 @@
   },
   "crm.ai.budget_default_usd": {
    "en": {
-    "what": "The monthly AI budget, in US dollars, a new agency starts with, and the budget of any agency that has not saved its own on Settings > AI. It never goes above the agency's ceiling: the lower of the two applies.",
+    "what": "The monthly AI budget, in US dollars, a new agency starts with. It never goes above the agency's ceiling: the lower of the two applies. A change applies to agencies created after it (and to the few older agencies that have no settings yet); an existing agency keeps the budget it started with until its owner changes it on Settings > AI.",
     "raise": "New agencies can use AI draft replies more each month before the calls stop. AA pays for the calls, so AA's monthly AI cost can grow.",
     "lower": "Caps AA's AI cost per new agency. Too low and agents see AI drafts stop early in the month and reply by hand.",
     "when": "Raise it when most agencies use up their budget early and the AI cost report allows it; lower it when AI spend grows faster than its value.",
     "example": "With the default of 2 USD a month, a new agency's AI calls are refused once it has used 2 USD in that month."
    },
    "vi": {
-    "what": "Ngân sách AI hằng tháng, tính bằng đô la Mỹ, mà một đại lý mới nhận lúc tạo, và là ngân sách của mọi đại lý chưa tự lưu ở Settings > AI. Không bao giờ vượt trần của đại lý: áp dụng giá trị thấp hơn trong hai giá trị.",
+    "what": "Ngân sách AI hằng tháng, tính bằng đô la Mỹ, mà một đại lý mới nhận lúc tạo. Không bao giờ vượt trần của đại lý: áp dụng giá trị thấp hơn trong hai giá trị. Thay đổi áp dụng cho đại lý tạo sau thay đổi (và vài đại lý cũ chưa có cài đặt nào); đại lý đang có giữ ngân sách đã nhận lúc tạo cho tới khi chủ đại lý tự đổi ở Settings > AI.",
     "raise": "Đại lý mới dùng được bản nháp trả lời bằng AI nhiều hơn mỗi tháng trước khi bị dừng. AA trả tiền các lượt gọi, nên chi phí AI hằng tháng của AA có thể tăng.",
     "lower": "Giới hạn chi phí AI của AA cho mỗi đại lý mới. Quá thấp thì nhân viên thấy bản nháp AI dừng sớm trong tháng và phải tự trả lời.",
     "when": "Tăng khi phần lớn đại lý dùng hết ngân sách sớm và báo cáo chi phí AI cho phép; giảm khi chi phí AI tăng nhanh hơn giá trị mang lại.",
@@ -197,15 +197,15 @@
    "en": {
     "what": "The highest monthly AI budget, in US dollars, an agency owner may set on Settings > AI. AA pays for the calls. An administrator may give one agency its own ceiling.",
     "raise": "Owners may allow more AI use a month. Good for agencies that rely on AI drafts, but AA's AI bill per agency can grow up to the new ceiling.",
-    "lower": "Caps the most any agency can spend on AI a month. An agency whose own budget is above the new ceiling is held to the ceiling (the lower of the two applies).",
-    "when": "Raise it, for one agency or for all, when an agency shows steady useful AI use and asks for more; lower it if AI cost needs a hard stop.",
+    "lower": "Caps the most any agency can spend on AI a month. An agency whose own budget is above the new ceiling is held to the ceiling (the lower of the two applies), except an agency an administrator gave its own higher ceiling.",
+    "when": "Raise it, for one agency or for all, when an agency shows steady useful AI use and asks for more; lower it if AI cost needs a hard stop. The list under this setting names every agency with its own value; giving an agency its own value also creates its settings if it had none, which fixes its other new-agency values at today's defaults.",
     "example": "With the default of 2 USD a month, no owner can set an AI budget above 2 USD unless an administrator gives that agency its own ceiling."
    },
    "vi": {
     "what": "Ngân sách AI hằng tháng cao nhất, tính bằng đô la Mỹ, mà chủ đại lý được đặt ở Settings > AI. AA trả tiền các lượt gọi. Quản trị viên có thể cho riêng một đại lý một mức trần khác.",
     "raise": "Chủ đại lý được cho phép dùng AI nhiều hơn mỗi tháng. Tốt cho đại lý dựa nhiều vào bản nháp AI, nhưng hoá đơn AI của AA cho mỗi đại lý có thể tăng tới mức trần mới.",
-    "lower": "Giới hạn số tiền AI tối đa mỗi đại lý dùng trong tháng. Đại lý có ngân sách riêng cao hơn trần mới sẽ bị giữ ở mức trần (áp dụng giá trị thấp hơn).",
-    "when": "Tăng, cho một đại lý hoặc tất cả, khi đại lý dùng AI đều đặn, có ích và xin thêm; giảm nếu chi phí AI cần một điểm dừng cứng.",
+    "lower": "Giới hạn số tiền AI tối đa mỗi đại lý dùng trong tháng. Đại lý có ngân sách riêng cao hơn trần mới sẽ bị giữ ở mức trần (áp dụng giá trị thấp hơn), trừ đại lý được quản trị viên cho mức trần riêng cao hơn.",
+    "when": "Tăng, cho một đại lý hoặc tất cả, khi đại lý dùng AI đều đặn, có ích và xin thêm; giảm nếu chi phí AI cần một điểm dừng cứng. Danh sách dưới cài đặt này liệt kê mọi đại lý có giá trị riêng; đặt giá trị riêng cho một đại lý chưa có cài đặt nào cũng tạo cài đặt cho đại lý đó, nên các giá trị mặc định khác của đại lý được giữ cố định ở mức hôm nay.",
     "example": "Với mặc định 2 USD mỗi tháng, không chủ đại lý nào đặt được ngân sách AI trên 2 USD, trừ khi quản trị viên cho đại lý đó mức trần riêng."
    }
   },
@@ -259,17 +259,17 @@
   },
   "crm.payments.refund_owner_threshold_default": {
    "en": {
-    "what": "A refund or a cancellation-fee change above this amount, in the agency's own base currency, needs the owner's approval; an agent may approve up to it. This is the threshold a new agency starts with, and the threshold of any agency that has not saved its own.",
+    "what": "A refund or a cancellation-fee change above this amount, in the agency's own base currency, needs the owner's approval; an agent may approve up to it. This is the threshold a new agency starts with. A change applies to agencies created after it (and to the few older agencies that have no settings yet); an existing agency keeps the threshold it started with until its owner changes it on Settings > Payments.",
     "raise": "Agents can approve larger refunds alone. Faster for clients, but bigger sums leave without the owner's eye.",
     "lower": "More refunds wait for the owner. Tighter control of money going out, but refunds slow down when the owner is away.",
-    "when": "Change it when new agencies report owner approvals piling up (raise) or refunds approved too freely (lower). The number is in each agency's currency, so the same figure means different sums.",
+    "when": "Change it when new agencies report owner approvals piling up (raise) or refunds approved too freely (lower). The number is in each agency's base currency, so the same figure means very different sums (1,000 VND is a few cents, 1,000 USD is a large refund): each owner should check theirs on Settings > Payments.",
     "example": "With the default of 1,000, an agent may approve a refund of 1,000 in the agency's currency alone; 1,001 waits for the owner."
    },
    "vi": {
-    "what": "Khoản hoàn tiền hoặc thay đổi phí huỷ vượt số tiền này, tính bằng tiền tệ gốc của đại lý, cần chủ đại lý duyệt; nhân viên được duyệt tới mức này. Đây là ngưỡng đại lý mới nhận lúc tạo, và là ngưỡng của mọi đại lý chưa tự lưu ngưỡng riêng.",
+    "what": "Khoản hoàn tiền hoặc thay đổi phí huỷ vượt số tiền này, tính bằng tiền tệ gốc của đại lý, cần chủ đại lý duyệt; nhân viên được duyệt tới mức này. Đây là ngưỡng đại lý mới nhận lúc tạo. Thay đổi áp dụng cho đại lý tạo sau thay đổi (và vài đại lý cũ chưa có cài đặt nào); đại lý đang có giữ ngưỡng đã nhận lúc tạo cho tới khi chủ đại lý tự đổi ở Settings > Payments.",
     "raise": "Nhân viên tự duyệt được khoản hoàn lớn hơn. Nhanh hơn cho khách, nhưng số tiền lớn đi ra mà chủ đại lý không xem.",
     "lower": "Nhiều khoản hoàn phải chờ chủ đại lý hơn. Kiểm soát tiền chi ra chặt hơn, nhưng hoàn tiền chậm khi chủ đại lý vắng.",
-    "when": "Đổi khi các đại lý mới báo việc duyệt dồn ứ (tăng) hoặc hoàn tiền bị duyệt quá dễ (giảm). Con số tính theo tiền tệ của từng đại lý, nên cùng một con số là các khoản khác nhau.",
+    "when": "Đổi khi các đại lý mới báo việc duyệt dồn ứ (tăng) hoặc hoàn tiền bị duyệt quá dễ (giảm). Con số tính theo tiền tệ gốc của từng đại lý, nên cùng một con số là các khoản rất khác nhau (1.000 VND chỉ vài xu, 1.000 USD là khoản hoàn lớn): mỗi chủ đại lý nên kiểm ngưỡng của mình ở Settings > Payments.",
     "example": "Với mặc định 1.000, nhân viên tự duyệt được khoản hoàn 1.000 theo tiền tệ của đại lý; 1.001 phải chờ chủ đại lý."
    }
   },
@@ -294,14 +294,14 @@
     "what": "How many submissions one inquiry form (and the Book now bookings that use its key) takes an hour, from all addresses together. It is counted only after every other check. 0 turns the quota off. An administrator may give a busy agency its own quota.",
     "raise": "A popular form takes more inquiries in an hour before refusing. A spam wave can also push more fake inquiries into the agency's inbox.",
     "lower": "Caps how many fake inquiries a spam wave can create, but a real campaign may see genuine inquiries refused.",
-    "when": "Raise it, for one agency, when it runs a campaign and real inquiries are refused; lower it when spam floods agency inboxes.",
+    "when": "Raise it, for one agency, when it runs a campaign and real inquiries are refused; lower it when spam floods agency inboxes. The list under this setting names every agency with its own value; giving an agency its own value also creates its settings if it had none, which fixes its other new-agency values at today's defaults.",
     "example": "With the default of 200 an hour, the 201st submission to one form within the hour is refused."
    },
    "vi": {
     "what": "Số lượt gửi một biểu mẫu yêu cầu (và các đặt chỗ Book now dùng khoá của biểu mẫu đó) nhận mỗi giờ, từ mọi địa chỉ cộng lại. Chỉ được tính sau tất cả các bước kiểm khác. 0 là tắt hạn mức. Quản trị viên có thể cho một đại lý đông khách hạn mức riêng.",
     "raise": "Biểu mẫu được quan tâm nhận nhiều yêu cầu hơn mỗi giờ trước khi từ chối. Một đợt spam cũng đẩy được nhiều yêu cầu giả hơn vào hộp thư đại lý.",
     "lower": "Giới hạn số yêu cầu giả một đợt spam tạo ra được, nhưng một chiến dịch thật có thể bị từ chối yêu cầu thật.",
-    "when": "Tăng, cho riêng một đại lý, khi đại lý chạy chiến dịch và yêu cầu thật bị từ chối; giảm khi spam tràn hộp thư đại lý.",
+    "when": "Tăng, cho riêng một đại lý, khi đại lý chạy chiến dịch và yêu cầu thật bị từ chối; giảm khi spam tràn hộp thư đại lý. Danh sách dưới cài đặt này liệt kê mọi đại lý có giá trị riêng; đặt giá trị riêng cho một đại lý chưa có cài đặt nào cũng tạo cài đặt cho đại lý đó, nên các giá trị mặc định khác của đại lý được giữ cố định ở mức hôm nay.",
     "example": "Với mặc định 200 mỗi giờ, lượt gửi thứ 201 vào một biểu mẫu trong cùng một giờ bị từ chối."
    }
   },

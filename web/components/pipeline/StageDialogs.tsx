@@ -36,7 +36,7 @@ import {
   type Stage,
 } from "@/lib/pipeline";
 import { formatAmount } from "@/lib/proposals";
-import { chargeBody, paymentsErrorKey, type CancelCharge, type ChargeMode } from "@/lib/retailPayments";
+import { chargeBody, ownerOnlyText, paymentsErrorKey, type CancelCharge, type ChargeMode } from "@/lib/retailPayments";
 
 export const field: React.CSSProperties = {
   font: "inherit",
@@ -307,7 +307,7 @@ export function CancelDialog({
     const res = await bffSend<CancelPreview>("POST", `trips/${tripId}/cancel?dry_run=false`, body);
     setBusy(false);
     if (res.ok) onDone(res.data);
-    else setError(paymentsErrorKey(res.detail) ? tr(paymentsErrorKey(res.detail) as string) : t(lang, moveErrorKey(res.detail)));
+    else setError(cancelErrorText(res.detail, res.body, tr, locale));
   }
 
   const confirmStep = preview && !pending;
@@ -510,6 +510,13 @@ function chargeKey(charge: Record<string, string> | null | undefined): string {
   return charge === undefined ? "policy" : charge === null ? "invalid" : JSON.stringify(charge);
 }
 
+/** A refused cancel run in words; an agent held to the refund threshold is told the limit (AA-1096 S280). */
+function cancelErrorText(detail: string, body: unknown, tr: (key: string) => string, locale: DateLocale): string {
+  const key = paymentsErrorKey(detail);
+  if (key === null) return tr(moveErrorKey(detail));
+  return detail === "cancel_charge_owner_only" ? ownerOnlyText(tr, locale, key, body) : tr(key);
+}
+
 /** AA-1067 (crm-11 / crm-12): the charge block of the cancel dialog: days before departure, the frozen policy and its
  *  tier, the charge, what was paid, kept and is refunded, the fee invoice; the member may charge another amount or
  *  waive it (a reason each; an agent lowering it past the refund threshold needs the owner). */
@@ -603,7 +610,7 @@ function CancelChargeBox({
       )}
       {charge.needs_owner && (
         <span data-testid="cancel-charge-owner" style={{ color: K.danger }}>
-          {tr("cancelCharge.needsOwner")}
+          {ownerOnlyText(tr, locale, "cancelCharge.needsOwner", charge.owner_limit)}
         </span>
       )}
     </section>

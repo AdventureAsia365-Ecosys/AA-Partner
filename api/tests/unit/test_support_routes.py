@@ -244,9 +244,16 @@ def test_the_overview_settings_are_one_list() -> None:
     assert tuple(SettingsOut.model_fields) == reads.SETTINGS_KEYS
     columns = re.search(r"SELECT (.*?)\s+FROM", reads.SETTINGS_SQL, re.S)
     assert columns is not None
-    assert tuple(c.strip() for c in columns.group(1).split(",")) == reads.SETTINGS_KEYS
-    row = {k: None for k in reads.SETTINGS_KEYS}
+    assert tuple(c.strip() for c in columns.group(1).split(",")) == reads.SETTINGS_COLUMNS
+    assert set(reads.SETTINGS_KEYS) == set(reads.SETTINGS_COLUMNS) | set(reads.POLICY_KEYS)
+    row = {k: None for k in reads.SETTINGS_COLUMNS}
     row |= {"ai_budget_usd": Decimal("2.00"), "onboarding_later": ["kickoff_call"]}
     out = reads._settings(row)  # type: ignore[arg-type]
     assert tuple(out) == reads.SETTINGS_KEYS
     assert (out["ai_budget_usd"], out["onboarding_later"], out["onboarding_done"]) == ("2.00", ["kickoff_call"], [])
+    # AA-1096 S280: with the registry values, the budget shown is the one the gateway enforces, next to the ceiling
+    policy = {"ai_budget_usd": "1.50", "ai_budget_max_usd": "1.50", "ai_budget_max_own": False,
+              "intake_form_per_hour": 900, "intake_form_per_hour_own": True}  # fmt: skip
+    out = reads._settings(row | {"ai_budget_usd": Decimal("5.00")}, policy)  # type: ignore[arg-type]
+    assert (out["ai_budget_usd"], out["ai_budget_max_usd"], out["intake_form_per_hour_own"]) == ("1.50", "1.50", True)
+    assert all(out[k] == policy[k] for k in reads.POLICY_KEYS)

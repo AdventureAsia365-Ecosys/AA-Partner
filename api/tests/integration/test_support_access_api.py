@@ -82,8 +82,16 @@ async def test_grant_read_audit_revoke_then_403(app_pool: asyncpg.Pool, admin: a
         await sessions.start_support(app_pool, staff(), tenant_id, ticket_ref="SUP-1043")
     assert busy.value.code == "support_session_in_use"
 
+    # the agency saves a setting (its settings row; the card shows the settings of an agency that has one)
+    await _owner_fetch(admin, tenant_id, "INSERT INTO crm.tenant_settings (tenant_id) VALUES ($1) "
+                       "ON CONFLICT (tenant_id) DO NOTHING RETURNING 1", tenant_id)  # fmt: skip
     overview = await reads.overview(app_pool, sup, tenant_id)
     assert overview["pipeline"]["inquiry"] >= 1 and overview["session"]["kind"] == "support"
+    # AA-1096 S280: the registry values the agency is held to, read outside the support reader and back in it after
+    held = overview["settings"]
+    assert held is not None and held["ai_budget_max_usd"] is not None and held["intake_form_per_hour"] is not None
+    assert held["ai_budget_max_own"] is False and held["intake_form_per_hour_own"] is False
+    assert float(held["ai_budget_usd"]) <= float(held["ai_budget_max_usd"])
     page = await reads.trips(app_pool, sup, tenant_id, stage=None, cursor=None, limit=10)
     assert str(trip_id) in {t["trip_id"] for t in page["items"]}
     assert all("title" not in t for t in page["items"])
