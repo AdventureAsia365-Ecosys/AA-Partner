@@ -1232,7 +1232,7 @@ CASCADE_ERASED = {
     "visa_template": {"tenant_settings"},
     "visa_application": {"trip", "traveler", "trip_traveler"},
     "visa_checklist_item": {"visa_application"},
-    # AA-960 crm-061, AA-965 crm-076: tags and voice profiles go with the settings row (agency erase)
+    # AA-960 crm-061, AA-965 crm-069: tags and voice profiles go with the settings row (agency erase)
     "tag": {"tenant_settings"},
     "tag_link": {"tag", "trip", "traveler"},
     "voice_profile": {"tenant_settings", "member"},

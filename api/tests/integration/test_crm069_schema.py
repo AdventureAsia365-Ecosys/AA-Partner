@@ -1,4 +1,4 @@
-"""crm-076 (AA-965, CRM-33b, a contract file) on PostgreSQL with the RDS role shape.
+"""crm-069 (AA-965, CRM-33b, a contract file) on PostgreSQL with the RDS role shape.
 
 - ``crm.voice_profile`` (R41): name / locale / channel / descriptors checks, never trashed, tenant isolation, and the
   agency erase takes it with the settings row (the member key is checked by test_crm010_schema CASCADE_ERASED).
@@ -62,8 +62,8 @@ async def _refused(coro: Any) -> str:
     return f"{err.value.sqlstate} {err.value}"
 
 
-async def test_crm076_is_registered_with_row_security(admin: asyncpg.Connection) -> None:
-    assert await admin.fetchval("SELECT 1 AS ok FROM shared.schema_versions WHERE version = 'crm-076'") == 1
+async def test_crm069_is_registered_with_row_security(admin: asyncpg.Connection) -> None:
+    assert await admin.fetchval("SELECT 1 AS ok FROM shared.schema_versions WHERE version = 'crm-069'") == 1
     assert await admin.fetchval(
         "SELECT relrowsecurity AND relforcerowsecurity AS ok FROM pg_class WHERE oid = 'crm.voice_profile'::regclass"
     )
