@@ -152,7 +152,7 @@ def test_the_default_portal_write_limit_is_30_and_its_own_setting() -> None:
     from app.settings import load_settings
 
     s = load_settings({})
-    assert (s.rate_limit_intake_per_minute, s.rate_limit_portal_write_per_minute) == (5, 30)
+    assert s.rate_limit_portal_write_per_minute == 30  # the intake limit is the setting crm.rate.intake_per_minute
     assert load_settings({"RATE_LIMIT_PORTAL_WRITE_PER_MINUTE": "0"}).rate_limit_portal_write_per_minute == 0
     assert load_settings({"RATE_LIMIT_PORTAL_WRITE_PER_MINUTE": "45"}).rate_limit_portal_write_per_minute == 45
 

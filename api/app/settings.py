@@ -54,19 +54,18 @@ Field encryption (AA-934, design v3 §4.1; ``app.vault``):
 
 Rate limits (ADR 0010 decision 2: CloudFront → VPC origin bypasses API Gateway throttling):
 
-- ``RATE_LIMIT_PUBLIC_PER_MINUTE``: requests per client address per minute on the unauthenticated routes (default
-  120; 0 turns the limit off).
+- The public, intake, intake-form, member and AI limits are admin-editable settings (``app.platform_settings``,
+  crm-064: ``crm.rate.*``); their env vars were retired by crm-068 (AA-1096 l5).
 - ``RATE_LIMIT_XFF_HOPS``: **fallback only**. The limiter keys on ``CloudFront-Viewer-Address`` (set by CloudFront,
   not by the viewer); only when that header is missing does it use the ``X-Forwarded-For`` entry this many from the
   right (default 2: the viewer address CloudFront appended, then the address the ALB appended). See ``app.ratelimit``.
-- ``RATE_LIMIT_INTAKE_PER_MINUTE``: inquiry-form submissions per client address per minute (default 5; 0 = off).
-- ``RATE_LIMIT_INTAKE_FORM_PER_HOUR``: submissions per form per hour, whatever the address (default 200; 0 = off).
-  The intake limit also guards every anonymous client-page write (proposal pages, sign-in code, code check).
+- The intake limit (setting ``crm.rate.intake_per_minute``) also guards every anonymous client-page write (proposal
+  pages, sign-in code, code check).
 - ``RATE_LIMIT_PORTAL_WRITE_PER_MINUTE``: traveller portal writes made with a session cookie (Stage 3, flights,
   passport scan, signing code, signing, companion invite, switch, sign-out) per client address per minute (default
   30; 0 = off). A separate bucket from the intake limit, so a family on one home address can fill the portal
   (AA-953 follow-up). Until the session check passes, each such write also holds a slot of a bucket sized by
-  ``RATE_LIMIT_INTAKE_PER_MINUTE``, so a forged cookie is held to the anonymous ceiling; see
+  ``crm.rate.intake_per_minute``, so a forged cookie is held to the anonymous ceiling; see
   ``app.routers.client_pages``.
 - ``RATE_LIMIT_BOOKING_PRICE_PER_MINUTE``: "Book now" price checks per client address per minute (default 20; 0 =
   off). Their own bucket (S277 live check, AA-1072): a price check stores nothing, so a visitor who tries a few dates
@@ -109,8 +108,8 @@ Team and roles (AA-939, card CRM-11; ``app.members``):
 
 Agency fair share (AA-969, CRM-37a; ``app.tenant_gate``, ``app.auth.route_guard``):
 
-- ``RATE_LIMIT_MEMBER_PER_MINUTE``: ``/crm/v1`` requests per member per agency (token ``iss`` + ``sub`` + the
-  ``X-AA-Tenant-Id`` header) per minute (default 600; 0 = off). 429 ``rate_limited`` above it.
+- ``/crm/v1`` requests per member per agency (token ``iss`` + ``sub`` + the ``X-AA-Tenant-Id`` header) per minute:
+  the setting ``crm.rate.member_per_minute`` (0 = off). 429 ``rate_limited`` above it.
 - ``CRM_TENANT_MAX_CONCURRENCY``: request-path transactions one agency (or caller, or the public routes together)
   may run at once in a task (default 2, 1 to 2: the request path shares 2 of the pool's 3 connections, the third
   stays for the crm.job worker; under contention the fair hand-out of ``app.tenant_gate`` shrinks it to 1).
@@ -136,10 +135,8 @@ CRM AI gateway (AA-964, card CRM-33a; ``app.llm``):
 - ``CRM_LLM_REGION``: the Bedrock region (default ``us-west-1``).
 - ``CRM_LLM_ROLE_ARN``: optional; the CRM-only invoker role to assume for the call (the acc3 path of root ADR 0008a
   §5). Empty = the task role.
-- ``CRM_LLM_MAX_TOKENS``: output cap of a draft (default 800, 50..4000).
-- ``RATE_LIMIT_AI_PER_MINUTE``: gateway calls per agency per minute (default 6; 0 = off). Over it: refusal
-  ``rate_limited`` (logged, no scrub, no cost).
-- ``AI_BUDGET_MAX_USD``: the highest monthly AI budget an owner may set (default 2, the plan's cap; 0..10000).
+- The draft output cap, the per-agency AI calls per minute and the highest monthly AI budget an owner may set are
+  settings (``crm.ai.draft_reply_max_tokens``, ``crm.rate.ai_per_minute``, ``crm.ai.budget_max_usd``).
 
 CIS membership feed (AA-978, ``app.cis``):
 
@@ -206,7 +203,7 @@ import json
 import os
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 
 from app.cis.m2m import CredentialsError, M2mCredentials, parse_credentials
@@ -222,17 +219,13 @@ TEST_HOOK_ORIGIN = "https://go.crm.example.test"
 TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 
-DEFAULT_RATE_LIMIT_PER_MINUTE = 120
 DEFAULT_XFF_HOPS = 2
 DEFAULT_RETENTION_UTC_HOUR = 19
-DEFAULT_INTAKE_PER_MINUTE = 5
-DEFAULT_INTAKE_FORM_PER_HOUR = 200
 DEFAULT_INVITATION_TTL_HOURS = 168
 MAX_INVITATION_TTL_HOURS = 720
 DEFAULT_CLAIM_PER_MINUTE = 10
 DEFAULT_PORTAL_WRITE_PER_MINUTE = 30
 DEFAULT_BOOKING_PRICE_PER_MINUTE = 20
-DEFAULT_MEMBER_PER_MINUTE = 600
 DEFAULT_TENANT_MAX_CONCURRENCY = 2
 MAX_TENANT_CONCURRENCY = 2  # app.tenant_gate.REQUEST_SLOTS: the pool's max_size (app.db) minus the worker's one
 DEFAULT_TENANT_SLOT_WAIT_MS = 5000
@@ -248,9 +241,6 @@ MAX_OFFBOARDING_COOL_OFF_HOURS = 720
 _KMS_KEY_PREFIXES = ("alias/", "arn:aws:kms:")
 DEFAULT_SCRUB_TIMEOUT_MS = 3000
 LLM_PROVIDERS = frozenset({"stub", "bedrock"})
-DEFAULT_LLM_MAX_TOKENS = 800
-DEFAULT_AI_PER_MINUTE = 6
-DEFAULT_AI_BUDGET_MAX_USD = Decimal("2")
 _MODEL_ID = re.compile(r"^[A-Za-z0-9._:/-]{1,120}$")
 _ROLE_ARN = re.compile(r"^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,128}$")
 _GUARDRAIL_ID = re.compile(r"^[a-z0-9]{1,64}$")
@@ -259,20 +249,6 @@ _REGION = re.compile(r"^[a-z]{2}(-[a-z]+)+-[0-9]$")
 
 
 FX_PROVIDERS = frozenset({"synthetic", "live"})
-
-
-# AA-1096 L4: env var -> Settings field of each value that moved to the admin-editable settings (crm-064 seed column
-# env_override). The env var stays one release as an emergency override (tech lead S279 Q5); the code default of the
-# field is no longer the value in force (the setting's default is: today's effective value).
-SETTINGS_ENV_OVERRIDES: dict[str, str] = {
-    "AI_BUDGET_MAX_USD": "ai_budget_max_usd",
-    "CRM_LLM_MAX_TOKENS": "crm_llm_max_tokens",
-    "RATE_LIMIT_PUBLIC_PER_MINUTE": "rate_limit_public_per_minute",
-    "RATE_LIMIT_INTAKE_PER_MINUTE": "rate_limit_intake_per_minute",
-    "RATE_LIMIT_INTAKE_FORM_PER_HOUR": "rate_limit_intake_form_per_hour",
-    "RATE_LIMIT_MEMBER_PER_MINUTE": "rate_limit_member_per_minute",
-    "RATE_LIMIT_AI_PER_MINUTE": "rate_limit_ai_per_minute",
-}
 
 
 class SettingsError(ValueError):
@@ -293,7 +269,6 @@ class Settings:
     cognito_crm_staff_client_id: str = ""
     cognito_partner_issuer: str = ""
     cognito_partner_web_client_id: str = ""
-    rate_limit_public_per_minute: int = DEFAULT_RATE_LIMIT_PER_MINUTE
     rate_limit_xff_hops: int = DEFAULT_XFF_HOPS
     sentry_dsn: str = field(default="", repr=False)
     sentry_required: bool = False
@@ -303,8 +278,6 @@ class Settings:
     kms_data_key_id: str = ""
     local_kek_b64: str = field(default="", repr=False)
     dek_cache_ttl_seconds: int = DEFAULT_DEK_CACHE_TTL_S
-    rate_limit_intake_per_minute: int = DEFAULT_INTAKE_PER_MINUTE
-    rate_limit_intake_form_per_hour: int = DEFAULT_INTAKE_FORM_PER_HOUR
     rate_limit_portal_write_per_minute: int = DEFAULT_PORTAL_WRITE_PER_MINUTE
     rate_limit_booking_price_per_minute: int = DEFAULT_BOOKING_PRICE_PER_MINUTE
     intake_page_origins: tuple[str, ...] = ()
@@ -318,7 +291,6 @@ class Settings:
     ses_configuration_set: str = ""
     invitation_ttl_hours: int = DEFAULT_INVITATION_TTL_HOURS
     rate_limit_claim_per_minute: int = DEFAULT_CLAIM_PER_MINUTE
-    rate_limit_member_per_minute: int = DEFAULT_MEMBER_PER_MINUTE
     tenant_max_concurrency: int = DEFAULT_TENANT_MAX_CONCURRENCY
     tenant_slot_wait_ms: int = DEFAULT_TENANT_SLOT_WAIT_MS
     scrub_guardrail_id: str = ""
@@ -331,9 +303,6 @@ class Settings:
     crm_llm_usd_per_mtok_out: Decimal = Decimal(0)
     crm_llm_region: str = "us-west-1"
     crm_llm_role_arn: str = field(default="", repr=False)
-    crm_llm_max_tokens: int = DEFAULT_LLM_MAX_TOKENS
-    rate_limit_ai_per_minute: int = DEFAULT_AI_PER_MINUTE
-    ai_budget_max_usd: Decimal = DEFAULT_AI_BUDGET_MAX_USD
     lifecycle_dry_run: bool = True
     # S263 (AA-939 follow-up): the partner-account clean-up (app.members.accounts) only counts while true.
     partner_account_cleanup_dry_run: bool = True
@@ -352,21 +321,6 @@ class Settings:
     portal_otp_dev_echo: bool = False
     kms_seal_key_id: str = ""
     messaging_hook_base: str = ""
-    # AA-1096 L4: the names of SETTINGS_ENV_OVERRIDES the environment set (load_settings); see settings_env().
-    settings_env_set: frozenset[str] = frozenset()
-
-    def settings_env(self) -> dict[str, str]:
-        """AA-1096 L4 (tech lead S279 Q5): the emergency overrides of the admin-editable settings (crm-064), one
-        release. An env var of :data:`SETTINGS_ENV_OVERRIDES` overrides its setting when the environment set it, or
-        when this Settings was built with a value other than the code default (a test app): ``{env name: value}``.
-        :func:`app.platform_settings.configure_env` hands it to the reader."""
-        defaults = {f.name: f.default for f in fields(self)}
-        out: dict[str, str] = {}
-        for name, attr in SETTINGS_ENV_OVERRIDES.items():
-            value = getattr(self, attr)
-            if name in self.settings_env_set or value != defaults[attr]:
-                out[name] = str(value)
-        return out
 
     def messaging_hooks_origin(self) -> str:
         """AA-958: the origin of the agencies' Twilio webhook URLs ("" = not configured)."""
@@ -395,12 +349,6 @@ class Settings:
         ):
             # A real model without a price would cost money the agency budget never sees (R5).
             raise SettingsError("CRM_LLM_PROVIDER=bedrock needs CRM_LLM_MODEL_ID and both CRM_LLM_USD_PER_MTOK prices")
-        if not 50 <= self.crm_llm_max_tokens <= 4000:
-            raise SettingsError("CRM_LLM_MAX_TOKENS must be between 50 and 4000")
-        if self.rate_limit_ai_per_minute < 0:
-            raise SettingsError("RATE_LIMIT_AI_PER_MINUTE must be >= 0")
-        if not 0 <= self.ai_budget_max_usd <= 10_000:
-            raise SettingsError("AI_BUDGET_MAX_USD must be between 0 and 10000 (crm.tenant_settings budget CHECK)")
 
     def __post_init__(self) -> None:
         if self.environment not in {"dev", "stg", "prod"} | INSECURE_ENVIRONMENTS:
@@ -438,8 +386,6 @@ class Settings:
             self.kms_seal_key_id.startswith(_KMS_KEY_PREFIXES) or _looks_like_key_id(self.kms_seal_key_id)
         ):
             raise SettingsError("KMS_SEAL_KEY_ID must be an alias/..., a KMS key ARN or a key id")  # AA-955
-        if self.rate_limit_public_per_minute < 0:
-            raise SettingsError("RATE_LIMIT_PUBLIC_PER_MINUTE must be >= 0")
         if not 1 <= self.rate_limit_xff_hops <= 5:
             raise SettingsError("RATE_LIMIT_XFF_HOPS must be between 1 and 5")
         if not 0 <= self.job_retention_utc_hour <= 23:
@@ -487,8 +433,6 @@ class Settings:
             raise SettingsError(f"OFFBOARDING_COOL_OFF_HOURS must be between 0 and {MAX_OFFBOARDING_COOL_OFF_HOURS}")
         if not 0 <= self.dek_cache_ttl_seconds <= MAX_DEK_CACHE_TTL_S:
             raise SettingsError(f"DEK_CACHE_TTL_SECONDS must be between 0 and {MAX_DEK_CACHE_TTL_S}")
-        if self.rate_limit_intake_per_minute < 0 or self.rate_limit_intake_form_per_hour < 0:
-            raise SettingsError("RATE_LIMIT_INTAKE_PER_MINUTE / RATE_LIMIT_INTAKE_FORM_PER_HOUR must be >= 0")
         if self.rate_limit_portal_write_per_minute < 0:
             raise SettingsError("RATE_LIMIT_PORTAL_WRITE_PER_MINUTE must be >= 0")
         if self.rate_limit_booking_price_per_minute < 0:
@@ -508,8 +452,6 @@ class Settings:
             raise SettingsError(f"INVITATION_TTL_HOURS must be between 1 and {MAX_INVITATION_TTL_HOURS}")
         if self.rate_limit_claim_per_minute < 0:
             raise SettingsError("RATE_LIMIT_CLAIM_PER_MINUTE must be >= 0")
-        if self.rate_limit_member_per_minute < 0:
-            raise SettingsError("RATE_LIMIT_MEMBER_PER_MINUTE must be >= 0")
         if not 1 <= self.tenant_max_concurrency <= MAX_TENANT_CONCURRENCY:
             raise SettingsError(f"CRM_TENANT_MAX_CONCURRENCY must be between 1 and {MAX_TENANT_CONCURRENCY}")
         if not 100 <= self.tenant_slot_wait_ms <= 30_000:
@@ -679,9 +621,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         cognito_crm_staff_client_id=_text(env, "COGNITO_CRM_STAFF_CLIENT_ID"),
         cognito_partner_issuer=_text(env, "COGNITO_PARTNER_ISSUER"),
         cognito_partner_web_client_id=_text(env, "COGNITO_PARTNER_WEB_CLIENT_ID"),
-        rate_limit_public_per_minute=_int(
-            env.get("RATE_LIMIT_PUBLIC_PER_MINUTE"), DEFAULT_RATE_LIMIT_PER_MINUTE, "RATE_LIMIT_PUBLIC_PER_MINUTE"
-        ),
         rate_limit_xff_hops=_int(env.get("RATE_LIMIT_XFF_HOPS"), DEFAULT_XFF_HOPS, "RATE_LIMIT_XFF_HOPS"),
         sentry_dsn=_text(env, "SENTRY_DSN"),
         sentry_required=_flag(env.get("SENTRY_REQUIRED"), False, "SENTRY_REQUIRED"),
@@ -693,12 +632,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         kms_data_key_id=_text(env, "KMS_DATA_KEY_ID"),
         local_kek_b64=_text(env, "LOCAL_KEK_B64"),
         dek_cache_ttl_seconds=_int(env.get("DEK_CACHE_TTL_SECONDS"), DEFAULT_DEK_CACHE_TTL_S, "DEK_CACHE_TTL_SECONDS"),
-        rate_limit_intake_per_minute=_int(
-            env.get("RATE_LIMIT_INTAKE_PER_MINUTE"), DEFAULT_INTAKE_PER_MINUTE, "RATE_LIMIT_INTAKE_PER_MINUTE"
-        ),
-        rate_limit_intake_form_per_hour=_int(
-            env.get("RATE_LIMIT_INTAKE_FORM_PER_HOUR"), DEFAULT_INTAKE_FORM_PER_HOUR, "RATE_LIMIT_INTAKE_FORM_PER_HOUR"
-        ),
         rate_limit_portal_write_per_minute=_int(
             env.get("RATE_LIMIT_PORTAL_WRITE_PER_MINUTE"),
             DEFAULT_PORTAL_WRITE_PER_MINUTE,
@@ -724,9 +657,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         rate_limit_claim_per_minute=_int(
             env.get("RATE_LIMIT_CLAIM_PER_MINUTE"), DEFAULT_CLAIM_PER_MINUTE, "RATE_LIMIT_CLAIM_PER_MINUTE"
         ),
-        rate_limit_member_per_minute=_int(
-            env.get("RATE_LIMIT_MEMBER_PER_MINUTE"), DEFAULT_MEMBER_PER_MINUTE, "RATE_LIMIT_MEMBER_PER_MINUTE"
-        ),
         tenant_max_concurrency=_int(
             env.get("CRM_TENANT_MAX_CONCURRENCY"), DEFAULT_TENANT_MAX_CONCURRENCY, "CRM_TENANT_MAX_CONCURRENCY"
         ),
@@ -745,11 +675,6 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         crm_llm_usd_per_mtok_out=_decimal(env.get("CRM_LLM_USD_PER_MTOK_OUT"), Decimal(0), "CRM_LLM_USD_PER_MTOK_OUT"),
         crm_llm_region=_text(env, "CRM_LLM_REGION") or "us-west-1",
         crm_llm_role_arn=_text(env, "CRM_LLM_ROLE_ARN"),
-        crm_llm_max_tokens=_int(env.get("CRM_LLM_MAX_TOKENS"), DEFAULT_LLM_MAX_TOKENS, "CRM_LLM_MAX_TOKENS"),
-        rate_limit_ai_per_minute=_int(
-            env.get("RATE_LIMIT_AI_PER_MINUTE"), DEFAULT_AI_PER_MINUTE, "RATE_LIMIT_AI_PER_MINUTE"
-        ),
-        ai_budget_max_usd=_decimal(env.get("AI_BUDGET_MAX_USD"), DEFAULT_AI_BUDGET_MAX_USD, "AI_BUDGET_MAX_USD"),
         lifecycle_dry_run=_flag(env.get("LIFECYCLE_DRY_RUN"), True, "LIFECYCLE_DRY_RUN"),
         partner_account_cleanup_dry_run=_flag(
             env.get("PARTNER_ACCOUNT_CLEANUP_DRY_RUN"), True, "PARTNER_ACCOUNT_CLEANUP_DRY_RUN"
@@ -772,5 +697,4 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         mail_oauth=_mail_oauth(env.get("MAIL_OAUTH")),
         portal_otp_dev_echo=_flag(env.get("PORTAL_OTP_DEV_ECHO"), False, "PORTAL_OTP_DEV_ECHO"),
         kms_seal_key_id=_text(env, "KMS_SEAL_KEY_ID"),
-        settings_env_set=frozenset(name for name in SETTINGS_ENV_OVERRIDES if (env.get(name) or "").strip()),
     )
