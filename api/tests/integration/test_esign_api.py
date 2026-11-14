@@ -9,6 +9,8 @@ signed-link contexts and ``tenant_tx()``, with real field encryption and the dev
   lead signs as guardian for a minor (O-6); the minor's own access is 403 ``guardian_signs``; the gate (s3 = 100)
   opens once every traveller's waiver is signed.
 - The agency's Agreements view and the sealed envelope download (the stub seal verifies).
+- AA-1012: the envelope as a PAdES-B-B signed PDF for the agency and the portal (a local key stands in for KMS): the
+  lead downloads their own and the minor's (signed as guardian), the minor their own, never the lead's.
 """
 
 from __future__ import annotations
@@ -215,3 +217,42 @@ async def test_esign_v1_end_to_end(app_pool: asyncpg.Pool) -> None:
         assert envelopes and all(e.startswith("aa-partner-envelope/1") or "Grace Lee" in e for e in envelopes)
     signed_for = {e["traveler_id"] for e in events if e["kind"] == "signed"}
     assert signed_for == {str(s["lead"]), str(s["companion"])}, "the guardian signature is in the lead's export"
+
+    # AA-1012: the PAdES-signed PDF, from the agency (a reveal) and from the portal (own / guardian only).
+    import base64
+    import datetime as dt
+
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from pyhanko.pdf_utils.reader import PdfFileReader
+    from pyhanko.sign.validation import async_validate_pdf_signature
+    from pyhanko_certvalidator import ValidationContext
+
+    from app.esign import certificate, pades
+    from app.esign.seal import KmsSealer
+    from tests.unit.test_aa1012_pades import SoftKms, _ca
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+    kms = SoftKms(key)
+    pem = certificate.issue_chain(kms.public, environment="test", now=dt.datetime.now(dt.UTC), ca_days=3, leaf_days=1)
+    signer = pades.PadesSealer(KmsSealer("alias/crm-test/seal", client_factory=lambda: kms), certificate.load_pem(pem))
+    lead_request = uuid.UUID(by[str(s["lead"])]["request_id"])
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        got = await esign.envelope_pdf(ctx, Vault(s["keys"], ctx), SEALER, signer, lead_request, "client_request")
+    data = base64.b64decode(got["content_b64"])
+    sig = PdfFileReader(io.BytesIO(data)).embedded_signatures[0]
+    status = await async_validate_pdf_signature(sig, ValidationContext(trust_roots=[_ca(pem)], allow_fetching=False))
+    assert status.bottom_line and sig.sig_object["/SubFilter"] == "/ETSI.CAdES.detached"
+    assert got["envelope_sha256"] == by[str(s["lead"])]["envelope_sha256"] and got["seal_verified"] is True
+    own = await portal.agreement_pdf(app_pool, s["keys"], lead_token, lead_session, str(s["lead"]), sealer=SEALER,
+                                     pades=signer)  # fmt: skip
+    assert own["envelope_sha256"] == by[str(s["lead"])]["envelope_sha256"]
+    minor = await portal.agreement_pdf(app_pool, s["keys"], lead_token, lead_session, str(s["companion"]),
+                                       sealer=SEALER, pades=signer)  # fmt: skip
+    assert minor["envelope_sha256"] == by[str(s["companion"])]["envelope_sha256"]
+    mine = await portal.agreement_pdf(app_pool, s["keys"], child_token, child_session, str(s["companion"]),
+                                      sealer=SEALER, pades=signer)  # fmt: skip
+    assert mine["filename"].endswith(".pdf")
+    with pytest.raises(Forbidden) as err:
+        await portal.agreement_pdf(app_pool, s["keys"], child_token, child_session, str(s["lead"]), sealer=SEALER,
+                                   pades=signer)  # fmt: skip
+    assert err.value.code == "envelope_not_yours"
