@@ -1839,7 +1839,7 @@ signing in `app/portal/public.py`, the terms re-accept in `app/proposals/public.
   embedded: Vietnamese renders), `envelope.txt` + `seal.json` embedded, then pyHanko signs it (`/ETSI.CAdES.detached`,
   SHA-256, no timestamp) with an external signer whose raw signature is `kms:Sign` on the seal key (RSASSA-PSS SHA-256,
   DIGEST: the AA-955 call; **the private key never leaves KMS**). The signing certificate is the public chain
-  `api/app/esign/certs/seal-chain-<environment>.pem` (Dev: a self-issued company CA made by
+  `api/app/esign/certs/seal-chain-<environment>.crt` (PEM text; `.crt` because `.gitignore` keeps every `*.pem` out; Dev: a self-issued company CA made by
   `api/scripts/esign_seal_certificate.py`, CA key discarded; prod CA at go-live), checked against `kms:GetPublicKey`
   before the first signature (503 `pdf_seal_mismatch`). Agency: `POST /crm/v1/signatures/{id}/pdf` (a reveal with a
   reason, field `envelope_pdf`); traveller: `GET /crm/public/v1/traveller/agreements/{traveler_id}/pdf` (`app/portal/agreements.py`; own

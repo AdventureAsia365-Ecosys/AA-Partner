@@ -4,7 +4,7 @@ The seal key is an RSA_3072 KMS key (``alias/crm-<env>/seal``, AA-932); its priv
 certificate for it can only be issued by someone who signs with another key. On Dev that is a **self-issued company
 CA** (:func:`issue_chain`): a fresh RSA key made in memory signs a CA certificate and a leaf certificate holding the
 seal key's public key, then the CA key is dropped (it is never returned, written or logged). The chain (leaf, then CA;
-PEM; public material only) is what the app reads (:func:`load_pem`, ``app/esign/certs/seal-chain-<environment>.pem``,
+PEM; public material only) is what the app reads (:func:`load_pem`, ``app/esign/certs/seal-chain-<environment>.crt``,
 committed by the orchestrator after running ``api/scripts/esign_seal_certificate.py``). Re-issuing makes a new CA;
 who issues the prod certificate is decided at go-live.
 
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import re
 from dataclasses import dataclass
 
 from cryptography import x509
@@ -31,6 +32,10 @@ SPKI = serialization.PublicFormat.SubjectPublicKeyInfo
 
 class CertificateError(ValueError):
     """A certificate chain the seal cannot use."""
+
+
+_PEM_LABEL = re.compile(rb"-----BEGIN ([A-Z0-9 ]+)-----")
+_ACCOUNT_LIKE = re.compile(r"arn:aws|(?<!\d)\d{12}(?!\d)")
 
 
 @dataclass(frozen=True)
@@ -54,7 +59,11 @@ def fingerprint(der: bytes) -> str:
 
 
 def load_pem(data: bytes) -> Chain:
-    """The chain of a PEM file: the leaf first, an RSA key that is not a CA, then its issuers."""
+    """The chain of a PEM file: the leaf first, an RSA key that is not a CA, then its issuers. Certificates only: a
+    file that also holds a key (or any other PEM block) is refused, so a private key is never read as a chain."""
+    labels = set(_PEM_LABEL.findall(data))
+    if labels - {b"CERTIFICATE"}:
+        raise CertificateError("a chain file holds certificates only")
     try:
         certs = x509.load_pem_x509_certificates(data)
     except ValueError:
@@ -68,6 +77,22 @@ def load_pem(data: bytes) -> Chain:
     except x509.ExtensionNotFound:
         pass
     return Chain(leaf.public_bytes(DER), tuple(c.public_bytes(DER) for c in certs[1:]))
+
+
+def public_problems(data: bytes) -> list[str]:
+    """Why a chain file must not be committed to the public repo (empty = fine): only CERTIFICATE blocks, and no AWS
+    account ID or ARN in any subject or issuer name (the names are built from the organization and environment)."""
+    try:
+        chain = load_pem(data)
+    except CertificateError as exc:
+        return [str(exc)]
+    problems = []
+    for der in (chain.leaf, *chain.issuers):
+        cert = x509.load_der_x509_certificate(der)
+        for name in (cert.subject.rfc4514_string(), cert.issuer.rfc4514_string()):
+            if _ACCOUNT_LIKE.search(name):
+                problems.append(f"an account ID or ARN in {name!r}")
+    return problems
 
 
 def _name(common: str, environment: str, organization: str) -> x509.Name:

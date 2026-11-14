@@ -12,6 +12,8 @@ import hashlib
 import io
 import json
 import re
+import shutil
+import subprocess
 import uuid
 import zlib
 from pathlib import Path
@@ -191,6 +193,58 @@ def test_unusable_chains_and_keys(seal_key: rsa.RSAPrivateKey, chain_pem: bytes)
     assert certificate.load_pem(plain.public_bytes(serialization.Encoding.PEM)).issuers == ()
 
 
+def _rsa_cert(common: str) -> bytes:
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    now = dt.datetime.now(dt.UTC)
+    name = x509.Name([x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, common)])
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key())
+            .serial_number(7).not_valid_before(now).not_valid_after(now + dt.timedelta(days=1))
+            .sign(key, hashes.SHA256()))  # fmt: skip
+    return cert.public_bytes(serialization.Encoding.PEM)
+
+
+def test_a_chain_file_is_public_material_only(seal_key: rsa.RSAPrivateKey, chain_pem: bytes) -> None:
+    assert certificate.public_problems(chain_pem) == []
+    key_pem = seal_key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    )
+    for mixed in (chain_pem + key_pem, key_pem + chain_pem):
+        with pytest.raises(certificate.CertificateError, match="certificates only"):
+            certificate.load_pem(mixed)
+        assert certificate.public_problems(mixed) == ["a chain file holds certificates only"]
+    assert certificate.public_problems(b"junk") == ["not a PEM certificate chain"]
+    for common in ("seal 111111111111", "arn:aws:kms:example"):
+        problems = certificate.public_problems(_rsa_cert(common))
+        assert len(problems) == 2 and "account ID or ARN" in problems[0]  # subject and issuer (self-signed)
+    assert certificate.public_problems(_rsa_cert("seal 2031-06-10 v1234567890123")) == []  # 13 digits, not an ID
+
+
+def test_the_committed_chain_files(chain_pem: bytes) -> None:
+    """Every file in the chain folder is a public-safe chain named for an environment (guards the chain commit)."""
+    names = {pades.chain_filename(e) for e in ("dev", "stg", "prod")}
+    for path in pades.CERT_DIR.glob("*") if pades.CERT_DIR.is_dir() else ():
+        assert path.name in names, path.name
+        assert certificate.public_problems(path.read_bytes()) == [], path.name
+
+
+def test_git_does_not_ignore_the_chain_file() -> None:
+    """The root .gitignore drops every *.pem; the chain must still be committable and land in the image."""
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("git is not installed")
+    for env_name in ("dev", "stg", "prod"):
+        path = pades.chain_path(env_name)
+        res = subprocess.run(  # noqa: S603 (fixed git argv)
+            [git, "check-ignore", "--no-index", "-q", str(path)],
+            cwd=pades.CERT_DIR.parent,
+            capture_output=True,
+            check=False,
+        )
+        if res.returncode == 128:
+            pytest.skip("not inside a git checkout")
+        assert res.returncode == 1, f"{path.name} is git-ignored"
+
+
 # ── envelope parser and the printed agreement ────────────────────────────────────────────────────────────────
 def test_the_envelope_parses_back() -> None:
     parsed = env.parse(_envelope().decode())
@@ -306,12 +360,12 @@ def test_which_pades(chain_pem: bytes, tmp_path: Path, monkeypatch: pytest.Monke
     assert pades.build_pades(dev, DevStubSealer()) is None
     monkeypatch.setattr(pades, "CERT_DIR", tmp_path)
     assert pades.build_pades(kms, KmsSealer("alias/crm-dev/seal")) is None  # no chain file for dev
-    (tmp_path / "seal-chain-dev.pem").write_bytes(b"broken")
+    (tmp_path / "seal-chain-dev.crt").write_bytes(b"broken")
     assert pades.build_pades(kms, KmsSealer("alias/crm-dev/seal")) is None
-    (tmp_path / "seal-chain-dev.pem").write_bytes(chain_pem)
+    (tmp_path / "seal-chain-dev.crt").write_bytes(chain_pem)
     built = pades.build_pades(kms, KmsSealer("alias/crm-dev/seal"))
     assert isinstance(built, pades.PadesSealer) and pades.require_pades(built) is built
-    assert pades.chain_path("dev").name == "seal-chain-dev.pem"
+    assert pades.chain_path("dev").name == "seal-chain-dev.crt"
     with _raises(Unavailable, "pdf_seal_not_configured"):
         pades.require_pades(None)
 
@@ -484,17 +538,28 @@ def test_the_traveller_pdf_route(pools: LocalPools, monkeypatch: pytest.MonkeyPa
 
 
 # ── the certificate script ───────────────────────────────────────────────────────────────────────────────────
-def test_the_certificate_script(seal_key: rsa.RSAPrivateKey, tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+def test_the_certificate_script(seal_key: rsa.RSAPrivateKey, tmp_path: Path, capsys: pytest.CaptureFixture,
+                                monkeypatch: pytest.MonkeyPatch) -> None:  # fmt: skip
     kms = SoftKms(seal_key)
     client = lambda profile, region: kms  # noqa: E731
     assert script.main(["check", "--environment", "dev"], client=client, out_dir=tmp_path) == 1
     assert script.main(["issue", "--environment", "dev"], client=client, out_dir=tmp_path) == 0
-    written = (tmp_path / "seal-chain-dev.pem").read_bytes()
+    written = (tmp_path / "seal-chain-dev.crt").read_bytes()
     assert b"PRIVATE" not in written and certificate.load_pem(written).leaf_public_key() == kms.public
     assert script.main(["check", "--environment", "dev"], client=client, out_dir=tmp_path) == 0
     assert kms.calls[0] == ("get_public_key", {"KeyId": "alias/crm-dev/seal"})
     other = SoftKms(rsa.generate_private_key(public_exponent=65537, key_size=2048))
     assert script.main(["check", "--environment", "dev"], client=lambda p, r: other, out_dir=tmp_path) == 1
     assert "DOES NOT match" in capsys.readouterr().out
-    assert [c[0] for c in kms.calls] == ["get_public_key"] * 3  # the script never asks KMS to sign
+    key_pem = seal_key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+    )
+    (tmp_path / "seal-chain-dev.crt").write_bytes(written + key_pem)
+    assert script.main(["check", "--environment", "dev"], client=client, out_dir=tmp_path) == 1
+    assert "NOT public-safe" in capsys.readouterr().out
+    monkeypatch.setattr(script, "public_problems", lambda pem: ["an account ID or ARN in 'CN=x'"])
+    fresh = tmp_path / "fresh"
+    assert script.main(["issue", "--environment", "dev"], client=client, out_dir=fresh) == 1
+    assert "nothing written" in capsys.readouterr().out and not fresh.exists()
+    assert [c[0] for c in kms.calls] == ["get_public_key"] * 5  # the script never asks KMS to sign
     assert ACCESS and TRIP  # the shared fixtures stay importable

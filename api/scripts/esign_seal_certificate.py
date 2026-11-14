@@ -4,8 +4,9 @@ The seal key (``alias/crm-<env>/seal``, RSA_3072) never leaves KMS. This script 
 (``kms:GetPublicKey``: the account's IAM admins may, through the key policy's ``IamAdministration`` statement; no crypto
 verb is used), then :func:`app.esign.certificate.issue_chain` makes a self-issued company CA in memory, issues the leaf
 certificate for that public key, and drops the CA key. It writes the chain (leaf, then CA; PEM, public material only)
-to ``app/esign/certs/seal-chain-<env>.pem``, the file the API of that environment reads. Commit that file; no private
-key is ever written. Running it again makes a new CA (renewal, or after a seal key rotation).
+to ``app/esign/certs/seal-chain-<env>.crt`` (PEM text), the file the API of that environment reads. Commit that file; no
+private key is ever written, and both modes refuse a file that is not public-safe (a non-certificate block, an account
+ID or ARN in a name). Running it again makes a new CA (renewal, or after a seal key rotation).
 
 Usage (from ``api/``; credentials of the admin role exported in the environment, as the steering's
 ``export-credentials`` pattern, so boto3 does not ask for an MFA code)::
@@ -30,8 +31,8 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from cryptography import x509  # noqa: E402
 
-from app.esign.certificate import fingerprint, issue_chain, load_pem  # noqa: E402
-from app.esign.pades import chain_path  # noqa: E402
+from app.esign.certificate import fingerprint, issue_chain, load_pem, public_problems  # noqa: E402
+from app.esign.pades import chain_filename, chain_path  # noqa: E402
 
 REGION = "us-west-1"
 CA_DAYS = 1826
@@ -69,13 +70,16 @@ def main(argv: Sequence[str] | None = None, *, client: Callable[[str, str], Any]
     parser.add_argument("--leaf-days", type=int, default=LEAF_DAYS)
     args = parser.parse_args(argv)
     key_id = args.key_id or f"alias/crm-{args.environment}/seal"
-    path = (out_dir / f"seal-chain-{args.environment}.pem") if out_dir else chain_path(args.environment)
+    path = (out_dir / chain_filename(args.environment)) if out_dir else chain_path(args.environment)
     public_key = bytes(client(args.profile, args.region).get_public_key(KeyId=key_id)["PublicKey"])
     if args.mode == "check":
         if not path.is_file():
             print(f"no chain file at {path}")
             return 1
         pem = path.read_bytes()
+        if problems := public_problems(pem):
+            print("NOT public-safe: " + "; ".join(problems))
+            return 1
         ok = load_pem(pem).leaf_public_key() == public_key
         print("\n".join(describe(pem)))
         print("matches the KMS key" if ok else "DOES NOT match the KMS key: issue a new chain")
@@ -87,6 +91,9 @@ def main(argv: Sequence[str] | None = None, *, client: Callable[[str, str], Any]
         ca_days=args.ca_days,
         leaf_days=args.leaf_days,
     )
+    if problems := public_problems(pem):
+        print("NOT public-safe, nothing written: " + "; ".join(problems))
+        return 1
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(pem)
     print(f"wrote {path}")

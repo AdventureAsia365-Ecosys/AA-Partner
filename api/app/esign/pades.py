@@ -8,9 +8,9 @@
   and IAM conditions as the AA-955 seal. **The private key never leaves KMS**; the app holds only the certificate chain.
   The CMS mechanism is ``rsassa_pss`` with SHA-256, MGF1-SHA-256 and a 32-byte salt (KMS's PSS parameters).
 - The certificate chain of the seal key (:mod:`app.esign.certificate`) is the public file
-  ``app/esign/certs/seal-chain-<environment>.pem``. Before the first signature of a process the leaf's public key is
-  compared with ``kms:GetPublicKey`` of the seal key (503 ``pdf_seal_mismatch`` when they differ: a rotated key with an
-  old certificate never signs).
+  ``app/esign/certs/seal-chain-<environment>.crt`` (PEM). Before the first signature of a process the leaf's public
+  key is compared with ``kms:GetPublicKey`` of the seal key (503 ``pdf_seal_mismatch`` when they differ: a rotated key
+  with an old certificate never signs).
 - Not configured (no KMS seal key, the HMAC stub environments; or no chain file for the environment):
   :func:`build_pades` answers None and a PDF request is 503 ``pdf_seal_not_configured``.
 
@@ -36,6 +36,9 @@ from app.settings import Settings
 log = logging.getLogger(__name__)
 
 CERT_DIR = Path(__file__).with_name("certs")
+# PEM text under a ".crt" name: the repo's .gitignore keeps every "*.pem" out of git (private keys), and the public
+# chain must be committed and shipped in the image (a test checks git does not ignore it).
+CHAIN_SUFFIX = ".crt"
 FIELD_NAME = "PlatformSeal"
 DIGEST = "sha256"
 PSS_SALT_BYTES = 32  # KMS RSASSA_PSS_SHA_256 uses a salt as long as the digest
@@ -51,13 +54,17 @@ class Attachment:
     description: str
 
 
+def chain_filename(environment: str) -> str:
+    return f"seal-chain-{environment}{CHAIN_SUFFIX}"
+
+
 def chain_path(environment: str) -> Path:
-    return CERT_DIR / f"seal-chain-{environment}.pem"
+    return CERT_DIR / chain_filename(environment)
 
 
 def load_chain(environment: str, *, directory: Path | None = None) -> Chain | None:
     """The environment's chain, None when there is no file or it cannot be used (logged; PDFs are then 503)."""
-    path = (directory or CERT_DIR) / f"seal-chain-{environment}.pem"
+    path = (directory or CERT_DIR) / chain_filename(environment)
     if not path.is_file():
         return None
     try:
