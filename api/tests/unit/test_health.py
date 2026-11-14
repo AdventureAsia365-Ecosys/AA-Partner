@@ -12,6 +12,9 @@ from app.settings import Settings
 
 
 def _client(**kw: object) -> TestClient:
+    from tests import settings_serve
+
+    kw = settings_serve.take_fields(dict(kw))  # AA-1096 l5: rate_limit_public_per_minute is a setting
     settings = Settings(environment="test", db_ssl="disable", git_sha="abc123", app_version="0.1.0", **kw)
     return TestClient(create_app(settings))
 

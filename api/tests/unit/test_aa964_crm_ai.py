@@ -454,9 +454,6 @@ async def test_a_real_provider_never_gets_the_stub_scrubber() -> None:
         {"CRM_LLM_USD_PER_MTOK_IN": "cheap"},
         {"CRM_LLM_USD_PER_MTOK_IN": "-1"},
         {"CRM_LLM_ROLE_ARN": "not-an-arn"},
-        {"CRM_LLM_MAX_TOKENS": "10"},
-        {"RATE_LIMIT_AI_PER_MINUTE": "-1"},
-        {"AI_BUDGET_MAX_USD": "20000"},
         {"CRM_LLM_REGION": "mars"},
     ],
 )

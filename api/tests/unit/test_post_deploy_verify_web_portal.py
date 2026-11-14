@@ -76,6 +76,7 @@ def _good_http(app: str) -> dict:
                 "environment": "dev",
                 "auth_configured": True,
                 "staff_auth_configured": True,
+                "academy_auth_configured": True,
             },
         },
         # AA-1036: the agency host sends /api/* to the web, whose studio BFF answers its liveness there.
@@ -169,6 +170,7 @@ def _status(path: str, code: int):
         ("crm-web", _set("/healthz", version="0.0.1"), {"healthz"}),
         ("crm-web", _set("/healthz", auth_configured=False), {"healthz"}),
         ("crm-web", _set("/healthz", staff_auth_configured=False), {"healthz"}),  # AA-1019
+        ("crm-web", _set("/healthz", academy_auth_configured=False), {"healthz"}),  # AA-1105
         # /crm/health answered by the web default (rule order lost) or the API down.
         ("crm-web", _set("/crm/health", service="aa-crm-web"), {"api-health"}),
         ("crm-web", _status("/crm/health", 503), {"api-health"}),

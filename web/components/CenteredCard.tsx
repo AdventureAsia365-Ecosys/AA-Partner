@@ -8,7 +8,18 @@ import { K, PageFrame, alpha } from "@/app/_kit";
  *  links to it stay plain <a> (a full page load, never a client-side navigation). */
 export const SIGN_IN_PATH = "/auth/sign-in";
 
-export function CenteredCard({ children, testId, wide = false }: { children: React.ReactNode; testId?: string; wide?: boolean }) {
+/** `brand`: the mark above the card (AA-1105: the academy host shows "AA Academy", never the partner app's name). */
+export function CenteredCard({
+  children,
+  testId,
+  wide = false,
+  brand = "Adventure Asia Partner",
+}: {
+  children: React.ReactNode;
+  testId?: string;
+  wide?: boolean;
+  brand?: string;
+}) {
   return (
     <PageFrame
       testId={testId}
@@ -23,7 +34,7 @@ export function CenteredCard({ children, testId, wide = false }: { children: Rea
             textAlign: "center",
           }}
         >
-          Adventure Asia Partner
+          {brand}
         </div>
         <div
           style={{

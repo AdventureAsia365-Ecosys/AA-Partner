@@ -265,10 +265,11 @@ describe("no raw /bff fetch in the browser code", () => {
   function code(src: string): string {
     return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|\s)\/\/.*$/gm, "$1");
   }
-  /** fetch( whose first argument is a string or template literal naming /bff/ (not /staff/bff/), prefixed or not. */
-  const RAW_FETCH = /fetch\(\s*[`'"][^`'"\n]*(?<!\/staff)\/bff\//;
-  /** Any string or template literal naming /bff/ (not /staff/bff/). */
-  const BFF_LITERAL = /[`'"][^`'"\n]*(?<!\/staff)\/bff\//;
+  /** fetch( whose first argument is a string or template literal naming /bff/ (not /staff/bff/ nor, AA-1105, the
+   *  academy's /academy/bff/), prefixed or not. */
+  const RAW_FETCH = /fetch\(\s*[`'"][^`'"\n]*(?<!\/staff|\/academy)\/bff\//;
+  /** Any string or template literal naming /bff/ (not /staff/bff/ nor /academy/bff/). */
+  const BFF_LITERAL = /[`'"][^`'"\n]*(?<!\/staff|\/academy)\/bff\//;
 
   function offences(rel: string, src: string): string[] {
     const body = code(src);
@@ -284,6 +285,7 @@ describe("no raw /bff fetch in the browser code", () => {
     expect(offences("x.ts", "await fetch(`${window.location.origin}/bff/${p}`)")).toHaveLength(1);
     expect(offences("x.ts", "const url = `/bff/${p}`;\nawait fetch(url)")).toHaveLength(1);
     expect(offences("x.ts", "await fetch(`/staff/bff/${p}`)")).toEqual([]);
+    expect(offences("x.ts", "await fetch(`/academy/bff/${p}`)")).toEqual([]);
     expect(offences("x.ts", "// GET /bff/bell lists events\n/* POST '/bff/x' */\nbffSend('GET', 'bell')")).toEqual([]);
     expect(offences("x.ts", "const u = 'https://example.org/a'; // see /bff/")).toEqual([]);
     expect(offences("lib/hosts.ts", "fetch(`/bff/${path}`)")).toHaveLength(1);

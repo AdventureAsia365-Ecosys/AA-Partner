@@ -5,7 +5,8 @@
 // deposit waits for it); the signing log (codes sent and refused). "View sealed document" is a reveal: a reason is
 // asked first and the API writes one reveal event. Names come from the trip's party (GET /trips/{id}); the API sends
 // ids, codes and hashes only. AA-957 S262 round 3 (C12 §2.7): on a cancelled trip nothing waits for a signature (the
-// signed envelopes and the log stay readable).
+// signed envelopes and the log stay readable). AA-1012 (CRM-25b): "Download signed PDF" (same reason, one reveal
+// event) saves the envelope as a PDF the platform seal key signed (PAdES-B-B).
 import { useState } from "react";
 import { Badge, Button, K, Modal, useHydrated } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
@@ -14,7 +15,7 @@ import { bffSend } from "@/lib/bffClient";
 import { REVEAL_REASONS } from "@/lib/clients";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
-import { proposalErrorKey, type SealedEnvelope, type TripAgreements } from "@/lib/proposals";
+import { proposalErrorKey, saveFile, type SealedEnvelope, type SignedPdf, type TripAgreements } from "@/lib/proposals";
 
 const select: React.CSSProperties = {
   font: "inherit",
@@ -65,6 +66,20 @@ export function TripAgreementsPanel({
     setReason("");
   }
 
+  async function downloadPdf(requestId: string) {
+    setBusy(true);
+    setError(null);
+    const res = await bffSend<SignedPdf>("POST", `signatures/${requestId}/pdf`, { reason });
+    setBusy(false);
+    if (!res.ok) {
+      setError(tr(proposalErrorKey(res.detail)));
+      return;
+    }
+    saveFile(res.data);
+    setOpening(null);
+    setReason("");
+  }
+
   return (
     <Panel title={tr("esign.title")} testId="trip-agreements">
       <div data-hydrated={hydrated ? "true" : undefined} data-all-signed={view.all_signed ? "true" : "false"} style={{ display: "grid", gap: 10, minWidth: 0 }}>
@@ -102,19 +117,14 @@ export function TripAgreementsPanel({
                       {sig.seal_alg && <span style={{ color: K.muted }}>{tr(sig.seal_alg.startsWith("dev-") ? "esign.sealDev" : "esign.sealKms")}</span>}
                       {sig.envelope_sha256 &&
                         (opening === sig.request_id ? (
-                          <>
-                            <select aria-label={tr("esign.reason")} value={reason} onChange={(e) => setReason(e.target.value)} style={select} data-testid="esign-reason">
-                              <option value="">{tr("esign.reason")}</option>
-                              {REVEAL_REASONS.map((r) => (
-                                <option key={r} value={r}>
-                                  {tr(`why.${r}`)}
-                                </option>
-                              ))}
-                            </select>
-                            <Button size="sm" variant="secondary" disabled={!reason || busy} onClick={() => void open(sig.request_id)}>
-                              {tr("esign.view")}
-                            </Button>
-                          </>
+                          <RevealControls
+                            reason={reason}
+                            busy={busy}
+                            tr={tr}
+                            onReason={setReason}
+                            onView={() => void open(sig.request_id)}
+                            onPdf={() => void downloadPdf(sig.request_id)}
+                          />
                         ) : (
                           <Button size="sm" variant="ghost" disabled={!hydrated} onClick={() => setOpening(sig.request_id)}>
                             {tr("esign.view")}
@@ -177,5 +187,42 @@ export function TripAgreementsPanel({
         )}
       </Modal>
     </Panel>
+  );
+}
+
+/** The reason picker of a reveal and its two actions: view the sealed text, or download the signed PDF (AA-1012). */
+function RevealControls({
+  reason,
+  busy,
+  tr,
+  onReason,
+  onView,
+  onPdf,
+}: {
+  reason: string;
+  busy: boolean;
+  tr: (key: string) => string;
+  onReason: (value: string) => void;
+  onView: () => void;
+  onPdf: () => void;
+}) {
+  const blocked = !reason || busy;
+  return (
+    <>
+      <select aria-label={tr("esign.reason")} value={reason} onChange={(e) => onReason(e.target.value)} style={select} data-testid="esign-reason">
+        <option value="">{tr("esign.reason")}</option>
+        {REVEAL_REASONS.map((r) => (
+          <option key={r} value={r}>
+            {tr(`why.${r}`)}
+          </option>
+        ))}
+      </select>
+      <Button size="sm" variant="secondary" disabled={blocked} onClick={onView}>
+        {tr("esign.view")}
+      </Button>
+      <Button size="sm" variant="secondary" disabled={blocked} testId="esign-download-pdf" onClick={onPdf}>
+        {tr("esign.downloadPdf")}
+      </Button>
+    </>
   );
 }

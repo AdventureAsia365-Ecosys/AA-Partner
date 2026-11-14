@@ -70,3 +70,27 @@ describe("e-sign routes and wording", () => {
     }
   });
 });
+
+describe("AA-1012 signed PDF", () => {
+  it("allows the agency PDF route through the BFF (POST only, a reveal with a reason)", () => {
+    expect(matchBff("POST", `signatures/${UUID}/pdf`)).toBeTruthy();
+    expect(matchBff("GET", `signatures/${UUID}/pdf`)).toBeFalsy();
+    expect(matchBff("POST", "signatures/not-a-uuid/pdf")).toBeFalsy();
+    expect(BFF_ROUTES.filter((r) => r.card === "AA-1012").length).toBe(1);
+  });
+
+  it("words the PDF refusals on both sides and in both languages", () => {
+    for (const code of ["pdf_seal_not_configured", "pdf_seal_mismatch", "document_integrity", "seal_unavailable"]) {
+      expect(proposalErrorKey(code)).toBe(`proposal.error.${code}`);
+    }
+    for (const code of ["pdf_seal_not_configured", "pdf_seal_mismatch", "document_integrity", "envelope_not_yours", "signature_not_found"]) {
+      expect(clientErrorKey(code)).toBe(`client.error.${code}`);
+    }
+    for (const lang of ["en", "vi"] as const) {
+      expect(MESSAGES[lang]["esign.downloadPdf"]).toBeTruthy();
+      expect(MESSAGES[lang]["proposal.error.pdf_seal_not_configured"]).toBeTruthy();
+      expect(clientMessages(lang)["client.downloadSignedPdf"]).toBeTruthy();
+      expect(clientMessages(lang)["client.error.envelope_not_yours"]).toBeTruthy();
+    }
+  });
+});

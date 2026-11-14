@@ -1,0 +1,9 @@
+{
+ "crm.ai.budget_max_usd": "AI_BUDGET_MAX_USD",
+ "crm.ai.draft_reply_max_tokens": "CRM_LLM_MAX_TOKENS",
+ "crm.rate.ai_per_minute": "RATE_LIMIT_AI_PER_MINUTE",
+ "crm.rate.intake_form_per_hour": "RATE_LIMIT_INTAKE_FORM_PER_HOUR",
+ "crm.rate.intake_per_minute": "RATE_LIMIT_INTAKE_PER_MINUTE",
+ "crm.rate.member_per_minute": "RATE_LIMIT_MEMBER_PER_MINUTE",
+ "crm.rate.public_per_minute": "RATE_LIMIT_PUBLIC_PER_MINUTE"
+}

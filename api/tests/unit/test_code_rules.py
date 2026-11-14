@@ -141,7 +141,14 @@ AUDIT_EXPORT_MODULES = frozenset(
 INVITATION_MODULES = frozenset({"app/members/invitations.py"})
 # AA-943: the signed client link context (token hash lookup, actor client_link:<id>): the public Stage 2 form only.
 # AA-946: the proposal accept page and the traveller portal (each opens only its own link purpose).
-CLIENT_LINK_MODULES = frozenset({"app/intake/stage2_public.py", "app/proposals/public.py", "app/portal/public.py"})
+CLIENT_LINK_MODULES = frozenset(
+    {
+        "app/intake/stage2_public.py",
+        "app/proposals/public.py",
+        "app/portal/public.py",
+        "app/portal/agreements.py",  # + AA-1012: the signed agreement PDF, behind portal.public's session check
+    }
+)
 # AA-1071: a sales partner's signed link (the token picks the agency and the partner): the partner pages module only.
 PARTNER_LINK_MODULES = frozenset({"app/partners/public.py"})
 # AA-945: the forward-in mail ingest context (the recipient's local part picks the agency): the ingest job only.
@@ -191,6 +198,7 @@ CONTEXT_TYPES = frozenset(
 )
 THIRD_PARTY = frozenset(
     {
+        "asn1crypto",  # AA-1012: the CMS / X.509 structures pyHanko works with
         "asyncpg",
         "boto3",
         "botocore",
@@ -200,6 +208,8 @@ THIRD_PARTY = frozenset(
         "jwt",
         "phonenumbers",
         "pydantic",
+        "pyhanko",  # AA-1012: PAdES signatures (app/esign/pades.py)
+        "pyhanko_certvalidator",
         "sentry_sdk",
         "starlette",
         "structlog",
@@ -672,7 +682,8 @@ def test_imports_stay_inside_the_boundary() -> None:
 
 def test_every_third_party_import_is_pinned() -> None:
     requirements = (APP.parent / "requirements.txt").read_text(encoding="utf-8").lower()
-    pins = {"jwt": "pyjwt==", "sentry_sdk": "sentry-sdk", "phonenumbers": "phonenumberslite==", "faker": "faker=="}
+    pins = {"jwt": "pyjwt==", "sentry_sdk": "sentry-sdk", "phonenumbers": "phonenumberslite==", "faker": "faker==",
+            "pyhanko_certvalidator": "pyhanko-certvalidator=="}  # fmt: skip
     for package in THIRD_PARTY:
         assert pins.get(package, f"{package}==") in requirements, package
 

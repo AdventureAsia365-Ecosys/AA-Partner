@@ -20,6 +20,7 @@ from app import platform_settings as ps
 from app.observability import ops_alerts
 from app.platform_settings import service
 from app.routers.ops_settings import SettingDecisionOut, SettingsOut
+from tests import settings_serve
 from tests.unit.fakes import ScriptedConn
 
 VID = uuid.UUID("00000000-0000-4000-8000-0000000001c3")
@@ -65,7 +66,8 @@ def _row(**over: Any) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_the_list_names_the_approved_version_and_the_scheduled_changes() -> None:
+async def test_the_list_names_the_approved_version_and_the_scheduled_changes(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings_serve.lay_retired_overrides(monkeypatch)
     ps.configure_env({"CRM_LLM_MAX_TOKENS": "900"})  # an env override: the resolved version is None
     conn = ScriptedConn()
     conn.on(

@@ -41,14 +41,18 @@ cap. 404 ``link_not_found`` for any unusable link. Answers carry ``no-store`` an
 (the token is in the path). The per-address limit has two buckets (429 ``rate_limited`` + ``Retry-After`` either way):
 
 - anonymous and pre-sign-in writes (every proposal write, the sign-in code, the code check): the intake limiter,
-  ``RATE_LIMIT_INTAKE_PER_MINUTE`` (default 5), the inquiry form's anti-abuse ceiling;
+  ``crm.rate.intake_per_minute`` (default 5), the inquiry form's anti-abuse ceiling;
 - writes only a signed-in traveller can make (Stage 3, flights, passport scan, the signing code, signing, companion
   invite, switch, sign-out), when the request carries a session cookie: the portal write limiter,
   ``RATE_LIMIT_PORTAL_WRITE_PER_MINUTE`` (default 30), so a family filling the portal from one address is not stopped
   by the form ceiling. Without a session cookie they keep the intake limiter. The cookie alone is not trusted: such a
-  write also holds a slot of the unproven-session limiter (``RATE_LIMIT_INTAKE_PER_MINUTE``) until the session check
+  write also holds a slot of the unproven-session limiter (``crm.rate.intake_per_minute``) until the session check
   passes (:func:`_session_write`), so a forged or stale cookie gets the anonymous ceiling of refused writes. See
   ``docs/implementation-notes/AA-953-write-limit.md`` for the per-route list.
+
+AA-1012: ``GET /crm/public/v1/traveller/agreements/{traveler_id}/pdf``: the PAdES-B-B signed PDF of a signed envelope
+(the traveller's own, or one they signed as guardian; 403 ``envelope_not_yours``), the documents answer shape
+``{filename, content_type, content_b64}``; the public per-address limit like the other reads.
 
 AA-1070: ``GET /crm/public/v1/traveller/travel`` (the released vouchers, the rooming list, the traveller's own visa
 checklists), ``PUT /crm/public/v1/traveller/rooming`` (the lead, after the deposit: 403 ``lead_only`` /
@@ -71,6 +75,7 @@ from fastapi.responses import JSONResponse
 from app.db import request_pool
 from app.documents.store import require_store
 from app.errors import NotFound
+from app.portal import agreements as portal_agreements
 from app.portal import public as portal
 from app.proposals import public as proposal_page
 from app.ratelimit import PublicRateLimit, client_address
@@ -88,7 +93,7 @@ _TOKEN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
 def _write_limit(request: Request) -> None:
     """An anonymous or pre-sign-in write (proposal pages, sign-in code, code check): the intake limiter
-    (``RATE_LIMIT_INTAKE_PER_MINUTE``, default 5 per address), the anti-abuse ceiling of the inquiry form."""
+    (``crm.rate.intake_per_minute``, default 5 per address), the anti-abuse ceiling of the inquiry form."""
     settings = request.app.state.settings
     _limit(request, "intake_limiter", client_address(request, settings.rate_limit_xff_hops))
 
@@ -101,7 +106,7 @@ async def _session_write(request: Request, session: str | None) -> AsyncIterator
     - No session cookie of the issued shape (none, a malformed one): the anonymous intake limiter, as any write
       without a session (such a request cannot pass the handler's session check anyway).
     - A session cookie of the issued shape: one slot of the **unproven session** limiter
-      (``RATE_LIMIT_INTAKE_PER_MINUTE`` per address, the anonymous ceiling) is taken, then the portal write limiter
+      (``crm.rate.intake_per_minute`` per address, the anonymous ceiling) is taken, then the portal write limiter
       (``RATE_LIMIT_PORTAL_WRITE_PER_MINUTE``, default 30 per address: a family filling the portal from one home
       address is not stopped by the inquiry-form ceiling, AA-953 follow-up). The handler checks the session as before;
       once it proved valid (:func:`app.portal.public.mark_session_proven`) the unproven slot is given back. A forged
@@ -669,6 +674,29 @@ async def get_traveller_document(
     keys = require_keys(request.app.state.keys)
     store = require_store(request.app.state.documents)
     return _json(await portal.open_document(pool, keys, store, _cookie_token(token), session, document_id))
+
+
+@router.get("/traveller/agreements/{traveler_id}/pdf")
+async def get_traveller_agreement_pdf(
+    request: Request,
+    traveler_id: str,
+    _: PublicRateLimit,
+    token: PortalLinkCookie = None,
+    session: SessionCookie = None,
+) -> JSONResponse:
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    return _json(
+        await portal_agreements.agreement_pdf(
+            pool,
+            keys,
+            _cookie_token(token),
+            session,
+            traveler_id,
+            sealer=getattr(request.app.state, "sealer", None),
+            pades=getattr(request.app.state, "pades", None),
+        )
+    )
 
 
 @router.post("/traveller/companions")
