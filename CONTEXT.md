@@ -94,6 +94,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   1.2 `/aa-content` (AA prep packs and starter templates, AA-977) into `crm.aa_content` (section "CRM-22" below).
   AA-1030: `booking.b2b.v1` is consumed up to **1.4** (`GET /tariff`, the agency's AA tariff; section "CRM-19",
   "AA prices").
+  AA-1093 stage 2: `tenant.erasure.v1` 1.0 (AA-CIS-App, byte copy in `docs/contracts/`): the CIS tenant offboarding
+  erasure saga's requests (`GET /tenant/v1/erasure-requests`) and the CRM's reports (`POST .../reports`), scope
+  `cis.tenant/erasure` (section "CIS tenant erasure saga, stage 2" below).
 - **Publishes** `crm.ops.v1` under `/crm/ops/v1` to the CIS admin (L1 platform console); since 1.5 (AA-966) it also
   carries the AA insights read `GET /insights` (spec module 17, design S-03), instead of a separate `crm.insights.v1`;
   since 1.6 (AA-964) the CRM ledger rows `GET /llm/calls` for the CIS Calls tab (section "CRM-33a" below).
@@ -452,6 +455,7 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 | `crm_tp_lead_pull` | every minute slot, due-now hook (`app.tripplanner.leads.LeadPullSchedule`, key `crm_tp_lead_pull:slot:<n>`) | AA-1038 R5 slice 3 (root ADR 0019 d11, contract `lead.submitted.v1`): per agency (`registry.agencies`), entered first (a `system_tx` that reads `crm.tenant_entitlement.tp_crm_leads`, crm-047: a locked / offboarding agency is skipped BEFORE the list call, so TripPlanner's per-tenant beacon goes stale and it refuses that tenant's crm leads; an agency whose CIS account does not entitle both `tp.hosted` and `crm.core`, projected by `crm_entitlement_pull`, is skipped with no HTTP call, `skipped_not_routed`), then `GET <TRIPPLANNER_API_URL>/trip/m2m/v1/tenants/{agency}/leads` with the M2M client (scope `tripplanner.leads/deliver`); each lead in one `system_tx` of that agency: another tenant's lead is refused (never stored, never acknowledged), the traveller's name / e-mail / phone are checked with the contract's one Traveller rule (`traveller_errors`, shared vectors `docs/contracts/rules/`), the answers are mapped onto the Stage 1 inquiry and validated like the hosted form (an optional answer that does not validate is dropped), stored through `store_submission` (idempotent on `tp-lead:<lead_id>`, the `crm_intake_process` job in the same transaction) under the agency's system form "Trip planner" (lead source `tripplanner`, disabled for the public, created on the first lead), then acknowledged (`stored` / `rejected` + reason) so TripPlanner redacts its copy; a rejected lead raises the ops alert `tp_lead_rejected`. TripPlanner's 404 `tenant_not_on_crm` / `unknown_tenant` is a counted skip (`skipped_not_on_crm`), not an error; any other TripPlanner or token failure is counted and the run ends successfully (next slot). One summary log line per run (`tp_lead_pull_summary`: agencies, pulled, skips, errors). `not_configured` without `TRIPPLANNER_API_URL` / `M2M_CLIENT`. Counts only. Not deploy-gate or DB Migrate exempt |
 | `crm_pdf_render` | event: one per member's PDF request (`POST /trips/{id}/pdfs`, key per trip, kind, subject and minute) | AA-1070: builds the booking confirmation / invoice / proposal / voucher PDF of a trip (`app.documents.pdf_job`, our own PDF writer) in one `system_tx` (actor `job:crm_pdf_render`) and stores it as a sealed `crm.document` (uploader `system`); the subject gone or the agency locked = finished with a `reason_code`; without the key provider or the documents bucket `not_configured` (never a queued-ahead retry). Ids only. Not deploy-gate exempt |
 | `crm_tour_retired_fanout` | event: one per AA tour transition the catalog sync stored (key per tour, transition and `state_changed_at`) | AA-1093 part 1: for every agency in its own `system_tx` (actor `job:crm_tour_retired_fanout`): `retired` raises `crm.tour_retired_flag` rows for each live trip's AA options of draft / published / sent versions and live AA lines on the tour, plus one task `aa_tour_discontinued` per trip (the trip owner, else the agency owner; never a write on a line, option or proposal); `reinstated` clears the open flags and adds one internal note to a trip whose open task stays; a row whose tour moved on finishes `stale`. Ids and counts only. Not deploy-gate exempt |
+| `crm_tenant_erase` | every 2-minute slot, due-now hook (`app.lifecycle.tenant_erase.TenantEraseSchedule`, key per slot) | AA-1093 stage 2 (decision D2): pulls `tenant.erasure.v1` into `crm.tenant_erasure_saga` (cursor in `crm.tenant_erasure_feed_state`), then for each request whose crm step is active makes the report it owes (DRY RUN, apply, verify), records it in `crm.tenant_erasure_report` in the transaction that did the work and posts it to CIS (re-posted with the same id after a network error). The apply erases the agency in one `lifecycle_tx` (actor `job:crm_tenant_erase`); kill switch `TENANT_ERASE_APPLY_ENABLED` (Terraform, default off). Counts only. Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 
@@ -1499,6 +1503,33 @@ list explains its reasons"). Migration crm-061 (expand); code in `app/tags/` and
   (`/settings/tags`), `CoveragePanel.tsx` (`/automations`, under the pipeline board; cards get a "Missing automation"
   badge), `/marketing` (Ready to travel again; campaigns arrive with CRM-36), the automation editor's tag trigger and
   tags condition. Words in `lib/i18nTags.ts` (system tags by code `tag.sys.<code>`, reasons `tag.reason.<code>`).
+
+## CIS tenant erasure saga, stage 2 (AA-1093, decision D2)
+
+CIS runs the tenant offboarding erasure saga (root plan `docs/audits/2026-11-13-S279-session/aa1093-plan.md`, contract
+`tenant.erasure.v1`): stage 1 (T0 + 30 days) CIS, Booking and TripPlanner; stage 2 (T0 + 90 days) the CRM alone. After
+its window AA erases the agency's CRM data without the owner's click (D2); the tech lead approves one combined
+fingerprint per round in the CIS admin, and the CRM applies only the plan hash approved for it.
+
+- **Job** `crm_tenant_erase` (`app/lifecycle/tenant_erase.py`; pure rules `saga_rules.py`, record `saga_store.py`):
+  each run pulls the feed, then works every request whose crm step is active. One report per request, round and mode
+  (`crm.tenant_erasure_report`, crm-066), written in the transaction that did the work, posted afterwards; CIS's answer
+  is kept (`accepted` or `refused:<code>`).
+- **DRY RUN**: the plan = every count of `crm.erase_subject('tenant')` in DRY RUN, the keys to destroy (`shred`), the
+  agency row whose name is replaced (`anonymise`), the tenant's Content studio invitations (`crm.studio_invitation`
+  by `cis_tenant_id`, through `crm.erase_studio_invitations`, crm-067). Plan hash in the contract form, digests null
+  (counts and round bind it, as CIS's own plan). `blocked` under a legal hold or while the owner's own offboarding
+  erase runs.
+- **Apply** (guards: the pilot, outside prod a synthetic tenant only, `TENANT_ERASE_APPLY_ENABLED`, the approved hash
+  of this round before its expiry; then the recomputed hash must equal it, else `plan_changed`): one transaction
+  cancels the owner's open offboarding / export requests, moves the agency to `offboarding`, withdraws its portability
+  exports, runs the tenant erase as `crm_eraser`, crypto-shreds its keys (canary check), names the agency
+  `Erased agency <first 8 of its id>` and sets it `offboarded`, deletes its studio invitations and writes the report
+  and the audit row; the bucket objects go after the commit.
+- **Verify**: the census of every `pii:` column of every crm table with a tenant column, plus the tenant's studio
+  invitations; `ok` at 0 rows, else `failed` `census_not_zero` (`census_incomplete` for a table it cannot read).
+- A CIS tenant without a CRM agency gets the same three reports over its studio invitations only. The owner-driven
+  offboarding (section "CRM-14" and AA-967) stays as it is for an agency that leaves on its own.
 
 ## CRM-18 thin full lifecycle (AA-946)
 

@@ -63,6 +63,9 @@ DB_MODULES = frozenset(
         "app/platform_settings/reader.py",
         "app/platform_settings/__init__.py",
         "app/platform_settings/service.py",
+        # AA-1093 stage 2 (crm-066 / crm-067): the CIS erasure saga's record (platform tables, no tenant rows) and the
+        # one call that counts or deletes a CIS tenant's studio invitations
+        "app/lifecycle/saga_store.py",
     }
 )
 # The only modules that may open the platform context provisioning_tx() (no membership check): agency creation and the
@@ -160,6 +163,7 @@ LIFECYCLE_MODULES = frozenset(
         "app/portability/exports.py",  # + AA-967 export job
         "app/lifecycle/pilot.py",  # + AA-969 d16: the pilot marker read and the nightly pilot backup
         "app/portability/restore_drill.py",  # + AA-969 d16: the one-agency restore drill
+        "app/lifecycle/tenant_erase.py",  # + AA-1093 stage 2: the CRM step of the CIS tenant erasure saga
     }
 )
 # AA-978: one CIS membership event in one agency (actor platform:feed-tenant-membership, any agency status).
@@ -593,6 +597,11 @@ def test_every_router_tenant_tx_names_its_permission_action() -> None:
                 if not any(k.arg == "action" for k in node.keywords):
                     missing.append(f"{rel}:{node.lineno}")
     assert missing == [], "tenant_tx() without action=: " + ", ".join(missing)
+
+
+def test_the_bare_eraser_role_is_used_only_by_the_erasure_saga_record() -> None:
+    """AA-1093 stage 2: crm_eraser on a connection without a context, for crm.erase_studio_invitations only."""
+    assert _users_of("eraser_role", frozenset({"app/lifecycle/saga_store.py"})) == []
 
 
 def test_lifecycle_tx_is_used_only_by_the_lifecycle_jobs() -> None:

@@ -207,6 +207,10 @@ def create_app(
                     studio_activation=app.state.studio_activation,
                     booking_client=app.state.booking_client,
                     tp_leads=build_tp_leads(settings, tokens),
+                    # AA-1093 stage 2: the same endpoint and token provider (scope cis.tenant/erasure per call)
+                    tenant_erasure=build_membership_feed(settings, tokens),
+                    tenant_erase_apply_enabled=settings.tenant_erase_apply_enabled,
+                    environment=settings.environment,
                     catalog=build_catalog(settings, tokens),
                     directory=app.state.directory,
                     mail_runtime=app.state.mail_runtime,
