@@ -14,6 +14,7 @@
 // panel (completeness, planning form, fill in from call); the timeline names override, date-rule and undo reasons.
 // AA-957 S262 round 3 (C12 §2.7): the cancel run marks every card of the page closed at once (TripClosed); a closed
 // trip offers no date change and no delete while AA has not confirmed the cancellation (the API answers 409 too).
+// AA-1089: under the title, the AA tour and departure the trip came from (TripSourceLine).
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
@@ -21,6 +22,7 @@ import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { DocumentsPanel } from "@/components/clients/DocumentsPanel";
 import { AaCancelCard } from "@/components/pipeline/AaCancelCard";
 import { TourRetiredCard } from "@/components/pipeline/TourRetiredCard";
+import { TripSourceLine } from "@/components/pipeline/TripSourceLine";
 import { CancelDialog, GateDialog } from "@/components/pipeline/StageDialogs";
 import { useMarkTripClosed, useTripClosed } from "@/components/pipeline/TripClosed";
 import { TravellerInfoPanel } from "@/components/pipeline/TravellerInfoPanel";
@@ -189,6 +191,7 @@ export function TripPanel({
         <h1 style={{ margin: 0, fontFamily: "'Fahkwang', 'Poppins', Georgia, serif", fontSize: 24, fontWeight: 500, color: K.ink, overflowWrap: "anywhere" }} data-testid="trip-title">
           {trip.title}
         </h1>
+        <TripSourceLine source={view.aa_source} lang={lang} locale={locale} />
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", fontSize: 13 }}>
           <span data-testid="trip-stage" data-stage={stageShown} style={{ display: "contents" }}>
             <Badge tone="accent">{stageLabel(lang, stageShown)}</Badge>
