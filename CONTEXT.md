@@ -2984,6 +2984,14 @@ or an env var alone. The CRM keeps its own registry in `crm` (root ADR 0008a: no
   `above_threshold` names `limit` / `limit_currency`. Settings > Forms reads the hourly quota from `GET /intake-forms`
   (`submissions_per_hour`, `submissions_per_hour_own`). A new-agency default reaches new agencies only: provisioning
   copies it into `crm.tenant_settings` (the guides say so).
+- **The newest decision wins (AA-1096 S280 UX fix round, crm.ops.v1 1.15, additive; the CIS 407 rule)**: an approval
+  in force now supersedes every other approved row of its scope, the rows in force and the scheduled ones (a schedule
+  approved earlier would otherwise replace it on its date); a future-dated approval supersedes the schedules dated at
+  or after it, and the rows in force give way on its date. `effective_from` is never re-dated (crm-064 append-only).
+  The approval's answer names `superseded_versions` / `cancelled_scheduled_versions` (the CIS relay writes them into
+  its audit row). `GET /settings` adds `approved_version` (the approved platform version in force, 0 = none: the base
+  version of a platform change, also under an env override or a refused stored value) and `scheduled` (approved
+  platform rows dated ahead).
 - **Guard**: `tests/unit/test_aa1096_settings_lint.py` (no new policy-looking constant in the governed modules, a
   baseline that only shrinks, every enforced key read by code).
 - **Every key ships its guide** (the CIS 416 rule): `app/platform_settings/guides.json` holds the operator's guide of
