@@ -22,9 +22,12 @@
 -- the same PR), not this table's column; no value, bound, approval rule or enforcement flag changes. The env_override
 -- mechanism stays (tests/unit/test_aa1096_settings_env_lint.py: a future override needs a dated one-release window).
 --
--- Class: contract (UPDATEs of existing config rows; no '-- migrate:' directive). MIG-4: a migration-only PR without a
--- readiness raise; on Dev, Infra Migration Apply once every job table is idle (root ADR 0017a). No new table (no
--- DM-7.1 row), no crm.erase_subject change, no personal data.
+-- Class: contract (UPDATEs of existing config rows; no '-- migrate:' directive). No readiness raise. MIG-4 deviation
+-- (recorded in the implementation notes): this file ships in ONE PR with the code that stops naming the retired env
+-- vars, not as a migration-only PR, because the seed-parity and migration tests bind this block, the generator and
+-- compiled_defaults.json together (either half alone is red), and no code reads the column, so a deploy before the
+-- apply changes nothing. On Dev, Infra Migration Apply once every job table is idle (root ADR 0017a). No new table
+-- (no DM-7.1 row), no crm.erase_subject change, no personal data.
 --
 -- Rollback (a new forward migration): put env_override back on the keys from crm-064 (only to re-open an emergency
 -- override; the code needs no change).
