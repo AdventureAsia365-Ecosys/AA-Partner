@@ -5,7 +5,7 @@ The migration-only PR (MIG-4) before the code PR of the same lane; the decisions
 
 ## Decisions
 
-- **crm-066 is expand**: three new platform tables (no tenant column: a CIS tenant may have no agency, and the record
+- **crm-066 is contract** (S281: the expand post-check refuses a new crm table without RLS): three new platform tables (no tenant column: a CIS tenant may have no agency, and the record
   outlives the agency erase), their constraints, indexes, `set_updated_at` triggers and comments; no row written (the
   feed state's singleton row is inserted by the job on first use, so the file stays expand).
 - **The report's status column is `outcome`**: a `status` column needs `crm.status_transition` rows (crm-002 base

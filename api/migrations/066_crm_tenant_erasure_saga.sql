@@ -1,4 +1,3 @@
--- migrate: expand
 -- Migration crm-066: AA-1093 stage 2 (root plan docs/audits/2026-11-13-S279-session/aa1093-plan.md, decision D2) — the
 -- storage of crm_tenant_erase, the CRM step of the CIS tenant offboarding erasure saga (contract tenant.erasure.v1).
 --
@@ -14,7 +13,7 @@
 -- outlive the agency erase they record):
 --   1. crm.tenant_erasure_feed_state: the one consumer state of the feed, like crm.entitlement_feed_state (crm-043):
 --      the opaque cursor CIS returned last, the last success, the last error class and time, the consecutive
---      failures. Its single row is inserted by the job on first use (no INSERT here: an expand file writes no row).
+--      failures. Its single row is inserted by the job on first use (no INSERT here: the file writes no row).
 --   2. crm.tenant_erasure_saga: one row per CIS request, the newest state the feed served (phase, round, the crm
 --      step status, its not_before, the approved plan hash in apply / verify, the approval expiry, is_pilot /
 --      is_synthetic as CIS copied them at T0). The job acts on it, never on a value it computes itself.
@@ -24,9 +23,11 @@
 --      with the same report_id and body after a network error and never recomputed.
 --   Ids, codes, hashes, counts and times only: no name, no e-mail, no free text (DM-6.1: no pii: column).
 --
--- Class: expand (root ADR 0017 d3): three new tables with their constraints, indexes, triggers and comments; the
--- only foreign key is between the new tables; no change to an existing object, no DO block, no CREATE OR REPLACE, no
--- row written. crm_app keeps the default DML of crm-001 on the new tables. Ships in the migration-only PR with crm-067
+-- Class: contract (root ADR 0017 d3; no migrate directive line). Three new tables with their constraints, indexes,
+-- triggers and comments; the only foreign key is between the new tables; no change to an existing object, no row
+-- written. It is not expand only because schema crm is an RLS schema (Infra owners.yaml expand_rls_schemas) and these
+-- platform tables have no tenant column, so they carry no ROW LEVEL SECURITY (like crm.aa_catalog_tour); the expand
+-- post-check refuses a new crm table without ENABLE + FORCE (S281 preflight classify exit 14). crm_app keeps the default DML of crm-001 on the new tables. Ships in the migration-only PR with crm-067
 -- (batch crm 066-067), applied before the code PR (MIG-4).
 -- DM-7.1: root data standards 02-data-management.md Part B section 7, the rows added in the root PR of this lane.
 --
