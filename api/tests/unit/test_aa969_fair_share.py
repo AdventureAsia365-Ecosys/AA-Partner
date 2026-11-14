@@ -498,13 +498,10 @@ def test_a_bad_token_never_spends_the_member_count(client: TestClient, pools: Lo
 
 def test_fair_share_settings_defaults_and_bounds() -> None:
     s = load_settings({})
-    assert (s.rate_limit_member_per_minute, s.tenant_max_concurrency, s.tenant_slot_wait_ms) == (600, 2, 5000)
-    s = load_settings(
-        {"RATE_LIMIT_MEMBER_PER_MINUTE": "0", "CRM_TENANT_MAX_CONCURRENCY": "1", "CRM_TENANT_SLOT_WAIT_MS": "100"}
-    )
-    assert (s.rate_limit_member_per_minute, s.tenant_max_concurrency, s.tenant_slot_wait_ms) == (0, 1, 100)
+    assert (s.tenant_max_concurrency, s.tenant_slot_wait_ms) == (2, 5000)  # the member ceiling is a setting (crm-070)
+    s = load_settings({"CRM_TENANT_MAX_CONCURRENCY": "1", "CRM_TENANT_SLOT_WAIT_MS": "100"})
+    assert (s.tenant_max_concurrency, s.tenant_slot_wait_ms) == (1, 100)
     for env in (
-        {"RATE_LIMIT_MEMBER_PER_MINUTE": "-1"},
         {"CRM_TENANT_MAX_CONCURRENCY": "0"},
         {"CRM_TENANT_MAX_CONCURRENCY": "3"},  # the request path has 2 of the pool's 3 connections
         {"CRM_TENANT_SLOT_WAIT_MS": "99"},

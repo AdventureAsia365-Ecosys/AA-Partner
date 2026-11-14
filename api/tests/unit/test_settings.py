@@ -18,9 +18,10 @@ def test_defaults_without_environment() -> None:
     assert s.job_retention_dry_run is True
     # Identity has no default at all (public repo, DM-6.10): every class accepts nothing until Terraform sets it.
     assert (s.cognito_workforce_issuer, s.cognito_partner_issuer) == ("", "")
-    assert s.rate_limit_public_per_minute == 120
     assert s.rate_limit_xff_hops == 2
-    assert (s.rate_limit_intake_per_minute, s.rate_limit_portal_write_per_minute) == (5, 30)  # AA-953 follow-up
+    assert s.rate_limit_portal_write_per_minute == 30  # AA-953 follow-up
+    # AA-1096 l5 (crm-070): the public, intake, member and AI limits are settings, never a Settings field or env var
+    assert not hasattr(s, "rate_limit_public_per_minute") and not hasattr(s, "rate_limit_intake_per_minute")
 
 
 def test_worker_defaults_on_in_dev_with_a_dsn() -> None:
@@ -40,7 +41,6 @@ def test_identity_values_are_read() -> None:
             "COGNITO_CIS_ADMIN_CLIENT_ID": "abc123",
             "COGNITO_BREAKGLASS_CLIENT_ID": "def456",
             "JOB_RETENTION_DRY_RUN": "off",
-            "RATE_LIMIT_PUBLIC_PER_MINUTE": "0",
             "JOB_RETENTION_UTC_HOUR": "3",
         }
     )
@@ -52,7 +52,6 @@ def test_identity_values_are_read() -> None:
     assert s.job_retention_dry_run is False
     assert s.job_retention_utc_hour == 3
     assert load_settings({}).job_retention_utc_hour == 19
-    assert s.rate_limit_public_per_minute == 0
 
 
 @pytest.mark.parametrize(
@@ -67,8 +66,8 @@ def test_identity_values_are_read() -> None:
         ({"COGNITO_CIS_ADMIN_CLIENT_ID": "same1", "COGNITO_BREAKGLASS_CLIENT_ID": "same1"}, "must differ"),
         ({"ENVIRONMENT": "prod", "PORTAL_OTP_DEV_ECHO": "true"}, "Dev-only"),
         ({"WORKER_ENABLED": "maybe"}, "WORKER_ENABLED"),
-        ({"RATE_LIMIT_PUBLIC_PER_MINUTE": "many"}, "integer"),
-        ({"RATE_LIMIT_PUBLIC_PER_MINUTE": "-1"}, ">= 0"),
+        ({"RATE_LIMIT_CLAIM_PER_MINUTE": "many"}, "integer"),
+        ({"RATE_LIMIT_CLAIM_PER_MINUTE": "-1"}, ">= 0"),
         ({"RATE_LIMIT_XFF_HOPS": "0"}, "between 1 and 5"),
         ({"JOB_RETENTION_UTC_HOUR": "24"}, "between 0 and 23"),
         ({"JOB_RETENTION_UTC_HOUR": "-1"}, "between 0 and 23"),

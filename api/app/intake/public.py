@@ -11,7 +11,7 @@ read an agency's form by its URL key (crm-005 policy ``intake_form_public_lookup
    learns nothing);
 3. the contact consent box is not ticked -> **422** ``consent_required``, nothing written, one count-only log line;
 4. any other invalid answer -> 422 ``invalid_submission`` with the field codes (never the values);
-5. the form's hourly quota (``form_quota``, ``RATE_LIMIT_INTAKE_FORM_PER_HOUR``) is charged only now, by a submission
+5. the form's hourly quota (``form_quota``, ``crm.rate.intake_form_per_hour``) is charged only now, by a submission
    that passed every check above, so forged-origin, honeypot or invalid requests cannot use up a form's allowance
    (429 ``form_rate_limited``, nothing written). The bucket is the form's id (:func:`form_bucket`, AA-1092), the same
    one its sales partner links charge (``app.partners.public``), so a form that also has partner links keeps one

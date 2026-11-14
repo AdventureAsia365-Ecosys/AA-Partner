@@ -265,8 +265,6 @@ def create_app(
     app.state.directory = directory
     app.state.mailer = mailer
     app.state.claim_limiter = FixedWindowLimiter(settings.rate_limit_claim_per_minute)
-    # AA-1096 L4: the env overrides of the admin-editable settings are this Settings' own (one release, tech lead Q5).
-    ps.configure_env(settings.settings_env())
     # AA-969 (CRM-37a): the agency fair share. Requests per member per agency per minute (app.auth.route_guard) and
     # the per-agency share of the pool every tenant_tx() takes (app.tenant_gate).
     app.state.member_limiter = FixedWindowLimiter(ps.limit(ps.RATE_MEMBER))

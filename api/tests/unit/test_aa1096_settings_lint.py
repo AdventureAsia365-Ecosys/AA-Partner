@@ -18,6 +18,14 @@ tests/unit/test_s279_settings_lint.py.
    constant is used outside the binding), and every constant names a compiled key.
 3. **The baseline only shrinks.** A baseline entry whose constant is gone (or now reads a setting) fails until it is
    removed from the file.
+4. **An env override lives one release** (AA-1096 l5, crm-070; tech lead S279: "env vars stay for one release as an
+   emergency override, then go"). crm-070 retired the seven crm-064 overrides
+   (``snapshots/aa1096_retired_env_overrides.json``): no compiled definition of a retired key names an env var again,
+   no definition names a retired env var, and no string literal of ``app/`` or ``scripts/`` (docstrings aside) is a
+   retired env name, so no code reads one directly. A future override needs its window in
+   ``snapshots/aa1096_env_override_window.json`` (``{key: {"env", "added", "remove_by", "issue"}}``, at most
+   :data:`MAX_WINDOW_DAYS` days); the check fails once ``remove_by`` has passed, until a migration retires it (a
+   ``settings-edit`` block with ``"env_override": null``) and the entry leaves the file.
 
 No DB. Regenerate the baseline only to remove entries: ``python -m tests.unit.test_aa1096_settings_lint``.
 CI: the job "Settings Lint" (.github/workflows/ci.yml) runs this file as a check of its own; "Unit Tests" runs it too.
@@ -29,6 +37,7 @@ import ast
 import json
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 from app import platform_settings as ps
@@ -143,6 +152,108 @@ def test_the_lint_catches_a_new_cap(tmp_path: Path, monkeypatch: object) -> None
     monkeypatch.setattr(sys.modules[__name__], "API", tmp_path)  # type: ignore[attr-defined]
     monkeypatch.setattr(sys.modules[__name__], "GOVERNED", ("app/zz_lint",))  # type: ignore[attr-defined]
     assert findings() == ["app/zz_lint/m.py:RETRY_MAX", "app/zz_lint/m.py:RUN_CAP_USD"]
+
+
+# ── 4. env overrides live one release (AA-1096 l5, crm-070) ─────────────────────────────────────────────────────────
+
+SNAPSHOTS = Path(__file__).resolve().parent / "snapshots"
+RETIRED = SNAPSHOTS / "aa1096_retired_env_overrides.json"
+WINDOW = SNAPSHOTS / "aa1096_env_override_window.json"
+MAX_WINDOW_DAYS = 14  # technical-constant: the CI rule's window length (tech lead S279: one release)
+LITERAL_SCOPE = ("app", "scripts")
+
+
+def _overrides(definitions: list[dict] | None = None) -> dict[str, str]:
+    defs = definitions if definitions is not None else json.loads(ps.COMPILED_DEFAULTS.read_text())["definitions"]
+    return {d["key"]: d["env_override"] for d in defs if d.get("env_override")}
+
+
+def retired_findings(definitions: list[dict] | None = None, gone: dict[str, str] | None = None) -> list[str]:
+    gone = json.loads(RETIRED.read_text()) if gone is None else gone
+    out = []
+    for key, env in sorted(_overrides(definitions).items()):
+        if key in gone or env in gone.values():
+            out.append(f"{key}: {env} is an env override crm-070 retired; it may not come back")
+    return out
+
+
+def window_findings(
+    definitions: list[dict] | None = None, listed: dict[str, dict] | None = None, today: date | None = None
+) -> list[str]:
+    listed = json.loads(WINDOW.read_text()) if listed is None else listed
+    today, overrides, out = today or date.today(), _overrides(definitions), []
+    for key, env in sorted(overrides.items()):
+        entry = listed.get(key)
+        if entry is None or entry.get("env") != env or not entry.get("issue"):
+            out.append(f"{key}: env override {env} needs its window (env, added, remove_by, issue) in {WINDOW.name}")
+            continue
+        try:
+            added, remove_by = date.fromisoformat(entry["added"]), date.fromisoformat(entry["remove_by"])
+        except (KeyError, TypeError, ValueError):
+            out.append(f"{key}: the window needs added and remove_by as YYYY-MM-DD")
+            continue
+        if (remove_by - added).days > MAX_WINDOW_DAYS:
+            out.append(f"{key}: a window longer than one release ({MAX_WINDOW_DAYS} days)")
+        if today > remove_by:
+            out.append(f"{key}: the one release of {env} ended on {remove_by}: retire it with a migration")
+    out += [
+        f"{key}: the window lists an override the definition no longer has"
+        for key in sorted(set(listed) - set(overrides))
+    ]
+    return out
+
+
+def literal_findings(files: list[Path] | None = None, gone: dict[str, str] | None = None) -> list[str]:
+    names = set((json.loads(RETIRED.read_text()) if gone is None else gone).values())
+    paths = files if files is not None else [p for top in LITERAL_SCOPE for p in sorted((API / top).rglob("*.py"))]
+    out = []
+    for path in paths:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        docs = {
+            id(n.body[0].value)
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef)
+            and n.body
+            and isinstance(n.body[0], ast.Expr)
+        }
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docs:
+                if node.value.strip() in names:
+                    out.append(f"{path.name}:{node.lineno}: {node.value!r} is a retired env override (crm-070)")
+    return out
+
+
+def test_no_retired_override_comes_back() -> None:
+    assert retired_findings() == []
+
+
+def test_every_env_override_has_a_one_release_window() -> None:
+    assert window_findings() == []
+
+
+def test_no_code_names_a_retired_env_var() -> None:
+    assert literal_findings() == []
+
+
+def test_the_retired_list_names_the_crm_070_keys() -> None:
+    gone = json.loads(RETIRED.read_text())
+    assert len(gone) == 7 and all(ps.definition(k).env_override is None for k in gone)
+
+
+def test_the_env_rules_catch_what_they_are_for(tmp_path: Path) -> None:
+    gone = {"crm.zz.alpha_cap": "ZZ_ALPHA_CAP"}
+    assert retired_findings([{"key": "crm.zz.alpha_cap", "env_override": "ZZ_ALPHA_CAP"}], gone)
+    assert retired_findings([{"key": "crm.zz.beta_cap", "env_override": "ZZ_ALPHA_CAP"}], gone)
+    one = [{"key": "crm.zz.gamma_cap", "env_override": "ZZ_GAMMA_CAP"}]
+    entry = {"env": "ZZ_GAMMA_CAP", "added": "2026-11-01", "remove_by": "2026-11-10", "issue": "AA-1"}
+    assert window_findings(one, {"crm.zz.gamma_cap": entry}, date(2026, 11, 5)) == []
+    assert window_findings(one, {"crm.zz.gamma_cap": entry}, date(2026, 11, 11))  # the release is over
+    assert window_findings(one, {"crm.zz.gamma_cap": {**entry, "remove_by": "2026-12-20"}}, date(2026, 11, 5))
+    assert window_findings(one, {}, date(2026, 11, 5))  # no window
+    assert window_findings([], {"crm.zz.gamma_cap": entry}, date(2026, 11, 5))  # a stale entry
+    src = tmp_path / "zz_reader.py"
+    src.write_text('"""ZZ_DELTA_CAP in a docstring is fine."""\nimport os\nV = os.environ.get("ZZ_DELTA_CAP")\n')
+    assert len(literal_findings([src], {"crm.zz.delta_cap": "ZZ_DELTA_CAP"})) == 1
 
 
 if __name__ == "__main__":  # rewrite the baseline to the current findings (only to remove entries)

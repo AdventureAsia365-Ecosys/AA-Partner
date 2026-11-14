@@ -21,7 +21,8 @@ from app.errors import ServiceError
 from app.observability import ops_alerts
 from app.platform_settings import service
 from app.ratelimit import FixedWindowLimiter
-from app.settings import Settings, load_settings
+from app.settings import load_settings
+from tests import settings_serve
 from tests.unit.fakes import ScriptedConn
 
 TENANT = uuid.UUID("00000000-0000-4000-8000-0000000001a1")
@@ -89,21 +90,24 @@ def test_every_key_constant_is_a_compiled_key_and_defaults_are_todays_values() -
     assert ps.resolve(ps.RATE_PUBLIC).source == "default"
 
 
-def test_an_env_override_wins_and_a_bad_one_is_ignored() -> None:
+def test_the_retired_env_vars_change_nothing() -> None:
+    """AA-1096 l5 (crm-070): no definition names an env var; the old names are ignored, the setting rules."""
+    assert all(ps.definition(k).env_override is None for k in ps.keys())
+    ps.configure_env({"RATE_LIMIT_PUBLIC_PER_MINUTE": "70", "CRM_LLM_MAX_TOKENS": "900"})
+    assert (ps.resolve(ps.RATE_PUBLIC).source, ps.get(ps.RATE_PUBLIC)) == ("default", 60)
+    assert ps.get(ps.AI_DRAFT_MAX_TOKENS) == 800
+    assert not hasattr(
+        load_settings({"ENVIRONMENT": "test", "RATE_LIMIT_PUBLIC_PER_MINUTE": "60"}), "rate_limit_public_per_minute"
+    )
+
+
+def test_an_env_override_wins_and_a_bad_one_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings_serve.lay_retired_overrides(monkeypatch)  # the mechanism stays for a future one-release override
     ps.configure_env({"RATE_LIMIT_PUBLIC_PER_MINUTE": "70", "RATE_LIMIT_AI_PER_MINUTE": "lots"})
     res = ps.resolve(ps.RATE_PUBLIC)
     assert (res.value, res.source, res.env_name) == (70, "env", "RATE_LIMIT_PUBLIC_PER_MINUTE")
     bad = ps.resolve(ps.RATE_AI)
     assert bad.value == 6 and bad.source == "default" and bad.env_ignored
-
-
-def test_settings_env_names_the_overrides_the_environment_set_or_a_test_changed() -> None:
-    loaded = load_settings(
-        {"ENVIRONMENT": "test", "RATE_LIMIT_PUBLIC_PER_MINUTE": "60", "RATE_LIMIT_INTAKE_PER_MINUTE": "5"}
-    )
-    assert loaded.settings_env() == {"RATE_LIMIT_PUBLIC_PER_MINUTE": "60", "RATE_LIMIT_INTAKE_PER_MINUTE": "5"}
-    assert Settings().settings_env() == {}
-    assert Settings(rate_limit_member_per_minute=3).settings_env() == {"RATE_LIMIT_MEMBER_PER_MINUTE": "3"}
 
 
 @pytest.mark.asyncio
@@ -127,7 +131,8 @@ async def test_an_agency_value_is_read_in_its_context_and_cached() -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_env_override_beats_an_agency_value() -> None:
+async def test_an_env_override_beats_an_agency_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings_serve.lay_retired_overrides(monkeypatch)
     conn = ScriptedConn().on(
         "WHERE v.tenant_id = $1", [{"key": ps.RATE_INTAKE_FORM, "value_text": "900", "version": 2}]
     )
@@ -172,7 +177,8 @@ async def test_the_agency_cache_is_bounded(monkeypatch: pytest.MonkeyPatch) -> N
     assert len(ps._TENANT) == 2
 
 
-def test_limits_and_dry_run_switches_read_now() -> None:
+def test_limits_and_dry_run_switches_read_now(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings_serve.lay_retired_overrides(monkeypatch)
     limiter = FixedWindowLimiter(ps.limit(ps.RATE_INTAKE))
     assert all(limiter.allow("a") for _ in range(5)) and not limiter.allow("a")
     ps.configure_env({"RATE_LIMIT_INTAKE_PER_MINUTE": "0"})  # 0 = off, read at the next call
@@ -240,7 +246,8 @@ def agency(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_list_settings_shows_values_sources_and_open_changes() -> None:
+async def test_list_settings_shows_values_sources_and_open_changes(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings_serve.lay_retired_overrides(monkeypatch)
     ps.configure_env({"CRM_LLM_MAX_TOKENS": "900"})
     conn = ScriptedConn()
     conn.on("v.status IN ('approved', 'rejected', 'superseded')", [_row()])
@@ -493,7 +500,10 @@ async def test_an_approval_rechecks_the_range_group() -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_agency_value_is_refused_while_the_env_override_is_in_force(agency: dict[str, Any]) -> None:
+async def test_an_agency_value_is_refused_while_the_env_override_is_in_force(
+    agency: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings_serve.lay_retired_overrides(monkeypatch)
     ps.configure_env({"RATE_LIMIT_INTAKE_FORM_PER_HOUR": "200"})
     conn = ScriptedConn()
     with pytest.raises(ServiceError) as err:

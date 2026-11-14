@@ -14,7 +14,7 @@ The guard, in order:
 5. AA-1019 (root ADR 0006a A10c): the Dev-only CRM staff E2E identity outside ``dev`` / ``test`` / ``local`` ->
    **403** ``e2e_read_only`` (the token cannot exist elsewhere: this is the second lock); AA-1035 (A10d) the Dev-only
    CIS customer_success E2E identity likewise;
-6. AA-969 (CRM-37a): on the agency class only, more than ``RATE_LIMIT_MEMBER_PER_MINUTE`` requests in a minute by
+6. AA-969 (CRM-37a): on the agency class only, more than ``crm.rate.member_per_minute`` requests in a minute by
    one member for one agency (``iss`` + ``sub`` + the canonical ``X-AA-Tenant-Id`` uuid, ``app.state.member_limiter``)
    -> **429** ``rate_limited``. The agency is part of the key only once this task verified the caller's membership of
    it (:meth:`app.tenant_gate.TenantGate.is_member`, set by ``tenant_tx()``); every other header value (an agency the

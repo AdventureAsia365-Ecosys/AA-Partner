@@ -80,6 +80,9 @@ class LocalPools:
         self.external = LocalPool(EXTERNAL_ISSUER, "e1")
 
     def settings(self, **overrides: Any) -> Settings:
+        from tests import settings_serve
+
+        overrides = settings_serve.take_fields(overrides)  # AA-1096 l5: the retired env-override fields are settings
         values: dict[str, Any] = {
             "environment": "test",
             "db_ssl": "disable",

@@ -10,9 +10,9 @@ defaults come from ``compiled_defaults.json``, generated from the crm migration 
 ``scripts/gen_settings_defaults.py`` (CI keeps the two equal).
 
 Resolution of ``get(key, tenant_id=None)``:
-  1. the definition's emergency env override (one release, tech lead S279 Q5): the env var of the Settings this
-     process was built from, when it was set (:func:`configure_env`). A warning is logged and the CIS page shows
-     "overridden by env";
+  1. the definition's emergency env override, when a definition names one (one release only, tech lead S279 Q5; none
+     does since crm-070, AA-1096 l5): the process env var, or the mapping :func:`configure_env` gave (tests). A warning
+     is logged and the CIS page shows "overridden by env";
   2. the approved value of the agency (``tenant_id`` given, a ``platform+tenant`` key) whose ``effective_from`` has
      come, from the per-agency cache :func:`tenant_refresh` fills. crm.setting_value is FORCE RLS: an agency's rows are
      seen only inside that agency's context (crm-064), so the process-wide snapshot holds the platform rows only and
@@ -136,10 +136,10 @@ _TENANT: dict[str, _TenantRows] = {}
 _clock: Callable[[], float] = time.monotonic
 
 
-def configure_env(environ: Mapping[str, str]) -> None:
-    """The env vars the reader treats as emergency overrides: the Settings' own (:meth:`app.settings.Settings.
-    settings_env`), so a test app and the process it runs in agree."""
-    READER.environ = dict(environ)
+def configure_env(environ: Mapping[str, str] | None) -> None:
+    """The env the reader reads a definition's emergency override from (tests; None = the process env). Since crm-070
+    no definition names one: this only matters for a future one-release override."""
+    READER.environ = None if environ is None else dict(environ)
 
 
 def definition(key: str) -> Definition:
