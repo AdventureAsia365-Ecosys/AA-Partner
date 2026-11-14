@@ -4,12 +4,14 @@
 // from the API with the merge fields filled in (the signing facts as placeholders); the signer sends back each
 // document's id and SHA-256 exactly as shown, the insurance choice when the agency asks it, and for a child the
 // child's traveller id (the lead signs as guardian). A minor's own portal shows who signs for them. The section keeps
-// the v0 test ids (portal-waiver, portal-sign-*) for the traveller's own envelope.
+// the v0 test ids (portal-waiver, portal-sign-*) for the traveller's own envelope. AA-1012 (CRM-25b): a signed
+// envelope (one's own, or a minor's one signed as guardian) downloads as a PDF the platform seal key signed
+// (`<base>/agreements/<traveller>/pdf`, the documents answer shape).
 import { useState } from "react";
 import { Button, K, LinkButton } from "@/app/_kit";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt } from "@/lib/i18n";
-import { signBody, type InsuranceChoice, type PortalAgreements, type PortalEnvelope } from "@/lib/proposals";
+import { saveFile, signBody, type InsuranceChoice, type PortalAgreements, type PortalEnvelope, type SignedPdf } from "@/lib/proposals";
 
 type Step = (method: string, path: string, body: unknown, done: (data: Record<string, unknown>) => void) => Promise<void>;
 
@@ -38,7 +40,23 @@ const docText: React.CSSProperties = {
   borderRadius: 8,
 };
 
+/** The signed PDF of one envelope; the HTTP status and the refusal code when it fails. */
+async function downloadSigned(base: string, travelerId: string): Promise<{ status: number; detail: string | null }> {
+  try {
+    const res = await fetch(`${base}/agreements/${encodeURIComponent(travelerId)}/pdf`, { credentials: "same-origin", cache: "no-store" });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { detail?: unknown };
+      return { status: res.status, detail: typeof body.detail === "string" ? body.detail : null };
+    }
+    saveFile((await res.json()) as SignedPdf);
+    return { status: 200, detail: null };
+  } catch {
+    return { status: 0, detail: null };
+  }
+}
+
 export function SignEnvelope({
+  base,
   box: agreements,
   locked,
   busy,
@@ -46,9 +64,12 @@ export function SignEnvelope({
   hint,
   onCode,
   onSigned,
+  onError,
   t,
   locale,
 }: {
+  /** The portal API base on this origin (/crm/public/v1/traveller); without it no PDF link is shown. */
+  base?: string;
   box: PortalAgreements;
   locked: boolean;
   busy: boolean;
@@ -56,6 +77,8 @@ export function SignEnvelope({
   hint: string | null;
   onCode: (data: Record<string, unknown>) => void;
   onSigned: () => void;
+  /** A refused PDF download: the HTTP status and the API's refusal code. */
+  onError?: (status: number, detail: string | null) => void;
   t: (k: string) => string;
   locale: DateLocale;
 }) {
@@ -67,6 +90,7 @@ export function SignEnvelope({
   const [agree, setAgree] = useState(false);
   const [code, setCode] = useState("");
   const [asked, setAsked] = useState(false);
+  const [fetching, setFetching] = useState<string | null>(null);
   const current = agreements.envelopes.find((e) => e.traveler_id === active && !e.signed) ?? open[0] ?? null;
   const needsInsurance = Boolean(agreements.insurance_declination);
   const ready = !busy && agree && name.trim() && code.trim().length === 6 && (!needsInsurance || insurance);
@@ -101,6 +125,24 @@ export function SignEnvelope({
         <p key={e.traveler_id} style={{ margin: 0, fontSize: 14, color: e.signed ? K.success : K.body }} data-testid={e.for === "self" ? (e.signed ? "portal-signed" : "portal-envelope-self") : `portal-envelope-minor-${e.minor_number}`}>
           {label(e)}: {e.signed ? signedLine(e) : t("client.waiverMissing")}
           {e.signed && e.insurance_choice ? ` · ${t(`client.insurance.${e.insurance_choice}`)}` : ""}
+          {e.signed && base && (
+            <>
+              {" · "}
+              <LinkButton
+                size="inherit"
+                disabled={fetching !== null}
+                testId={e.for === "self" ? "portal-signed-pdf" : `portal-signed-pdf-minor-${e.minor_number}`}
+                onClick={async () => {
+                  setFetching(e.traveler_id);
+                  const res = await downloadSigned(base, e.traveler_id);
+                  setFetching(null);
+                  if (res.status !== 200) onError?.(res.status, res.detail);
+                }}
+              >
+                {t("client.downloadSignedPdf")}
+              </LinkButton>
+            </>
+          )}
           {!e.signed && !locked && open.length > 1 && e.traveler_id !== current?.traveler_id && (
             <>
               {" "}

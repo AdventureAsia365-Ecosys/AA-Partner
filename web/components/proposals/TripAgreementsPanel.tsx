@@ -5,7 +5,8 @@
 // deposit waits for it); the signing log (codes sent and refused). "View sealed document" is a reveal: a reason is
 // asked first and the API writes one reveal event. Names come from the trip's party (GET /trips/{id}); the API sends
 // ids, codes and hashes only. AA-957 S262 round 3 (C12 §2.7): on a cancelled trip nothing waits for a signature (the
-// signed envelopes and the log stay readable).
+// signed envelopes and the log stay readable). AA-1012 (CRM-25b): "Download signed PDF" (same reason, one reveal
+// event) saves the envelope as a PDF the platform seal key signed (PAdES-B-B).
 import { useState } from "react";
 import { Badge, Button, K, Modal, useHydrated } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
@@ -14,7 +15,7 @@ import { bffSend } from "@/lib/bffClient";
 import { REVEAL_REASONS } from "@/lib/clients";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
-import { proposalErrorKey, type SealedEnvelope, type TripAgreements } from "@/lib/proposals";
+import { proposalErrorKey, saveFile, type SealedEnvelope, type SignedPdf, type TripAgreements } from "@/lib/proposals";
 
 const select: React.CSSProperties = {
   font: "inherit",
@@ -61,6 +62,20 @@ export function TripAgreementsPanel({
       return;
     }
     setShown(res.data);
+    setOpening(null);
+    setReason("");
+  }
+
+  async function downloadPdf(requestId: string) {
+    setBusy(true);
+    setError(null);
+    const res = await bffSend<SignedPdf>("POST", `signatures/${requestId}/pdf`, { reason });
+    setBusy(false);
+    if (!res.ok) {
+      setError(tr(proposalErrorKey(res.detail)));
+      return;
+    }
+    saveFile(res.data);
     setOpening(null);
     setReason("");
   }
@@ -113,6 +128,9 @@ export function TripAgreementsPanel({
                             </select>
                             <Button size="sm" variant="secondary" disabled={!reason || busy} onClick={() => void open(sig.request_id)}>
                               {tr("esign.view")}
+                            </Button>
+                            <Button size="sm" variant="secondary" disabled={!reason || busy} testId="esign-download-pdf" onClick={() => void downloadPdf(sig.request_id)}>
+                              {tr("esign.downloadPdf")}
                             </Button>
                           </>
                         ) : (

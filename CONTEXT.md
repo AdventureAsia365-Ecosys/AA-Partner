@@ -1834,7 +1834,18 @@ signing in `app/portal/public.py`, the terms re-accept in `app/proposals/public.
   RSASSA-PSS SHA-256 with `KMS_SEAL_KEY_ID` (`alias/crm-<env>/seal`), the HMAC dev stub without it on dev / test /
   local, 503 `esign_not_configured` on stg / prod. The envelope is stored on the `signature_event` row (kind `signed`,
   docs DEK); the agency opens it as a reveal with a reason (`POST /crm/v1/signatures/{id}/envelope`, `verified`).
-  **Not PAdES yet**: no PDF; the seal is detached over the text envelope (follow-up in the implementation notes).
+- **Signed PDF (AA-1012, CRM-25b)**: the envelope downloads as a PAdES-B-B PDF (`app/esign/pades.py`), built at
+  download from the sealed text (nothing stored): `renders.signed_agreement` on the AA-1070 writer (Liberation Sans
+  embedded: Vietnamese renders), `envelope.txt` + `seal.json` embedded, then pyHanko signs it (`/ETSI.CAdES.detached`,
+  SHA-256, no timestamp) with an external signer whose raw signature is `kms:Sign` on the seal key (RSASSA-PSS SHA-256,
+  DIGEST: the AA-955 call; **the private key never leaves KMS**). The signing certificate is the public chain
+  `api/app/esign/certs/seal-chain-<environment>.pem` (Dev: a self-issued company CA made by
+  `api/scripts/esign_seal_certificate.py`, CA key discarded; prod CA at go-live), checked against `kms:GetPublicKey`
+  before the first signature (503 `pdf_seal_mismatch`). Agency: `POST /crm/v1/signatures/{id}/pdf` (a reveal with a
+  reason, field `envelope_pdf`); traveller: `GET /crm/public/v1/traveller/agreements/{traveler_id}/pdf` (own envelope or
+  one signed as guardian, else 403 `envelope_not_yours`). No KMS seal key or no chain file = 503
+  `pdf_seal_not_configured`; a stored seal KMS rejects = 503 `document_integrity`. Decisions:
+  `docs/implementation-notes/AA-1012.md`.
 - **Card R**: every refused signing code (expired, wrong, missing, attempts used up) is a `signature_event`
   `code_refused` row plus a denied audit event; every signing code sent is `code_sent`.
 - **Gate**: unchanged rule (s3 counts the waiver signed per traveller, whoever signed it), so a guardian's signature
@@ -1844,7 +1855,8 @@ signing in `app/portal/public.py`, the terms re-accept in `app/proposals/public.
   `keep_until`, then the daily lifecycle purge deletes them.
 - **Web**: the portal envelope (`components/portal/SignEnvelope.tsx`, the v0 test ids kept), the proposal page's
   re-accept (`components/proposals/TermsReaccept.tsx`), the trip's Signed documents panel
-  (`components/proposals/TripAgreementsPanel.tsx`), BFF lines card AA-955.
+  (`components/proposals/TripAgreementsPanel.tsx`, "Download signed PDF" since AA-1012), BFF lines card AA-955 and
+  AA-1012; the portal envelope's "Download PDF" link (`SignEnvelope`, `base` prop).
 - **The e-sign v0 limit stays** (the signing code goes out from the agency mailbox, whose Sent copy its owner can
   read); the evidence records `code_delivery` as before.
 
