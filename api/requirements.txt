@@ -23,3 +23,5 @@ Faker==40.40.0
 # kms:Sign, the private key stays in KMS). Imported on the first signed PDF only. 0.38.0: released 2026-10-17.
 pyHanko==0.38.0
 pyhanko-certvalidator==0.33.0
+# asn1crypto: imported directly (the CMS mechanism and certificates handed to pyHanko); pyHanko needs >= 1.5.1.
+asn1crypto==1.5.1

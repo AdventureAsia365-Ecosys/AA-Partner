@@ -372,7 +372,7 @@ async def test_the_agency_pdf_download(seal_key: rsa.RSAPrivateKey, chain_pem: b
     # The seal key id never carries the account part of a key ARN.
     from app.esign.seal import Seal
 
-    assert service._key_id(Seal(KMS_ALG, "arn:aws:kms:region:000000000000:key/abc-123", b"s")) == "abc-123"
+    assert service._key_id(Seal(KMS_ALG, "arn:partition:kms:region:account-id:key/abc-123", b"s")) == "abc-123"
     assert service._key_id(Seal("dev-stub-hmac-sha256", "dev-stub", b"s")) == "dev-stub"
 
 

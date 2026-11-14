@@ -191,6 +191,7 @@ CONTEXT_TYPES = frozenset(
 )
 THIRD_PARTY = frozenset(
     {
+        "asn1crypto",  # AA-1012: the CMS / X.509 structures pyHanko works with
         "asyncpg",
         "boto3",
         "botocore",
@@ -200,6 +201,8 @@ THIRD_PARTY = frozenset(
         "jwt",
         "phonenumbers",
         "pydantic",
+        "pyhanko",  # AA-1012: PAdES signatures (app/esign/pades.py)
+        "pyhanko_certvalidator",
         "sentry_sdk",
         "starlette",
         "structlog",
@@ -672,7 +675,8 @@ def test_imports_stay_inside_the_boundary() -> None:
 
 def test_every_third_party_import_is_pinned() -> None:
     requirements = (APP.parent / "requirements.txt").read_text(encoding="utf-8").lower()
-    pins = {"jwt": "pyjwt==", "sentry_sdk": "sentry-sdk", "phonenumbers": "phonenumberslite==", "faker": "faker=="}
+    pins = {"jwt": "pyjwt==", "sentry_sdk": "sentry-sdk", "phonenumbers": "phonenumberslite==", "faker": "faker==",
+            "pyhanko_certvalidator": "pyhanko-certvalidator=="}  # fmt: skip
     for package in THIRD_PARTY:
         assert pins.get(package, f"{package}==") in requirements, package
 
