@@ -20,7 +20,7 @@ from typing import Any
 import asyncpg
 import pytest
 
-from tests.integration.conftest import OWNER, READERS
+from tests.integration.conftest import OWNER, READERS, SET_AGENCY_TZ
 from tests.integration.test_crm010_schema import _agency, _ctx
 from tests.integration.test_crm016_schema import _lifecycle
 from tests.integration.test_crm019_schema import _builder, _publish
@@ -33,12 +33,14 @@ MIGRATION = Path(__file__).resolve().parents[2] / "migrations" / "050_crm_paymen
 async def _run(pool: asyncpg.Pool, tenant: uuid.UUID, sql: str, *args: Any, actor: str = "member:test") -> Any:
     async with pool.acquire() as conn, conn.transaction():
         await _ctx(conn, tenant, actor)
+        await conn.execute(SET_AGENCY_TZ)  # current_date = the view's agency-local today
         return await conn.fetchval(sql, *args)
 
 
 async def _rows(pool: asyncpg.Pool, tenant: uuid.UUID, sql: str, *args: Any) -> list[asyncpg.Record]:
     async with pool.acquire() as conn, conn.transaction():
         await _ctx(conn, tenant, "member:test")
+        await conn.execute(SET_AGENCY_TZ)
         return list(await conn.fetch(sql, *args))
 
 
