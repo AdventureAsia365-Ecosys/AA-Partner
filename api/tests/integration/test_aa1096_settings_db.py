@@ -136,7 +136,12 @@ async def test_a_range_group_is_checked_against_its_values_in_force(app_pool: as
     assert (await service.history(app_pool, ps.TRASH_DAYS_MIN, staff_sub=SUB))["history"] == []  # nothing written
 
 
-async def test_an_agency_value_is_refused_under_an_env_override(app_pool: asyncpg.Pool) -> None:
+async def test_an_agency_value_is_refused_under_an_env_override(
+    app_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests import settings_serve
+
+    settings_serve.lay_retired_overrides(monkeypatch)  # crm-068 retired them; the mechanism stays
     tenant_id, _ = await _agency(app_pool)
     ps.configure_env({"RATE_LIMIT_INTAKE_FORM_PER_HOUR": "200"})
     try:

@@ -184,7 +184,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   one shared public key; Twilio webhooks `class:hook` for a hook id this task already resolved, else
   `class:hook-unknown`. 429 `tenant_busy` (503 `db_busy` for the anonymous keys) after `CRM_TENANT_SLOT_WAIT_MS` (4x for
   a long slot), then at most 10 s for a connection (503 `db_busy`). The agency class guard adds a
-  per-member-per-agency ceiling (`RATE_LIMIT_MEMBER_PER_MINUTE`, 429 `rate_limited`) keyed by the canonical agency
+  per-member-per-agency ceiling (setting `crm.rate.member_per_minute`, 429 `rate_limited`) keyed by the canonical agency
   uuid only once the membership was verified in this task, else one `unverified` bucket per caller. An ASGI
   middleware (`app/bodylimit.py`) caps every request body before any route code runs (FastAPI parses JSON before the
   class guard): 1 MiB, the four upload routes their own cap + 64 KiB; 413 `body_too_large`. A body past 64 KiB on a
@@ -2021,7 +2021,7 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
     rows' (the accept dates a past line on its own day). A Booking refusal marks the attempt
     `refused` with the code (409); another failure rolls back and marks it `failed`. The client holds, accepts and pays
     on the existing client page; **a web booking's deposit invoice is issued at the accept** (actor the client link).
-    A booking also takes one of the agency's hourly ceiling (AA-1092: `RATE_LIMIT_INTAKE_FORM_PER_HOUR` per form key,
+    A booking also takes one of the agency's hourly ceiling (AA-1092: setting `crm.rate.intake_form_per_hour` per form key,
     its own bucket `book:<key>`, charged after the origin, honeypot and answers): 429 `form_rate_limited`.
   - *Online payment (BYO VNPay)*: Settings > Payments "Online payment (VNPay)" (`GET` / `PUT
     /settings/payment-methods/vn-gateway`, owner): the merchant code on the agency's `payment_provider_account`
@@ -2714,7 +2714,7 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
 ## CRM-33a AI gateway, Settings > AI, drafts (AA-964)
 
 - **Gateway v2** (`app/llm/gateway.py`, root ADR 0008a §5-6, root ADR 0009 §8): the order of Slice 1 / F3 with a
-  per-agency cap in front (`RATE_LIMIT_AI_PER_MINUTE`, default 6, `app/ratelimit.py`: over it `rate_limited`, logged,
+  per-agency cap in front (setting `crm.rate.ai_per_minute`, default 6, `app/ratelimit.py`: over it `rate_limited`, logged,
   nothing scrubbed or paid). Each row follows the ledger v2 contract (crm-032: `app = 'crm'`, attempt, provider request
   id, connection, wire id, family, cache tokens, pricing mode, `prompt_hash` of the scrubbed prompt, `prompt_version`,
   `job_id`). Every Bedrock Guardrails `ApplyGuardrail` attempt of the scrub is its own row (stage `crm_scrub`, role
@@ -2736,7 +2736,7 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   in `api/app` / `api/scripts` outside `app/llm/providers/bedrock.py` and `app/privacy/guardrails.py` fails CI; so
   does a vendor AI SDK import or endpoint in `web/` or `portal/`.
 - **Settings > AI** (`app/llm/agency_ai.py`, `app/routers/ai.py`, web `/settings/ai`): `GET /crm/v1/settings/ai`
-  (every role, action `ai_use`): switch, budget, plan cap `AI_BUDGET_MAX_USD` (default 2), this month's spend and
+  (every role, action `ai_use`): switch, budget, plan cap (setting `crm.ai.budget_max_usd`, default 2), this month's spend and
   share, alert level, test mode, cap per minute, `ai_assist_allowed`; `PUT` (owner, action `ai_settings`):
   `ai_enabled`, `ai_budget_usd` (0 .. cap, two decimals; above: 422 `budget_above_plan`), audited. Test mode has three
   fields (AA-1027 F3 follow-up): `model_test_mode` (the stub model writes, free), `scrub_billed` (`SCRUB_GUARDRAIL_ID`
@@ -2951,7 +2951,7 @@ outside `dev` / `test` / `local`. Output: one JSON line per agency, ids, labels 
 
 `DATABASE_URL` (secret `crm/dev/database-url`), `DB_SSL`, `ENVIRONMENT`, `WORKER_ENABLED`, `JOB_RETENTION_DRY_RUN`,
 `JOB_RETENTION_UTC_HOUR`,
-`RATE_LIMIT_PUBLIC_PER_MINUTE`, `RATE_LIMIT_XFF_HOPS`, `SENTRY_DSN` / `SENTRY_REQUIRED`, and the identity values
+`RATE_LIMIT_XFF_HOPS`, `SENTRY_DSN` / `SENTRY_REQUIRED`, and the identity values
 `COGNITO_WORKFORCE_ISSUER`, `COGNITO_CIS_ADMIN_CLIENT_ID`, `COGNITO_BREAKGLASS_CLIENT_ID`, `COGNITO_CRM_STAFF_CLIENT_ID`,
 `COGNITO_PARTNER_ISSUER`, `COGNITO_PARTNER_WEB_CLIENT_ID` (the retired `COGNITO_EXTERNAL_ISSUER` /
 `COGNITO_CIS_PORTAL_CLIENT_ID` are ignored, AA-979 P2b),
@@ -2959,12 +2959,11 @@ and the key provider `KEY_PROVIDER` (`kms`; `local` only in test / local), `KMS_
 `KMS_SEAL_KEY_ID` (AA-955: the e-sign seal key `alias/crm-<env>/seal`; without it the HMAC dev stub signs on dev / test /
 local and signing answers 503 `esign_not_configured` on stg / prod),
 `DEK_CACHE_TTL_SECONDS`, and the public intake (AA-936) `INTAKE_PAGE_ORIGINS` (the client host origin; empty on Dev =
-every submission 503 `intake_not_configured`), `RATE_LIMIT_INTAKE_PER_MINUTE` (default 5 per address; also every anonymous client-page write),
+every submission 503 `intake_not_configured`; the intake limits are the settings `crm.rate.intake_per_minute`, 5 per address,
+also every anonymous client-page write, and `crm.rate.intake_form_per_hour`, 200 per form, one bucket per form id, AA-1092),
 `RATE_LIMIT_PORTAL_WRITE_PER_MINUTE` (default 30 per address: traveller portal writes with a session that proved valid;
 not set on Dev, the code default applies), `RATE_LIMIT_BOOKING_PRICE_PER_MINUTE` (default 20 per address: "Book now"
-price checks; not set on Dev, the code default applies),
-`RATE_LIMIT_INTAKE_FORM_PER_HOUR` (default 200 per form; AA-1092: one bucket per form id, shared by the public form and
-its sales partner links), and the documents bucket (AA-937) `DOCUMENTS_BUCKET`, the
+price checks; not set on Dev, the code default applies), and the documents bucket (AA-937) `DOCUMENTS_BUCKET`, the
 audit export (AA-940) `AUDIT_BUCKET_COMPLIANCE` / `AUDIT_BUCKET_GOVERNANCE` (both or neither) and
 `AUDIT_RETENTION_DRY_RUN` (default true), and (AA-939) `COGNITO_PARTNER_POOL_ID`, `PARTNER_WEB_ORIGIN`,
 `SES_FROM_ADDRESS`, `SES_CONFIGURATION_SET`, `INVITATION_TTL_HOURS` (default 168), `RATE_LIMIT_CLAIM_PER_MINUTE`
@@ -2980,9 +2979,9 @@ secret `MAIL_OAUTH` (`crm/<env>/mail-oauth`, mapped only once it has a value), a
 `PORTAL_OTP_DEV_ECHO` (default false; refused outside dev / test / local; on, the portal code answer carries the code
 for the synthetic Dev agencies that have no mailbox), and the AI gateway (AA-964) `CRM_LLM_PROVIDER` (default `stub`),
 `CRM_LLM_MODEL_ID`, `CRM_LLM_USD_PER_MTOK_IN` / `CRM_LLM_USD_PER_MTOK_OUT`, `CRM_LLM_REGION`, `CRM_LLM_ROLE_ARN`,
-`CRM_LLM_MAX_TOKENS`, `RATE_LIMIT_AI_PER_MINUTE` (default 6) and `AI_BUDGET_MAX_USD` (default 2) (AA-1096 L4: these
-four and the public / intake / form / member rate limits are now admin-editable settings; the env vars only override
-them, for one release, section "Admin-editable platform settings"); on Dev, AA-CIS-Infra
+while the draft output cap, the AI calls per agency per minute, the AI budget ceiling and the public / intake / form /
+member rate limits are admin-editable settings (AA-1096 L4; their env vars were retired by crm-068, AA-1096 l5;
+section "Admin-editable platform settings"); on Dev, AA-CIS-Infra
 `crm_llm.tf` (AA-1027 F4) sets the provider `bedrock`, the model Amazon Nova Lite on acc2 with its catalogue prices, the
 region and the output cap, and grants the task role `bedrock:InvokeModel` on that inference profile only (no
 `CRM_LLM_ROLE_ARN`: acc3 is not used while it refuses every model). Meanings and defaults:
@@ -3002,8 +3001,8 @@ or an env var alone. The CRM keeps its own registry in `crm` (root ADR 0008a: no
   an agency's rows go with its `crm.tenant_settings` row). The 27 seeded keys are today's effective values
   (Terraform's where it differed: `crm.rate.public_per_minute` 60).
 - **Reader** (`app/platform_settings/`): `reader.py` is a byte copy of AA-CIS-App `shared/settings/reader.py`
-  (`api/settings_reader.lock.json`); the binding resolves env override (one release, tech lead Q5: the Settings' own env
-  var, `Settings.settings_env()`) -> the agency's approved value (read through the caller's own context connection,
+  (`api/settings_reader.lock.json`); the binding resolves env override (one release only, tech lead Q5; none since crm-068:
+  the process env var of a definition that names one) -> the agency's approved value (read through the caller's own context connection,
   `tenant_get`) -> the approved platform value (process snapshot, refreshed every 30 s by the API lifespan) -> the
   compiled default (`compiled_defaults.json`, generated from the migration seed by `scripts/gen_settings_defaults.py`;
   CI keeps them equal). A stored value that breaks its definition is refused (default served, ops e-mail
@@ -3023,6 +3022,12 @@ or an env var alone. The CRM keeps its own registry in `crm` (root ADR 0008a: no
   window equal to the agency's current value is accepted even after AA narrowed the range.
 - **Env override vs agency values**: an env override in force wins over every agency's value, so an agency's own value
   of such a key is refused (409 `env_override_active`) instead of recorded with no effect.
+- **Env overrides live one release** (AA-1096 l5, crm-068): crm-068 retired the seven crm-064 overrides (env_override
+  null, the `Settings` fields and env reads gone; list in `api/tests/unit/snapshots/aa1096_retired_env_overrides.json`).
+  The mechanism stays; the required "Settings Lint" check (`tests/unit/test_aa1096_settings_lint.py` rule 4) refuses a
+  retired override coming back, a literal of a retired env name in `app/` or `scripts/`, and any new override without
+  a dated window of at most 14 days in `api/tests/unit/snapshots/aa1096_env_override_window.json`. A migration changes
+  fields of existing keys with a `settings-edit` block (`api/scripts/gen_settings_defaults.py`).
 - **Two keys on deletes** (tech lead Q7): `LIFECYCLE_DRY_RUN`, `JOB_RETENTION_DRY_RUN`, `AUDIT_RETENTION_DRY_RUN` and
   `PARTNER_ACCOUNT_CLEANUP_DRY_RUN` stay in Terraform as a hard never-delete floor; the admin switch
   `crm.retention.*_dry_run` (maker-checker) is the second key; a delete runs only while both are off.

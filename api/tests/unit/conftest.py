@@ -27,7 +27,10 @@ def _settings_env_per_file():  # noqa: ANN202
     file built (say with a form quota of 2) never decides the next file's values. An autouse module fixture runs before
     the file's own module fixtures, so a module-scoped app still sets its overrides for its file."""
     from app import platform_settings as ps
+    from tests import settings_serve
 
     ps.configure_env({})
+    settings_serve.reset()
     yield
     ps.configure_env({})
+    settings_serve.reset()

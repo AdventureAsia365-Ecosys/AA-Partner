@@ -1,9 +1,9 @@
 """The agency side of the CRM AI layer (AA-964, card CRM-33a; design v3 M14, R5, R39; A-18 "AI", A-21 AI cards).
 
 - :func:`ai_settings` / :func:`update_ai_settings`: Settings > AI. ``ai_enabled`` (default **off**, crm-005) and the
-  monthly budget ``ai_budget_usd`` (default 2 USD), which an owner may lower or raise up to ``AI_BUDGET_MAX_USD`` (the
-  plan's cap: AA pays for the calls); the month's spend from ``crm.llm_call`` (calls and guardrail rows), the share of
-  the budget and the month's alert level (75 / 90 / 100, crm-032).
+  monthly budget ``ai_budget_usd`` (default 2 USD), which an owner may lower or raise up to the setting
+  ``crm.ai.budget_max_usd`` (the plan's cap: AA pays for the calls); the month's spend from ``crm.llm_call`` (calls
+  and guardrail rows), the share of the budget and the month's alert level (75 / 90 / 100, crm-032).
   The view also says what a draft costs on this environment (AA-1027 F3 follow-up): ``model_test_mode`` (the stub
   model answers, it costs nothing), ``scrub_billed`` (a guardrail is configured, so the privacy check before each
   draft pays ``ApplyGuardrail`` units and its ``crm_scrub`` rows count in the month's spend) and ``test_mode``, true

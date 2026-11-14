@@ -5,11 +5,11 @@ to its own origin (no CORS). Not a route class: nothing here reads agency data b
 is decided by the form key inside :func:`app.tenancy.intake_tx`.
 
 - ``GET  /crm/public/v1/forms/{public_key}``: the form the page renders (field codes, honeypot name, agency label,
-  locale, framing origins, privacy link). Public rate limit (``RATE_LIMIT_PUBLIC_PER_MINUTE``).
+  locale, framing origins, privacy link). Public rate limit (``crm.rate.public_per_minute``).
 - ``POST /crm/public/v1/forms/{public_key}/submissions``: one submission (``app.intake.public.submit``): 202
   ``{"status": "received"}`` when stored, a repeat or a honeypot hit alike; 422 ``consent_required`` /
   ``invalid_submission`` (field codes only); 403 ``origin_not_allowed``; 429 per address
-  (``RATE_LIMIT_INTAKE_PER_MINUTE``, before anything is read) and per form (``RATE_LIMIT_INTAKE_FORM_PER_HOUR``,
+  (``crm.rate.intake_per_minute``, before anything is read) and per form (``crm.rate.intake_form_per_hour``,
   charged only by a submission that passed the origin, honeypot, consent and answer checks; AA-1092: the bucket is the
   form's id, the same one its sales partner links charge, so both paths share one hourly quota); 413 over 32 KiB, also
   for a chunked body or one whose Content-Length lies: the body is streamed and the read stops at the cap, so no more
@@ -58,7 +58,7 @@ is decided by the form key inside :func:`app.tenancy.intake_tx`.
   ``{status: already_created}`` for a repeated press, 202 ``{status: received}`` for a honeypot hit; 409 with the
   refusal code (``aa_sold_out``, ``no_retail_price``, ``price_on_request``, ``departure_not_available``, ...), 429 per
   address (the intake limit, then 5 attempts an hour per agency on the attempt rows; a ``price_on_request`` refusal
-  does not count), 429 ``form_rate_limited`` per agency (AA-1092: ``RATE_LIMIT_INTAKE_FORM_PER_HOUR`` per form key, its
+  does not count), 429 ``form_rate_limited`` per agency (AA-1092: ``crm.rate.intake_form_per_hour`` per form key, its
   own bucket ``book:<key>``, charged once the origin, honeypot and answers passed: many addresses together cannot make
   an agency mail an unbounded number of client links), 403 ``origin_not_allowed``, 32 KiB cap.
 

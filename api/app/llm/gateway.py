@@ -31,7 +31,7 @@ Every non-``ok`` result carries ``fallback = "manual_reply_needed"``: the draft 
 
 AA-964 (card CRM-33a; root ADR 0008a §5-6, root ADR 0009 §8):
 
-- **Per-agency rate cap** first (``RATE_LIMIT_AI_PER_MINUTE``, :mod:`app.ratelimit`): over it the call is refused
+- **Per-agency rate cap** first (``crm.rate.ai_per_minute``, :mod:`app.ratelimit`): over it the call is refused
   ``rate_limited`` before the budget step and the scrub, so a burst pays no guardrail units. Concurrency is already 1
   per agency (the budget lock).
 - **Ledger v2 row** (crm-032): ``app = 'crm'`` (column default), attempt 1, the provider's request id, connection,
@@ -785,7 +785,7 @@ def build_gateway(settings: Any, keys: Any | None = None) -> LlmGateway:
       real model never runs unscrubbed. Only the stub provider without a guardrail gets the stub scrubber (Dev, tests).
     - **provider**: :class:`app.llm.providers.bedrock.BedrockConverseProvider` only when ``CRM_LLM_PROVIDER=bedrock``
       (``app.settings`` refuses it without a model id and both prices); the stub otherwise (the default).
-    - **limiter**: ``RATE_LIMIT_AI_PER_MINUTE`` calls per agency per minute (0 = off).
+    - **limiter**: ``crm.rate.ai_per_minute`` calls per agency per minute (0 = off).
     - **profiles**: the stage profiles in ``crm`` (crm-037, :class:`app.llm.profiles.DbProfileSource`): the route, the
       attempts, the deadline and the kill switch of each stage. The provider plays each route entry (``for_route``).
 
