@@ -154,6 +154,17 @@ describe("lesson Markdown", () => {
     expect(html).not.toContain("Lesson title");
     expect(html).not.toContain("javascript:");
   });
+
+  it("drops a leading Objective paragraph only when asked (the page shows the API objective)", () => {
+    const text = "# Which source wins\n\n**Objective:** find the source of truth.\n\nBody paragraph.";
+    const dropped = renderToStaticMarkup(createElement(LessonBody, { text, skipFirstHeading: true, skipObjective: true }));
+    expect(dropped).not.toContain("find the source of truth");
+    expect(dropped).toContain("Body paragraph.");
+    const kept = renderToStaticMarkup(createElement(LessonBody, { text, skipFirstHeading: true }));
+    expect(kept).toContain("find the source of truth");
+    const later = renderToStaticMarkup(createElement(LessonBody, { text: "Intro.\n\n**Objective:** stays here.", skipObjective: true }));
+    expect(later).toContain("stays here");
+  });
 });
 
 describe("spaced review", () => {

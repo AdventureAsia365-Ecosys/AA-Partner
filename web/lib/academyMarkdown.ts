@@ -169,3 +169,11 @@ export function parseInline(text: string): MdInline[] {
   push(text.slice(last));
   return out;
 }
+
+/** The lesson page shows the API's `objective` above the body, so a leading "**Objective:** ..." paragraph in the
+ * lesson Markdown (kept for readers of the raw doc) would print it twice: drop that first paragraph only. */
+export function dropLeadingObjective(blocks: MdBlock[]): MdBlock[] {
+  const first = blocks[0];
+  if (first?.kind === "para" && /^\*\*objective:?\*\*:?/i.test((first.lines[0] ?? "").trim())) return blocks.slice(1);
+  return blocks;
+}

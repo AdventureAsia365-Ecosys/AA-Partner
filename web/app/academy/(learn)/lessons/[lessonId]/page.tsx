@@ -117,7 +117,7 @@ function LessonView({ lesson, lang, order, dict }: { lesson: Lesson; lang: Learn
           <LanguageNav lesson={lesson} lang={lang} dict={dict} />
           {lesson.stale && <p style={{ margin: 0, fontSize: 12.5, color: K.amber }}>{dict["academy.staleHelp"]}</p>}
           {lesson.has_video && <VideoPlayer lessonId={lesson.id} lang={lesson.lang} dict={dict} />}
-          <LessonBody text={lesson.body_md} skipFirstHeading testId="academy-lesson-body" />
+          <LessonBody text={lesson.body_md} skipFirstHeading skipObjective testId="academy-lesson-body" />
           <LessonProgress lessonId={lesson.id} lang={lesson.lang} status={lesson.status} moduleId={lesson.module_id} dict={dict} />
         </div>
       </Section>
