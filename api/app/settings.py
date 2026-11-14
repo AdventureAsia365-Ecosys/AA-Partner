@@ -20,6 +20,10 @@ Names (set by the ECS task definition in AA-CIS-Infra ``accounts/aa365/crm_app.t
   ``crm_lifecycle`` run (submission redaction, LLM-call purge, trash purge, auto-archive) reports what it would do, and
   an owner's erasure or offboarding erase answers 409 ``deletion_dry_run`` with the counts. Same hour as the job
   retention. Turning it off is an ops decision recorded in the runbook.
+- ``TENANT_ERASE_APPLY_ENABLED`` (AA-1093 stage 2): ``false`` (default) refuses the apply of the CRM step of the CIS
+  tenant erasure saga (``crm_tenant_erase`` reports ``refused`` ``apply_disabled``); its DRY RUN and verify never need
+  it. The destructive kill switch stays in Terraform (S279 thresholds audit section 4: data deletion takes two keys,
+  Terraform allows it, the tech lead's approval of the saga runs it).
 - ``FX_PROVIDER`` (AA-944): where the daily ``crm_fx_fetch`` job gets platform FX rates: ``synthetic`` (the default on
   ``dev`` / ``test`` / ``local``: a fixed table, no network) or ``live`` (the default on ``stg`` / ``prod``:
   ExchangeRate-API open access + ECB, cross-checked with fawazahmed0; free sources, ``app.fx.fetch``).
@@ -335,6 +339,8 @@ class Settings:
     rate_limit_ai_per_minute: int = DEFAULT_AI_PER_MINUTE
     ai_budget_max_usd: Decimal = DEFAULT_AI_BUDGET_MAX_USD
     lifecycle_dry_run: bool = True
+    # AA-1093 stage 2: the Terraform kill switch of the CRM erase apply of the CIS tenant erasure saga (default off).
+    tenant_erase_apply_enabled: bool = False
     # S263 (AA-939 follow-up): the partner-account clean-up (app.members.accounts) only counts while true.
     partner_account_cleanup_dry_run: bool = True
     offboarding_cool_off_hours: int = DEFAULT_OFFBOARDING_COOL_OFF_HOURS
@@ -751,6 +757,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ),
         ai_budget_max_usd=_decimal(env.get("AI_BUDGET_MAX_USD"), DEFAULT_AI_BUDGET_MAX_USD, "AI_BUDGET_MAX_USD"),
         lifecycle_dry_run=_flag(env.get("LIFECYCLE_DRY_RUN"), True, "LIFECYCLE_DRY_RUN"),
+        tenant_erase_apply_enabled=_flag(env.get("TENANT_ERASE_APPLY_ENABLED"), False, "TENANT_ERASE_APPLY_ENABLED"),
         partner_account_cleanup_dry_run=_flag(
             env.get("PARTNER_ACCOUNT_CLEANUP_DRY_RUN"), True, "PARTNER_ACCOUNT_CLEANUP_DRY_RUN"
         ),
