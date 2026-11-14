@@ -113,3 +113,40 @@ def build(
 
 def optional_sha256(value: str | None) -> str | None:
     return sha256(value).hex() if value else None
+
+
+@dataclass(frozen=True)
+class ParsedDocument:
+    title: str
+    version: str
+    text: str
+
+
+@dataclass(frozen=True)
+class Parsed:
+    """The parts of an envelope text (AA-1012: the PDF prints them as sections)."""
+
+    header: list[str]
+    documents: list[ParsedDocument]
+    audit: list[str]
+
+
+def parse(text: str) -> Parsed | None:
+    """The header lines, the documents and the audit page lines of an envelope built by :func:`build`; None when the
+    text does not split back into that shape (an agreement text holding a rule line of its own, another format)."""
+    chunks = text.split(f"\n{RULE}\n")
+    header = chunks[0].split("\n")
+    if header[0] != FORMAT:
+        return None
+    count = next((line.removeprefix("Documents: ") for line in header if line.startswith("Documents: ")), "")
+    if not count.isdigit() or len(chunks) != 3 + 2 * int(count) or chunks[1 + 2 * int(count)] != "Audit page":
+        return None
+    documents = []
+    for i in range(int(count)):
+        head = chunks[1 + 2 * i].split("\n")
+        if len(head) != 2 or not head[0].startswith("Document ") or not head[1].startswith("Version: "):
+            return None
+        title = head[0].split(": ", 1)[1] if ": " in head[0] else head[0]
+        documents.append(ParsedDocument(title, head[1].removeprefix("Version: "), chunks[2 + 2 * i]))
+    audit = chunks[-1].rstrip("\n").split("\n")
+    return Parsed([line for line in header[1:] if not line.startswith("Documents: ")], documents, audit)

@@ -50,6 +50,10 @@ cap. 404 ``link_not_found`` for any unusable link. Answers carry ``no-store`` an
   passes (:func:`_session_write`), so a forged or stale cookie gets the anonymous ceiling of refused writes. See
   ``docs/implementation-notes/AA-953-write-limit.md`` for the per-route list.
 
+AA-1012: ``GET /crm/public/v1/traveller/agreements/{traveler_id}/pdf``: the PAdES-B-B signed PDF of a signed envelope
+(the traveller's own, or one they signed as guardian; 403 ``envelope_not_yours``), the documents answer shape
+``{filename, content_type, content_b64}``; the public per-address limit like the other reads.
+
 AA-1070: ``GET /crm/public/v1/traveller/travel`` (the released vouchers, the rooming list, the traveller's own visa
 checklists), ``PUT /crm/public/v1/traveller/rooming`` (the lead, after the deposit: 403 ``lead_only`` /
 ``stage3_locked``) and ``PUT /crm/public/v1/traveller/visa-checklist/{item_id}`` (tick one document of the
@@ -669,6 +673,29 @@ async def get_traveller_document(
     keys = require_keys(request.app.state.keys)
     store = require_store(request.app.state.documents)
     return _json(await portal.open_document(pool, keys, store, _cookie_token(token), session, document_id))
+
+
+@router.get("/traveller/agreements/{traveler_id}/pdf")
+async def get_traveller_agreement_pdf(
+    request: Request,
+    traveler_id: str,
+    _: PublicRateLimit,
+    token: PortalLinkCookie = None,
+    session: SessionCookie = None,
+) -> JSONResponse:
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    return _json(
+        await portal.agreement_pdf(
+            pool,
+            keys,
+            _cookie_token(token),
+            session,
+            traveler_id,
+            sealer=getattr(request.app.state, "sealer", None),
+            pades=getattr(request.app.state, "pades", None),
+        )
+    )
 
 
 @router.post("/traveller/companions")
