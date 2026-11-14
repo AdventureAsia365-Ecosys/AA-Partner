@@ -16,7 +16,7 @@ import { BuilderAiIdeasTab } from "@/components/proposals/BuilderAiIdeasTab";
 import { type AaProduct, type CatalogTour } from "@/lib/aa";
 import { AA_TARIFF_PATH } from "@/lib/aaTariff";
 import { bffSend } from "@/lib/bffClient";
-import { builderErrorKey, moneyInput, TIERS, type BuilderView, type Tier } from "@/lib/builder";
+import { builderErrorKey, dayOfBlock, moneyInput, TIERS, type BuilderView, type Tier } from "@/lib/builder";
 import { fmt, plural, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { formatMoney } from "@/lib/ledger";
 
@@ -66,8 +66,6 @@ export function BuilderAaDrawer({
   const hydrated = useHydrated();
   const tr = (key: string) => t(lang, key as MessageKey);
   const [tab, setTab] = useState<"aa" | "agency" | "catalogue" | "ai">("aa");
-  const blockDay = view.days.find((d) => d.blocks.some((b) => b.option_block_id === blockId));
-  const dayDate = blockDay?.date ?? null;
   const [query, setQuery] = useState("");
   const [tours, setTours] = useState<CatalogTour[] | null>(null);
   const [tour, setTour] = useState<CatalogTour | null>(null);
@@ -290,12 +288,7 @@ export function BuilderAaDrawer({
           </div>
         </div>
       )}
-      {tab === "catalogue" && (
-        <BuilderCatalogueTab view={view} blockId={blockId} dayDate={dayDate} canMargin={canMoney} lang={lang} locale={locale} write={write} onClose={onClose} />
-      )}
-      {tab === "ai" && blockDay && (
-        <BuilderAiIdeasTab proposalId={view.proposal_id} dayId={blockDay.proposal_day_id} blockId={blockId} lang={lang} write={write} onAdded={onClose} />
-      )}
+      <BuilderMoreTab tab={tab} view={view} blockId={blockId} canMoney={canMoney} lang={lang} locale={locale} write={write} onClose={onClose} />
       {tab === "agency" && (
         <div style={{ display: "grid", gap: 8 }} data-testid="builder-agency">
           <label style={label}>
@@ -349,4 +342,30 @@ export function BuilderAaDrawer({
       )}
     </div>
   );
+}
+
+/** The drawer's catalogue (AA-1069) and AI ideas (AA-965) tabs: each needs the block's day. */
+function BuilderMoreTab({
+  tab,
+  view,
+  blockId,
+  canMoney,
+  lang,
+  locale,
+  write,
+  onClose,
+}: {
+  tab: string;
+  view: BuilderView;
+  blockId: string;
+  canMoney: boolean;
+  lang: Lang;
+  locale: string;
+  write: (method: "POST", path: string, body: Record<string, unknown>) => Promise<boolean>;
+  onClose: () => void;
+}) {
+  if (tab === "ai") return <BuilderAiIdeasTab view={view} blockId={blockId} lang={lang} write={write} onAdded={onClose} />;
+  if (tab !== "catalogue") return null;
+  const dayDate = dayOfBlock(view, blockId)?.date ?? null;
+  return <BuilderCatalogueTab view={view} blockId={blockId} dayDate={dayDate} canMargin={canMoney} lang={lang} locale={locale} write={write} onClose={onClose} />;
 }

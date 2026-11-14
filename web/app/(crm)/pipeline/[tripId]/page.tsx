@@ -35,7 +35,7 @@ import { OpsReleasePanel } from "@/components/pipeline/OpsReleasePanel";
 import { TripClosedProvider } from "@/components/pipeline/TripClosed";
 import { TripPanel } from "@/components/pipeline/TripPanel";
 import { AiDraftPanel } from "@/components/pipeline/AiDraftPanel";
-import { AiSupplierConfirmPanel } from "@/components/pipeline/AiSupplierConfirmPanel";
+import { TripAiSupplierCard } from "@/components/pipeline/TripAiSupplierCard";
 import { TagBar } from "@/components/tags/TagBar";
 import { TripWorkflows } from "@/components/workflows/TripWorkflows";
 import { TripMoneyCard } from "@/components/finance/TripMoneyCard";
@@ -177,15 +177,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
       />
     )}
     {/* AA-965 R10: AI reads a flight / insurance / visa / transfer / fee supplier's confirmation (never an AA line). */}
-    {lines.ok && ai.ok && ai.data.ai_enabled && ai.data.ai_assist_allowed !== false && (
-      <AiSupplierConfirmPanel
-        tripId={tripId}
-        lines={lines.data.lines}
-        suppliers={suppliers.ok ? suppliers.data.suppliers : []}
-        lang={ctx.lang}
-        closed={closed}
-      />
-    )}
+    <TripAiSupplierCard tripId={tripId} ai={ai} lines={lines} suppliers={suppliers} lang={ctx.lang} closed={closed} />
     {convs.ok && (
       <MessagesPanel
         tripId={tripId}

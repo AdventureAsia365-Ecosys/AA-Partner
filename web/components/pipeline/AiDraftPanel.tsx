@@ -8,9 +8,10 @@
 // Calls go through the BFF allow-list (lib/bff.ts): POST trips/{id}/ai/draft, POST ai/drafts/{id}/accept|discard.
 // AA-965 (R41): an optional voice of the agency (GET ai/voices) shapes the draft's tone.
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { AiNotice, Badge, Button, Drawer, Field, Input, K, Select, SegmentedControl, Textarea, useHydrated } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
+import { DraftVoicePicker } from "@/components/pipeline/DraftVoicePicker";
 import { testModeNote, type AiSettings } from "@/lib/ai";
 import {
   DRAFT_KINDS,
@@ -18,6 +19,7 @@ import {
   MAX_INSTRUCTION,
   MAX_TEXT,
   draftAvailability,
+  draftBody,
   draftErrorKey,
   draftInputError,
   fallbackKey,
@@ -27,7 +29,6 @@ import {
   type DraftResult,
   type FeedbackCode,
 } from "@/lib/aiDraft";
-import { voiceOptions, type VoicesView } from "@/lib/aiExtras";
 import { bffSend } from "@/lib/bffClient";
 import { t, type Lang, type MessageKey } from "@/lib/i18n";
 
@@ -60,20 +61,7 @@ export function AiDraftPanel({
   const [draft, setDraft] = useState<DraftResult | null>(null);
   const [feedback, setFeedback] = useState<FeedbackCode | "">("");
   const [done, setDone] = useState<Done | null>(null);
-  // AA-965 R41: the agency's voices, read when the drawer first opens (a failed read just offers no voice).
-  const [voices, setVoices] = useState<VoicesView | null>(null);
-  const [voice, setVoice] = useState("");
-
-  useEffect(() => {
-    if (!open || voices) return;
-    let live = true;
-    void bffSend<VoicesView>("GET", "ai/voices").then((res) => {
-      if (live && res.ok) setVoices(res.data);
-    });
-    return () => {
-      live = false;
-    };
-  }, [open, voices]);
+  const [voice, setVoice] = useState(""); // AA-965 R41: the chosen voice (DraftVoicePicker)
 
   function reset() {
     setDraft(null);
@@ -91,12 +79,7 @@ export function AiDraftPanel({
     }
     setBusy(true);
     reset();
-    const body = {
-      kind,
-      text: text.trim(),
-      ...(instruction.trim() ? { instruction: instruction.trim() } : {}),
-      ...(voice ? { voice_profile_id: voice } : {}),
-    };
+    const body = draftBody(kind, text, instruction, voice);
     const res = await bffSend<DraftResult>("POST", `trips/${tripId}/ai/draft`, body, { renew: true });
     setBusy(false);
     if (!res.ok) {
@@ -194,15 +177,7 @@ export function AiDraftPanel({
             <Field label={tr("aiDraft.instruction")} hint={tr("aiDraft.instructionHelp")}>
               <Input maxLength={MAX_INSTRUCTION} value={instruction} onChange={(e) => setInstruction(e.target.value)} />
             </Field>
-            {voiceOptions(voices).length > 0 && (
-              <Field label={tr("aiDraft.voice")}>
-                <Select
-                  value={voice}
-                  onChange={(e) => setVoice(e.target.value)}
-                  options={[{ value: "", label: tr("aiDraft.voice.none") }, ...voiceOptions(voices)]}
-                />
-              </Field>
-            )}
+            <DraftVoicePicker open={open} value={voice} onChange={setVoice} lang={lang} />
             <div>
               <Button type="submit" variant="primary" disabled={busy} testId="ai-draft-write">
                 {busy && !draft ? tr("aiDraft.writing") : draft ? tr("aiDraft.another") : tr("aiDraft.write")}

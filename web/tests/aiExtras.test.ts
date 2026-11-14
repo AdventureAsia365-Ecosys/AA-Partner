@@ -23,6 +23,7 @@ import {
   type VoicesView,
 } from "@/lib/aiExtras";
 import { matchBff } from "@/lib/bff";
+import type { BuilderView } from "@/lib/builder";
 import { MESSAGES } from "@/lib/i18n";
 import type { Line, Supplier } from "@/lib/ledger";
 
@@ -42,6 +43,10 @@ const DAY = "00000000-0000-4000-8000-000000000901";
 const PROPOSAL = "00000000-0000-4000-8000-000000000902";
 const BLOCK = "00000000-0000-4000-8000-000000000904";
 const VOICE = "00000000-0000-4000-8000-000000000903";
+const VIEW = { proposal_id: PROPOSAL, days: [{ proposal_day_id: DAY, blocks: [{ option_block_id: BLOCK }] }] } as unknown as Pick<
+  BuilderView,
+  "proposal_id" | "days"
+>;
 
 function line(over: Partial<Line>): Line {
   return {
@@ -207,7 +212,7 @@ describe("AI ideas tab", () => {
       writes.push({ path, body });
       return true;
     };
-    const el = mount(createElement(BuilderAiIdeasTab, { proposalId: PROPOSAL, dayId: DAY, blockId: BLOCK, lang: "en", write, onAdded: () => {} }));
+    const el = mount(createElement(BuilderAiIdeasTab, { view: VIEW, blockId: BLOCK, lang: "en", write, onAdded: () => {} }));
     await act(async () => {
       (el.querySelector('[data-testid="builder-ai-ideas-run"]') as HTMLButtonElement).click();
     });

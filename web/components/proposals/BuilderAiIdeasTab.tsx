@@ -10,27 +10,28 @@ import { useState } from "react";
 import { AiNotice, Button, Field, Input, K, Textarea } from "@/app/_kit";
 import { aiExtraErrorKey, aiExtraFallbackKey, type NotesOptionsResult, type OptionIdea } from "@/lib/aiExtras";
 import { bffSend } from "@/lib/bffClient";
+import { dayOfBlock, type BuilderView } from "@/lib/builder";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 
 const note: React.CSSProperties = { margin: 0, fontSize: 12.5, color: K.muted, overflowWrap: "anywhere" };
 const NOTES_BOUND = 30_000; // the API's request bound; the admin setting (crm.ai.notes_options_max_chars) is checked there
 
 export function BuilderAiIdeasTab({
-  proposalId,
-  dayId,
+  view,
   blockId,
   lang,
   write,
   onAdded,
 }: {
-  proposalId: string;
-  dayId: string;
+  view: Pick<BuilderView, "proposal_id" | "days">;
   blockId: string;
   lang: Lang;
   write: (method: "POST", path: string, body: Record<string, unknown>) => Promise<boolean>;
   onAdded: () => void;
 }) {
   const tr = (key: string) => t(lang, key as MessageKey);
+  const proposalId = view.proposal_id;
+  const dayId = dayOfBlock(view, blockId)?.proposal_day_id;
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,6 +39,7 @@ export function BuilderAiIdeasTab({
   const [nights, setNights] = useState<Record<string, string>>({});
 
   async function run() {
+    if (!dayId) return;
     setBusy(true);
     setError(null);
     setResult(null);
@@ -76,8 +78,6 @@ export function BuilderAiIdeasTab({
     if (ok) onAdded();
   }
 
-  const usable = result && result.outcome === "ok";
-
   return (
     <div style={{ display: "grid", gap: 8, minWidth: 0 }} data-testid="builder-ai-ideas">
       <p style={note}>{tr("aiX.ideas.intro")}</p>
@@ -86,7 +86,7 @@ export function BuilderAiIdeasTab({
       </Field>
       <div>
         <Button size="sm" variant="primary" disabled={busy} onClick={run} testId="builder-ai-ideas-run">
-          {busy && !result ? tr("aiX.ideas.running") : tr("aiX.ideas.run")}
+          {tr(busy && !result ? "aiX.ideas.running" : "aiX.ideas.run")}
         </Button>
       </div>
       {error && (
@@ -94,49 +94,94 @@ export function BuilderAiIdeasTab({
           {error}
         </p>
       )}
-      {result && !usable && (
+      {result && <IdeasResult result={result} nights={nights} setNights={setNights} busy={busy} onAdd={add} lang={lang} />}
+    </div>
+  );
+}
+
+function IdeaRow({
+  idea,
+  nights,
+  onNights,
+  busy,
+  onAdd,
+  lang,
+}: {
+  idea: OptionIdea;
+  nights: string;
+  onNights: (value: string) => void;
+  busy: boolean;
+  onAdd: () => void;
+  lang: Lang;
+}) {
+  const tr = (key: string) => t(lang, key as MessageKey);
+  const day = idea.tour_day ? ` · ${fmt(tr("aiX.ideas.tourDay"), { n: idea.tour_day })}` : "";
+  return (
+    <div
+      data-testid="builder-ai-idea"
+      style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap", padding: 8, border: `1px solid ${K.line}`, borderRadius: 8 }}
+    >
+      <div style={{ display: "grid", gap: 2, flex: "1 1 220px", minWidth: 0 }}>
+        <strong style={{ fontSize: 13, color: K.ink, overflowWrap: "anywhere" }}>{idea.title}</strong>
+        <span style={note}>
+          {tr(`aa.kind.${idea.component_kind}`)}
+          {day}
+        </span>
+        {idea.why && <span style={{ ...note, color: K.body }}>{idea.why}</span>}
+      </div>
+      {idea.component_kind === "hotel_room" && (
+        <Field label={tr("aiX.ideas.nights")}>
+          <Input size="sm" inputMode="numeric" maxLength={2} value={nights} onChange={(e) => onNights(e.target.value)} style={{ width: 70 }} />
+        </Field>
+      )}
+      <Button size="sm" disabled={busy} onClick={onAdd}>
+        {tr("aiX.ideas.add")}
+      </Button>
+    </div>
+  );
+}
+
+function IdeasResult({
+  result,
+  nights,
+  setNights,
+  busy,
+  onAdd,
+  lang,
+}: {
+  result: NotesOptionsResult;
+  nights: Record<string, string>;
+  setNights: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  busy: boolean;
+  onAdd: (idea: OptionIdea) => void;
+  lang: Lang;
+}) {
+  const tr = (key: string) => t(lang, key as MessageKey);
+  return (
+    <>
+      {result.outcome !== "ok" && (
         <p role="status" style={{ margin: 0, fontSize: 13, color: K.amber }} data-testid="builder-ai-ideas-fallback">
           {tr(aiExtraFallbackKey(result))}
         </p>
       )}
-      {usable && (
+      {result.outcome === "ok" && (
         <section style={{ display: "grid", gap: 8, minWidth: 0 }} data-testid="builder-ai-ideas-result" data-ai-generated="true">
           {result.options.length === 0 && <p style={note}>{tr("aiX.ideas.none")}</p>}
           {result.options.map((idea) => (
-            <div
+            <IdeaRow
               key={idea.code}
-              data-testid="builder-ai-idea"
-              style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap", padding: 8, border: `1px solid ${K.line}`, borderRadius: 8 }}
-            >
-              <div style={{ display: "grid", gap: 2, flex: "1 1 220px", minWidth: 0 }}>
-                <strong style={{ fontSize: 13, color: K.ink, overflowWrap: "anywhere" }}>{idea.title}</strong>
-                <span style={note}>
-                  {tr(`aa.kind.${idea.component_kind}`)}
-                  {idea.tour_day ? ` · ${fmt(tr("aiX.ideas.tourDay"), { n: idea.tour_day })}` : ""}
-                </span>
-                {idea.why && <span style={{ ...note, color: K.body }}>{idea.why}</span>}
-              </div>
-              {idea.component_kind === "hotel_room" && (
-                <Field label={tr("aiX.ideas.nights")}>
-                  <Input
-                    size="sm"
-                    inputMode="numeric"
-                    maxLength={2}
-                    value={nights[idea.code] ?? ""}
-                    onChange={(e) => setNights((n) => ({ ...n, [idea.code]: e.target.value }))}
-                    style={{ width: 70 }}
-                  />
-                </Field>
-              )}
-              <Button size="sm" disabled={busy} onClick={() => add(idea)}>
-                {tr("aiX.ideas.add")}
-              </Button>
-            </div>
+              idea={idea}
+              nights={nights[idea.code] ?? ""}
+              onNights={(value) => setNights((n) => ({ ...n, [idea.code]: value }))}
+              busy={busy}
+              onAdd={() => onAdd(idea)}
+              lang={lang}
+            />
           ))}
           {result.rejected > 0 && <p style={note}>{fmt(tr("aiX.ideas.rejected"), { n: result.rejected })}</p>}
           <AiNotice lang={lang} />
         </section>
       )}
-    </div>
+    </>
   );
 }

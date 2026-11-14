@@ -100,3 +100,11 @@ export function draftInputError(text: string, instruction: string): string | nul
   if (instruction.length > MAX_INSTRUCTION) return "aiDraft.error.instruction_long";
   return null;
 }
+
+/** The draft request body: the trimmed texts, the instruction and the voice (AA-965 R41) only when given. */
+export function draftBody(kind: DraftKind, text: string, instruction: string, voice: string): Record<string, string> {
+  const body: Record<string, string> = { kind, text: text.trim() };
+  if (instruction.trim()) body.instruction = instruction.trim();
+  if (voice) body.voice_profile_id = voice;
+  return body;
+}
