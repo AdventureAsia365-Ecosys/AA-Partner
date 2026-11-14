@@ -328,6 +328,31 @@ export interface SealedEnvelope {
   seal: { alg: string; key_ref: string; value_b64: string; verified: boolean | null };
 }
 
+/** POST /crm/v1/signatures/<id>/pdf and GET /crm/public/v1/traveller/agreements/<traveller>/pdf (AA-1012): the
+ * envelope as a PAdES-B-B signed PDF. */
+export interface SignedPdf {
+  request_id: string;
+  filename: string;
+  content_type: string;
+  content_b64: string;
+  envelope_sha256: string;
+  seal_verified: boolean | null;
+}
+
+/** Hands a downloaded file (the documents answer shape) to the browser as a download. */
+export function saveFile(data: { filename: string; content_type: string; content_b64: string }): void {
+  const binary = atob(data.content_b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const url = URL.createObjectURL(new Blob([bytes], { type: data.content_type }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = data.filename;
+  a.rel = "noopener";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 /** The signed link token of a client page (43 characters, URL-safe base64). */
 export const CLIENT_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
@@ -364,6 +389,11 @@ const ERROR_CODES = new Set([
   "proposal_not_sent",
   "terms_reaccept_required",
   "unknown_merge_field",
+  // AA-1012: the signed PDF of an envelope.
+  "pdf_seal_not_configured",
+  "pdf_seal_mismatch",
+  "document_integrity",
+  "seal_unavailable",
 ]);
 
 /** The i18n key of an API refusal code on the agency side (proposal.error.<code>, else a generic one). */
@@ -391,6 +421,12 @@ const PUBLIC_CODES = new Set([
   "not_guardian",
   "esign_not_configured",
   "seal_unavailable",
+  // AA-1012: the signed PDF of an envelope.
+  "pdf_seal_not_configured",
+  "pdf_seal_mismatch",
+  "document_integrity",
+  "envelope_not_yours",
+  "signature_not_found",
   "nothing_to_accept",
   "invalid_submission",
   "origin_not_allowed",

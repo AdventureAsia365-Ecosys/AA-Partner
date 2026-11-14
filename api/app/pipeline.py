@@ -36,6 +36,7 @@ import asyncpg
 from app import cancellation, stages
 from app.audit import MAX_OBJECT_IDS
 from app.catalog import retired as tour_retired
+from app.catalog import trip_source
 from app.errors import Conflict, Invalid, NotFound
 from app.intake import stage1
 from app.permissions import Action, require
@@ -322,7 +323,10 @@ async def board(ctx: TenantContext, vault: Vault, flt: BoardFilter) -> dict[str,
     }
 
 
-async def trip_detail(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID) -> dict[str, Any]:
+async def trip_detail(
+    ctx: TenantContext, vault: Vault, trip_id: uuid.UUID, client_origin: str | None = None
+) -> dict[str, Any]:
+    """The trip page. ``client_origin``: the client host (the AA tour page link of ``aa_source``, AA-1089)."""
     trip = await ctx.conn.fetchrow(TRIP_SQL, trip_id)
     if trip is None:
         raise NotFound("trip_not_found")
@@ -417,6 +421,7 @@ async def trip_detail(ctx: TenantContext, vault: Vault, trip_id: uuid.UUID) -> d
         "cancellation": await cancellation.pending(ctx, trip_id),  # AA-957 (C12): pending until AA confirms
         "aa_cancel": await aa_cancel.trip_view(ctx, trip_id, trip["stage"]),  # AA-1070 (crm-13): the guided card
         "aa_tour_retired": await tour_retired.trip_view(ctx, trip_id),  # AA-1093: AA tours no longer served
+        "aa_source": await trip_source.trip_view(ctx, trip_id, client_origin),  # AA-1089: the AA tour it came from
         "stage2_link": None
         if link is None
         else {

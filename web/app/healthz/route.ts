@@ -16,5 +16,7 @@ export function GET() {
     auth_configured: cfg.authConfigured,
     // AA-1019: the AA staff console's WORKFORCE sign-in is configured (names of missing values never leave the server).
     staff_auth_configured: cfg.staffAuthConfigured,
+    // AA-1105: the AA Academy's WORKFORCE sign-in (academy-web client) and the CIS learning API are configured.
+    academy_auth_configured: cfg.academyAuthConfigured,
   });
 }

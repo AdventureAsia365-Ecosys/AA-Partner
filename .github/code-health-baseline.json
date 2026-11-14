@@ -282,7 +282,6 @@
   "web/components/proposals/ScheduleEditor.tsx::ScheduleEditor": 23,
   "web/components/proposals/TextProposalPage.tsx::TextProposalPage": 24,
   "web/components/proposals/TripAgreementsPanel.tsx::TripAgreementsPanel": 19,
-  "web/components/proposals/TripAgreementsPanel.tsx::TripAgreementsPanel.map()": 11,
   "web/components/settings/AddOnsView.tsx::AddOnCard": 18,
   "web/components/settings/AiSettingsView.tsx::AiSettingsView": 16,
   "web/components/settings/CancellationPoliciesView.tsx::PolicyCard": 12,

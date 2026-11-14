@@ -262,6 +262,33 @@ export interface TripView {
   aa_cancel?: AaCancelView;
   /** AA-1093: AA tours of the trip Adventure Asia no longer offers (absent on an older API). */
   aa_tour_retired?: TourRetiredView[];
+  /** AA-1089: the AA tour and departure the trip came from; null = none (absent on an older API). */
+  aa_source?: AaSourceView | null;
+}
+
+/** AA-1089 (Odoo study rank 48): where the trip names its AA tour. `web_booking` = "Book now" on the public tour page
+ * made the trip; `aa_line` = an AA booking line still standing on it. `title` null = not in the catalogue cache yet;
+ * `page_url` null = no public page to open (not served, or no client host). */
+export interface AaSourceView {
+  origin: "web_booking" | "aa_line";
+  tour_source_id: string;
+  title: string | null;
+  served_state: string | null;
+  departure_id: string | null;
+  departure_date: string | null;
+  page_url: string | null;
+}
+
+/** The public tour page link only when it is an http(s) URL (the API builds it from the configured client host). */
+export function aaSourceHref(source: Pick<AaSourceView, "page_url">): string | null {
+  const url = source.page_url;
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
 }
 
 /** S262 (C12 §2.7): a trip that is cancelled, or whose cancellation waits for AA, bills the client no more: its

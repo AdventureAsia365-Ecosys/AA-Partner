@@ -20,6 +20,7 @@ import { commissionEn, commissionVi } from "./i18nCommission";
 import { offlineEn, offlineVi } from "./i18nOffline";
 import { opsReleaseEn, opsReleaseVi } from "./i18nOpsRelease";
 import { staffEn, staffVi } from "./i18nStaff";
+import { academyEn, academyVi } from "./i18nAcademy";
 import { supportEn, supportVi } from "./i18nSupport";
 import { addOnsEn, addOnsVi } from "./i18nAddOns";
 import { pluralsEn, pluralsVi } from "./i18nPlurals";
@@ -33,6 +34,7 @@ import { catalogueEn, catalogueVi } from "./i18nCatalogue";
 import { travelOpsEn, travelOpsVi } from "./i18nTravelOps";
 import { aaCancelEn, aaCancelVi } from "./i18nAaCancel";
 import { tourRetiredEn, tourRetiredVi } from "./i18nTourRetired";
+import { tripSourceEn, tripSourceVi } from "./i18nTripSource";
 import { partnersEn, partnersVi } from "./i18nPartners";
 import { bookNowEn, bookNowVi } from "./i18nBookNow";
 import { inclusionsEn, inclusionsVi } from "./i18nInclusions";
@@ -75,6 +77,7 @@ const en = {
   ...tripClosedEn, // AA-957 round 3: a cancelled trip on every card, lead sources (lib/i18nTripClosed.ts)
   ...pluralsEn, // AA-957 round 3: the singular of counted messages, read by plural() (lib/i18nPlurals.ts)
   ...staffEn, // AA-1019: the AA staff console, S-02 and S-04 (lib/i18nStaff.ts)
+  ...academyEn, // AA-1105: the AA Academy host (lib/i18nAcademy.ts)
   ...messagingEn, // AA-958: SMS and WhatsApp, Settings > Channels and the trip panel (lib/i18nMessaging.ts)
   ...workflowsEn, // AA-959: Tasks, Automations, the trip's automations panel, workflow task kinds (lib/i18nWorkflows.ts)
   ...retailPricingEn, // AA-1066: traveller prices, price rules, the discount and its approval (lib/i18nRetailPricing.ts)
@@ -84,6 +87,7 @@ const en = {
   ...travelOpsEn, // AA-1070: departures, the trip's Travel panel, Settings > Travel, the portal's travel section
   ...aaCancelEn, // AA-1070 (crm-13): AA cancelled a departure
   ...tourRetiredEn, // AA-1093: an AA tour Adventure Asia no longer offers (lib/i18nTourRetired.ts)
+  ...tripSourceEn, // AA-1089: the AA tour and departure the trip came from, on the trip header (lib/i18nTripSource.ts)
   ...partnersEn, // AA-1071: Partners, partner commissions, the trip's partner, the partner's own pages (lib/i18nPartners.ts)
   ...bookNowEn, // AA-1072: Book now on the tour page, Pay online, Settings > online payment and booking
   ...inclusionsEn, // AA-1070 crm-35: Settings > Proposal lines, the builder picker, the client lists (lib/i18nInclusions.ts)
@@ -1925,6 +1929,7 @@ const en = {
   "esign.event.code_refused": "signing code refused ({reason})",
   "esign.event.signed": "signed",
   "esign.close": "Close",
+  "esign.downloadPdf": "Download signed PDF",
   "bell.event.terms_reaccepted": "{trip}: the client accepted your updated terms",
   "proposal.error.deposit_not_voidable": "A deposit stays: if it was paid outside the CRM, mark it paid with that method; if the trip is off, mark it Lost (or cancel it once booked).",
   "proposal.error.proposal_not_accepted": "The proposal of this payment is not the accepted one.",
@@ -1938,6 +1943,10 @@ const en = {
   "proposal.error.role_forbidden": "Your role cannot do this.",
   "proposal.error.assigned_only": "You can do this on your own trips only.",
   "proposal.error.other": "That did not work. Try again.",
+  "proposal.error.pdf_seal_not_configured": "Signed PDFs are not available here yet. You can still view the sealed document.",
+  "proposal.error.pdf_seal_mismatch": "Signed PDFs are paused: the seal certificate does not match the seal key. Tell the support team.",
+  "proposal.error.document_integrity": "The stored document does not match its seal, so no PDF was made. Tell the support team.",
+  "proposal.error.seal_unavailable": "The seal service did not answer. Try again in a moment.",
   "agreements.title": "Agreements",
   "agreements.subtitle": "Your booking terms (accepted with a proposal and signed again in the portal), your traveller waiver and your insurance declination (signed in the portal, one envelope per traveller).",
   "agreements.link": "Booking terms and waiver",
@@ -2028,6 +2037,12 @@ const en = {
   "client.error.not_guardian": "You can sign for yourself, and as the lead traveller for a child.",
   "client.error.esign_not_configured": "Signing is not available right now. Please try again later.",
   "client.error.seal_unavailable": "We could not seal your documents. Please try again in a moment.",
+  "client.error.pdf_seal_not_configured": "The signed PDF is not available yet. Please try again later.",
+  "client.error.pdf_seal_mismatch": "The signed PDF is not available yet. Please try again later.",
+  "client.error.document_integrity": "We could not prepare this document. Please contact your agent.",
+  "client.error.envelope_not_yours": "You can download only your own signed documents.",
+  "client.error.signature_not_found": "This document has not been signed yet.",
+  "client.downloadSignedPdf": "Download PDF",
   "client.error.nothing_to_accept": "You have accepted the current terms.",
   "client.termsUpdatedTitle": "Updated booking terms ({version})",
   "client.termsUpdatedIntro": "Your travel agent updated their booking terms after you accepted the proposal. Please read and accept them before you pay the deposit.",
@@ -2801,6 +2816,7 @@ const vi: Record<MessageKey, string> = {
   ...tripClosedVi,
   ...pluralsVi,
   ...staffVi,
+  ...academyVi,
   ...messagingVi,
   ...workflowsVi,
   ...retailPricingVi,
@@ -2810,6 +2826,7 @@ const vi: Record<MessageKey, string> = {
   ...travelOpsVi,
   ...aaCancelVi,
   ...tourRetiredVi,
+  ...tripSourceVi,
   ...partnersVi,
   ...bookNowVi,
   ...inclusionsVi,
@@ -4650,6 +4667,7 @@ const vi: Record<MessageKey, string> = {
   "esign.event.code_refused": "mã ký bị từ chối ({reason})",
   "esign.event.signed": "đã ký",
   "esign.close": "Đóng",
+  "esign.downloadPdf": "Tải PDF đã ký",
   "bell.event.terms_reaccepted": "{trip}: khách đã chấp nhận điều khoản cập nhật",
   "proposal.error.deposit_not_voidable": "Khoản cọc không huỷ được: nếu khách đã trả ngoài CRM, hãy đánh dấu đã trả với cách trả đó; nếu chuyến không đi nữa, hãy chuyển chuyến sang Không chốt (hoặc huỷ chuyến nếu đã đặt).",
   "proposal.error.proposal_not_accepted": "Báo giá của khoản này không phải bản đã chấp nhận.",
@@ -4663,6 +4681,10 @@ const vi: Record<MessageKey, string> = {
   "proposal.error.role_forbidden": "Vai trò của bạn không làm được việc này.",
   "proposal.error.assigned_only": "Bạn chỉ làm được việc này trên chuyến đi của mình.",
   "proposal.error.other": "Chưa thực hiện được. Hãy thử lại.",
+  "proposal.error.pdf_seal_not_configured": "Chưa tải được PDF đã ký ở đây. Bạn vẫn xem được bản đã niêm phong.",
+  "proposal.error.pdf_seal_mismatch": "Tạm dừng PDF đã ký: chứng thư niêm phong không khớp khoá niêm phong. Hãy báo đội hỗ trợ.",
+  "proposal.error.document_integrity": "Giấy tờ đã lưu không khớp niêm phong nên không tạo PDF. Hãy báo đội hỗ trợ.",
+  "proposal.error.seal_unavailable": "Dịch vụ niêm phong chưa trả lời. Hãy thử lại sau ít phút.",
   "agreements.title": "Thoả thuận",
   "agreements.subtitle": "Điều khoản đặt chỗ (khách chấp nhận cùng báo giá và ký lại trên cổng), cam kết miễn trừ và xác nhận từ chối bảo hiểm (khách ký trên cổng, mỗi khách một bộ).",
   "agreements.link": "Điều khoản đặt chỗ và cam kết miễn trừ",
@@ -4753,6 +4775,12 @@ const vi: Record<MessageKey, string> = {
   "client.error.not_guardian": "Bạn ký cho chính mình, và với tư cách trưởng đoàn thì ký cho trẻ em.",
   "client.error.esign_not_configured": "Hiện chưa ký được. Vui lòng thử lại sau.",
   "client.error.seal_unavailable": "Chưa niêm phong được giấy tờ. Vui lòng thử lại sau ít phút.",
+  "client.error.pdf_seal_not_configured": "Chưa tải được PDF đã ký. Vui lòng thử lại sau.",
+  "client.error.pdf_seal_mismatch": "Chưa tải được PDF đã ký. Vui lòng thử lại sau.",
+  "client.error.document_integrity": "Chưa chuẩn bị được giấy tờ này. Vui lòng liên hệ đại lý của bạn.",
+  "client.error.envelope_not_yours": "Bạn chỉ tải được giấy tờ do chính bạn ký.",
+  "client.error.signature_not_found": "Giấy tờ này chưa được ký.",
+  "client.downloadSignedPdf": "Tải PDF",
   "client.error.nothing_to_accept": "Bạn đã chấp nhận điều khoản hiện hành.",
   "client.termsUpdatedTitle": "Điều khoản đặt chỗ đã cập nhật ({version})",
   "client.termsUpdatedIntro": "Đại lý đã cập nhật điều khoản đặt chỗ sau khi bạn chấp nhận báo giá. Vui lòng đọc và chấp nhận trước khi trả cọc.",

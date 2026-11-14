@@ -97,6 +97,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   AA-1093 stage 2: `tenant.erasure.v1` 1.0 (AA-CIS-App, byte copy in `docs/contracts/`): the CIS tenant offboarding
   erasure saga's requests (`GET /tenant/v1/erasure-requests`) and the CRM's reports (`POST .../reports`), scope
   `cis.tenant/erasure` (section "CIS tenant erasure saga, stage 2" below).
+- **Consumes** (AA-1105, root ADR 0022) the CIS learning API `learn.http.v1` from the web only, on the academy host
+  (section "AA Academy host"), with the learner's WORKFORCE `academy-web` token.
 - **Publishes** `crm.ops.v1` under `/crm/ops/v1` to the CIS admin (L1 platform console); since 1.5 (AA-966) it also
   carries the AA insights read `GET /insights` (spec module 17, design S-03), instead of a separate `crm.insights.v1`;
   since 1.6 (AA-964) the CRM ledger rows `GET /llm/calls` for the CIS Calls tab (section "CRM-33a" below).
@@ -136,6 +138,7 @@ The shortest path that works without AWS access. The [README](README.md#run-the-
 | Web | `web/`: Next.js 16 standalone (React 19, TypeScript, vitest), the AA UI kit core vendored from AA-CIS-App (`web/app/_kit/core/`, root ADR 0016; inline styles from the kit tokens); ECS Fargate **ARM64** service `aa-crm-dev-web` (port 3000, `/healthz`), ECR `aa-crm-dev-web` (AA-CIS-Infra `crm_web.tf`) |
 | Portal | retired (AA-1036 R3 slice 2): the tenant Content studio is part of `web/` (`web/app/(studio)`, section "One agency app"); the separate `portal/` app, its Fargate service `aa-crm-dev-portal` and its deploy were deleted after the cut-over. Section "Tenant portal" below is its history |
 | Edge for the web | the same CloudFront distribution: the ALB rule `crm_api` (`/crm`, `/crm/*`) stays above `crm_partner_default`, which forwards every other path of the partner host to the web target group |
+| Edge for the academy | AA-1105: `academy.<zone>` is a second alias of the agency distribution; the ALB rule `crm_academy_default` sends every path to the web target group (no `/crm/*` rule there); the web serves the academy only on that host (section "AA Academy host") |
 
 AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everything `aa-crm-<env>-*`, tag `App = crm`
 (the product is AA-Partner, the resource prefix is `crm`).
@@ -394,6 +397,8 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-062` | `api/migrations/062_crm_book_now_price_ceiling.sql` | AA-1092 residual (**contract**, MIG-4; crm-062..065 are other cards' of the same wave, independent): `tenant_settings.public_price_per_minute` (SMALLINT, default 60, CHECK 10..600): the "Book now" price checks a minute the agency's public page takes from every address together (per API task), the owner's setting on Settings > Payments "Online booking"; past it the price check answers 429 `agency_rate_limited`. |
 | `crm-063` | `api/migrations/063_crm_tour_retired_flag.sql` | AA-1093 part 1 (**expand**: one new table): `crm.tour_retired_flag` (one item of an agency trip on an AA tour Adventure Asia no longer serves: `kind` open_option / held_line / quoted_line / confirmed_line, `option_id` or `booking_line_id` as snapshot references, `state` open -> cleared (a `state` column, not `status`: no `crm.status_transition` rows, so the file stays expand), `raised_key` / `cleared_key` = the transition); one flag set per tour, transition and item, one open flag per item; cascades from the trip; hold guard `crm.guard_held_travel_doc` (CRM10); no reader grant. |
 | `crm-065` | `api/migrations/065_crm_aa_line_traveller_visibility.sql` | AA-1086 follow-up (S279 rehearsal REH-10-portal; **contract**: replaces a trigger function, MIG-4): `crm.guard_booking_line` section a lets a member (crm_app, not a job: / platform: actor) change only `visible_to_travelers` on a confirmed, live AA line (show or hide it to the trip's travellers; the code shows a confirmed AA line by default, tech lead 13/11/2026); every other member write to an AA line stays CRM24 `aa_line_read_only`. No backfill, no data written, no new table. |
+| `crm-066` | `api/migrations/066_crm_tenant_erasure_saga.sql` | AA-1093 stage 2 (**contract**: three new platform tables without RLS, no row written): `crm.tenant_erasure_feed_state` (the `tenant.erasure.v1` feed cursor of `crm_tenant_erase`, its singleton row inserted by the job), `crm.tenant_erasure_saga` (one CIS erasure request as the feed served it: phase, round, the crm step, the approved hash, the approval expiry, `is_pilot` / `is_synthetic`), `crm.tenant_erasure_report` (one report per request, round and mode: `outcome`, code, hash, body, the CIS answer `post_outcome`). No tenant column: the record outlives the agency erase it drives. |
+| `crm-067` | `api/migrations/067_crm_tenant_erasure_studio_invitations.sql` | AA-1093 stage 2 (**contract**: a SECURITY DEFINER function with REVOKE / GRANT and a post-check, MIG-4): `crm.erase_studio_invitations(cis_tenant, dry_run)` counts or deletes one CIS tenant's `crm.studio_invitation` rows (keyed by `cis_tenant_id`, out of `crm.erase_subject`'s reach); actor `job:crm_tenant_erase` only (CRM56), EXECUTE `crm_eraser` only; crm_app still has no DELETE on the table. |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -1254,6 +1259,16 @@ below; the guided "AA cancelled the departure" flow (crm-13) of the same issue i
   language; the agent closes the task. The trip page card (`aa_tour_retired` of `GET /trips/{id}`), the card badge
   and the pipeline filter `issue=aa_tour_retired` read the open flags; the builder option badge reads the live
   `no_longer_offered`.
+- **The AA tour a trip came from** (AA-1089, S275 study rank 48; `app/catalog/trip_source.py`): `GET /trips/{id}`
+  carries `aa_source` (null when the trip names no AA tour), computed on each read, nothing stored (no migration):
+  the "Book now" attempt that made the trip (`crm.public_booking_attempt` `created`: its tour, its departure, the
+  start of the proposal it sent; `origin` `web_booking`), else the AA booking line still standing with the earliest
+  service date (not cancelled, not refused by Booking: the `app.catalog.retired` rule; `origin` `aa_line`). The title
+  is the catalogue cache's (`crm.aa_catalog_tour`; null when not cached), `page_url` the public tour page on the
+  client host (`<first INTAKE_PAGE_ORIGINS entry>/trip/<catalogue key>`, only while the tour is served and the key
+  is a uuid; CIS answers a catalogue key with a 301 to the tour's current version since AA-1089). The web shows it
+  under the trip title (`components/pipeline/TripSourceLine.tsx`: "AA tour", the title, "Departs <date>", "Booked
+  online", "Tour page" in a new tab).
 
 ## Sales partners and their commission (AA-1071)
 
@@ -1865,7 +1880,18 @@ signing in `app/portal/public.py`, the terms re-accept in `app/proposals/public.
   RSASSA-PSS SHA-256 with `KMS_SEAL_KEY_ID` (`alias/crm-<env>/seal`), the HMAC dev stub without it on dev / test /
   local, 503 `esign_not_configured` on stg / prod. The envelope is stored on the `signature_event` row (kind `signed`,
   docs DEK); the agency opens it as a reveal with a reason (`POST /crm/v1/signatures/{id}/envelope`, `verified`).
-  **Not PAdES yet**: no PDF; the seal is detached over the text envelope (follow-up in the implementation notes).
+- **Signed PDF (AA-1012, CRM-25b)**: the envelope downloads as a PAdES-B-B PDF (`app/esign/pades.py`), built at
+  download from the sealed text (nothing stored): `renders.signed_agreement` on the AA-1070 writer (Liberation Sans
+  embedded: Vietnamese renders), `envelope.txt` + `seal.json` embedded, then pyHanko signs it (`/ETSI.CAdES.detached`,
+  SHA-256, no timestamp) with an external signer whose raw signature is `kms:Sign` on the seal key (RSASSA-PSS SHA-256,
+  DIGEST: the AA-955 call; **the private key never leaves KMS**). The signing certificate is the public chain
+  `api/app/esign/certs/seal-chain-<environment>.crt` (PEM text; `.crt` because `.gitignore` keeps every `*.pem` out; Dev: a self-issued company CA made by
+  `api/scripts/esign_seal_certificate.py`, CA key discarded; prod CA at go-live), checked against `kms:GetPublicKey`
+  before the first signature (503 `pdf_seal_mismatch`). Agency: `POST /crm/v1/signatures/{id}/pdf` (a reveal with a
+  reason, field `envelope_pdf`); traveller: `GET /crm/public/v1/traveller/agreements/{traveler_id}/pdf` (`app/portal/agreements.py`; own
+  envelope or one signed as guardian, else 403 `envelope_not_yours`). No KMS seal key or no chain file = 503
+  `pdf_seal_not_configured`; a stored seal KMS rejects = 503 `document_integrity`. Decisions:
+  `docs/implementation-notes/AA-1012.md`.
 - **Card R**: every refused signing code (expired, wrong, missing, attempts used up) is a `signature_event`
   `code_refused` row plus a denied audit event; every signing code sent is `code_sent`.
 - **Gate**: unchanged rule (s3 counts the waiver signed per traveller, whoever signed it), so a guardian's signature
@@ -1875,7 +1901,8 @@ signing in `app/portal/public.py`, the terms re-accept in `app/proposals/public.
   `keep_until`, then the daily lifecycle purge deletes them.
 - **Web**: the portal envelope (`components/portal/SignEnvelope.tsx`, the v0 test ids kept), the proposal page's
   re-accept (`components/proposals/TermsReaccept.tsx`), the trip's Signed documents panel
-  (`components/proposals/TripAgreementsPanel.tsx`), BFF lines card AA-955.
+  (`components/proposals/TripAgreementsPanel.tsx`, "Download signed PDF" since AA-1012), BFF lines card AA-955 and
+  AA-1012; the portal envelope's "Download PDF" link (`SignEnvelope`, `base` prop).
 - **The e-sign v0 limit stays** (the signing code goes out from the agency mailbox, whose Sent copy its owner can
   read); the evidence records `code_delivery` as before.
 
@@ -2901,6 +2928,39 @@ ADR 0006b decision 6). Decisions: `docs/implementation-notes/AA-1019.md`.
   is created synthetic, the pilot included, so `crm_entitlement_pull` clears `is_synthetic` for good the first time it
   sees the pilot marker, and `app.tenancy.E2E_SYNTHETIC_SQL` and the studio relay's `SYNTHETIC_AGENCY_SQL` both read
   `is_synthetic IS TRUE AND is_pilot IS NOT TRUE` (the marker CIS sets and the feed projects, crm-044).
+
+## AA Academy host (`web/app/academy`, `web/app/verify`, AA-1105)
+
+Root ADR 0022 decisions 2 and 6 (D17): one learner front door on its own host `academy.<zone>` (Dev
+`academy.lumiguides.it.com`), a second alias of the agency distribution whose ALB rule `crm_academy_default` (AA-CIS-Infra
+`academy_edge.tf`) sends every path to this web. The pages talk only to the CIS learning API `learn.http.v1` (root
+`docs/contracts/`), never to the CRM API. Decisions: `docs/implementation-notes/AA-1105.md`.
+
+- **Host isolation** (`web/lib/hosts.ts`, `web/proxy.ts`): `WEB_ACADEMY_HOSTS` makes the host kind `academy`, checked
+  first; there only `/academy/*`, `/verify/<code>`, `/prefs/locale` and static files are served (`/` goes to
+  `/academy`), every agency, studio, staff-console, client or `/crm/*` path is 404; `/academy` and `/verify` are 404 on
+  the partner and client hosts (served on localhost in local / test).
+- **Own session** (`web/lib/academySession.ts`): cookies `__Secure-aa_academy_s` (Path `/academy`), `_r` and `_tx`
+  (Path `/academy/auth`), host-only on the academy host, sealed with `ACADEMY_SESSION_SECRET` (never the agency or the
+  staff key) under the seal purposes `academy-*`; the access token must belong to the WORKFORCE `academy-web` client.
+  Routes `/academy/auth/{sign-in,callback,refresh,sign-out}` and `/academy/signed-out`. No group is required: CIS
+  decides who is a learner (403 `not_a_learner`), and the pages say so.
+- **Reads and BFF**: server components read `/learn/v1/*` of `CIS_API_URL` with the session token
+  (`web/lib/academyApi.ts`); the browser calls `/academy/bff/<path>` (`web/lib/academyBff.ts`: the learner routes only,
+  `lang` the only query, header `x-aa-academy: 1` on every call, cross-site writes refused first). Captions are proxied
+  from the academy origin (`/academy/captions/<lesson>/<lang>`: fresh presigned URLs, S3 hosts only, WebVTT only); the
+  video plays straight from S3.
+- **Public verify page** `/verify/<code>`: no sign-in, no Referer, not indexed; the web limits its own visitors
+  (`web/lib/academyVerify.ts`, per CloudFront viewer address) with the CIS setting
+  `cis.learn.verify_visitor_requests_per_minute` as CIS reports it in `X-Learn-Visitor-Limit` on every verify answer
+  (contract `learn.http.v1` 1.1; CIS clamps it below its per-address limit `cis.learn.verify_requests_per_minute`, which
+  all the web's visitors share); until CIS has said it, one call per visitor per minute and none while one is in flight.
+- **Pages** (kit only: `app/_kit/local/AcademyShell.tsx` over `PageFrame`; EN with VI in `web/lib/i18nAcademy.ts`):
+  catalogue `/academy`, module, lesson reader (cited sources, video, progress), module and final quiz (started on
+  click, graded on the server), spaced review (ts-fsrs in the browser), certificates with a share link.
+- **Configuration** (AA-CIS-Infra `crm_web.tf`): `WEB_ACADEMY_HOSTS`, `ACADEMY_COGNITO_DOMAIN`,
+  `ACADEMY_COGNITO_CLIENT_ID`, and from the web secret `ACADEMY_COGNITO_CLIENT_SECRET`, `ACADEMY_SESSION_SECRET`; with
+  `CIS_API_URL`. `/healthz` reports `academy_auth_configured` and the web post-deploy verify requires it.
 
 ## Dev seeder (`api/app/seed/`, AA-935)
 
