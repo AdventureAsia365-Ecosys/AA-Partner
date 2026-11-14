@@ -386,6 +386,8 @@ class Assessment:
     frozen: bool
     warnings: list[str] = field(default_factory=list)
     needs_owner: bool = False
+    # AA-1096 S280: the limit an agent is held to (the refund threshold, base currency) when needs_owner
+    owner_limit: tuple[Decimal, str] | None = None
     forced: bool = False  # AA-1070 (crm-13): waived because AA cancelled the departure
 
     @property
@@ -426,6 +428,7 @@ class Assessment:
             "invoice_amount": _money(self.invoice_due),
             "warnings": sorted(set(self.warnings)),
             "needs_owner": self.needs_owner,
+            "owner_limit": None if self.owner_limit is None else _limit(self.owner_limit),
             "forced": self.forced,
         }
 
@@ -474,30 +477,37 @@ async def assess(
                      facts["proposal_id"], frozen, warnings)  # fmt: skip
     # AA-1070 (crm-13): AA cancelled the departure: the waiver is the rule, not a member lowering the charge.
     out.forced = decision.forced
-    out.needs_owner = False if decision.forced else await _needs_owner(ctx, out)
+    out.owner_limit = None if decision.forced else await _owner_limit(ctx, out)
+    out.needs_owner = out.owner_limit is not None
     return out
 
 
-async def _needs_owner(ctx: TenantContext, a: Assessment) -> bool:
-    """An agent lowers the policy charge by at most the refund threshold (base currency); else the owner decides."""
+async def _owner_limit(ctx: TenantContext, a: Assessment) -> tuple[Decimal, str] | None:
+    """An agent lowers the policy charge by at most the refund threshold (base currency); else the owner decides.
+    The threshold and the base currency when the owner decides, else None (AA-1096 S280: the refusal names them)."""
     if ctx.member_role == "owner" or a.decision not in ("override", "waived"):
-        return False
+        return None
     lowered = (a.policy_charge or Decimal(0)) - a.charge
     if lowered <= 0 or a.currency is None:
-        return False
+        return None
     from app.payments import service as payments
 
-    _base, in_base = await payments.base_amount(ctx, lowered, a.currency)
+    base, in_base = await payments.base_amount(ctx, lowered, a.currency)
     threshold = await ctx.conn.fetchval(THRESHOLD_SQL)
     threshold = payments.default_threshold() if threshold is None else Decimal(threshold)
-    return in_base is None or in_base > threshold
+    return (threshold, base) if in_base is None or in_base > threshold else None
+
+
+def _limit(limit: tuple[Decimal, str]) -> dict[str, str]:
+    return {"limit": format(limit[0].quantize(CENT), "f"), "limit_currency": limit[1]}
 
 
 def require_allowed(ctx: TenantContext, a: Assessment, trip_id: uuid.UUID) -> None:
     if a.needs_owner:
         ctx.audit("trip_cancel", "denied", "trip", str(trip_id), reason="cancel_charge_owner_only")
         raise Forbidden("cancel_charge_owner_only",
-                        "lowering the cancellation charge this much is the agency owner's decision")  # fmt: skip
+                        "lowering the cancellation charge this much is the agency owner's decision",
+                        **(_limit(a.owner_limit) if a.owner_limit is not None else {}))  # fmt: skip
 
 
 async def record(ctx: TenantContext, trip_id: uuid.UUID, a: Assessment, invoice_id: uuid.UUID | None) -> uuid.UUID:

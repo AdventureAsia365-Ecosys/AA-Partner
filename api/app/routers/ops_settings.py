@@ -1,5 +1,5 @@
-"""``/crm/ops/v1/settings`` (AA-1096 lane L4, crm.ops.v1 1.13, crm-064): the admin-editable CRM settings, relayed by
-the CIS admin Platform > Settings page (CRM tab) with the staff member's own WORKFORCE token.
+"""``/crm/ops/v1/settings`` (AA-1096 lane L4, crm.ops.v1 1.13 then 1.14, crm-064): the admin-editable CRM settings,
+relayed by the CIS admin Platform > Settings page (CRM tab) with the staff member's own WORKFORCE token.
 
 - ``GET /settings`` and ``GET /settings/{key}/history[?tenant_id]``: any full OPS reader (cis-admin or
   crm-platform-admin; never a desk caller, 403 ``missing_group``).
@@ -138,11 +138,11 @@ class SettingChangeIn(_In):
     records a self-approval while two-person approval is off)."""
 
     value: SettingValue
-    # the crm-064 CHECKs (reason >= 20 characters, evidence 3 to 500): refused here before the database sees them
-    reason: Annotated[str, Field(min_length=settings_service.REASON_MIN, max_length=2000)]
-    evidence_ref: Annotated[
-        str | None, Field(min_length=settings_service.EVIDENCE_MIN, max_length=settings_service.EVIDENCE_MAX)
-    ] = None
+    # The crm-064 CHECKs (reason >= 20 characters, evidence 3 to 500) are the service's (after trimming): 422
+    # reason_too_short / evidence_invalid name the field, where a model minimum would give a bare invalid_request. The
+    # model only caps the body size.
+    reason: Annotated[str, Field(max_length=2000)]
+    evidence_ref: Annotated[str | None, Field(max_length=2000)] = None
     effective_from: datetime | None = None  # now or later (422 effective_from_in_past)
     tenant_id: uuid.UUID | None = None
     base_version: Annotated[int | None, Field(ge=0)] = None

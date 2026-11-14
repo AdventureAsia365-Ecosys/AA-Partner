@@ -29,6 +29,8 @@ export const settingsUxEn = {
   "onlineBooking.outsideRange": "Your saved limit ({value}) is outside the range AA allows now ({min} to {max}). It still applies until you change it.",
   "invoice.error.above_threshold_limit":
     "This refund is above your approval limit of {limit}. Ask the owner to approve it.",
+  "cancelCharge.needsOwnerLimit":
+    "You can lower the charge by up to {limit} (your refund approval limit). Lowering it more is the agency owner's decision.",
 } as const;
 
 export const settingsUxVi: Record<keyof typeof settingsUxEn, string> = {
@@ -55,4 +57,6 @@ export const settingsUxVi: Record<keyof typeof settingsUxEn, string> = {
   "markup.errorKind": "{kind}: nhập phần trăm từ 0 đến {max}, tối đa 2 chữ số thập phân, hoặc để trống.",
   "onlineBooking.outsideRange": "Giới hạn bạn đã lưu ({value}) nằm ngoài khoảng AA cho phép hiện nay ({min} đến {max}). Giới hạn này vẫn áp dụng cho tới khi bạn đổi.",
   "invoice.error.above_threshold_limit": "Khoản hoàn này vượt hạn mức duyệt {limit} của bạn. Hãy nhờ chủ doanh nghiệp duyệt.",
+  "cancelCharge.needsOwnerLimit":
+    "Bạn được giảm phí tối đa {limit} (hạn mức duyệt hoàn tiền của bạn). Giảm nhiều hơn là quyết định của chủ đại lý.",
 };

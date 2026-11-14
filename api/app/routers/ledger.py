@@ -26,7 +26,7 @@ Route                                          What                             
 ``DELETE /lines/{id}``                         a planning line to the trash                   owner, agent
 ``PUT    /lines/{id}/money``                   cost / sell / commission (new row)             owner, agent
 ``GET    /bookings``                           A-11 ledger, base-currency totals (margin)     every role
-``GET    /settings/payments``                  base currency, validation level, FX mode       owner
+``GET    /settings/payments``                  currency, validation, FX, refund threshold     owner
 ``PUT    /settings/payments``                  change them                                    owner
 ``GET    /fx/overrides``                       the owner's rates                              owner
 ``POST   /fx/overrides``                       add a rate for a day                           owner

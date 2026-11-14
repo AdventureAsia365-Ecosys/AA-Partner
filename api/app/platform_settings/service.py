@@ -1,6 +1,6 @@
-"""The CRM settings registry behind ``/crm/ops/v1/settings`` (AA-1096 lane L4, crm-064; crm.ops.v1 1.13), the CRM tab of
-the CIS admin page Platform > Settings (relayed by the CIS admin API with the staff member's own WORKFORCE token, as the
-L1 console and the app profile are).
+"""The CRM settings registry behind ``/crm/ops/v1/settings`` (AA-1096 lane L4, crm-064; crm.ops.v1 1.13, 1.14), the
+CRM tab of the CIS admin page Platform > Settings (relayed by the CIS admin API with the staff member's own WORKFORCE
+token, as the L1 console and the app profile are).
 
 - :func:`list_settings`: every CRM definition (the compiled defaults, equal to the migration seed) with the value in
   force and where it comes from (env / platform / default), bounds, the last decided platform change, the open platform
@@ -345,7 +345,9 @@ def _with_previous(
 
 def _platform_value_at(platform_rows: list[dict[str, Any]], at: str | None, default: Any) -> Any:
     """The platform value in force at ``at`` (ISO): the approved or superseded platform row with the newest
-    effective_from not after it (ties: the higher version), else the compiled default."""
+    effective_from not after it (ties: the higher version), else the compiled default. An env override is not seeded:
+    no record says when it was in force, and an agency's own value cannot be written while one is
+    (``env_override_active``)."""
     if at is None:
         return default
     limit = dt.datetime.fromisoformat(at)

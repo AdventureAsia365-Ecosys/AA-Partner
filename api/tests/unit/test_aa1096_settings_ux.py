@@ -198,15 +198,24 @@ async def test_a_short_evidence_is_a_422_not_a_database_error() -> None:
             conn, ps.RATE_AI, value=7, reason=REASON, staff_sub="zz", base_version=0, evidence_ref=" ab "
         )
     assert (err.value.status_code, err.value.code) == (422, "evidence_invalid") and conn.calls == []
+    with pytest.raises(ServiceError) as err:
+        await service.propose(
+            conn, ps.RATE_AI, value=7, reason=REASON, staff_sub="zz", base_version=0, evidence_ref="x" * 501
+        )
+    assert err.value.code == "evidence_invalid" and conn.calls == []
 
 
-def test_the_change_body_and_the_definition_carry_the_minimums() -> None:
-    SettingChangeIn.model_validate({"value": 7, "reason": REASON, "evidence_ref": "SUP-12"})
-    for bad in (
+def test_the_service_names_a_short_reason_or_evidence_and_the_definition_carries_the_minimums() -> None:
+    # S280 re-review: the body lets a short reason / evidence through so the service refuses it with its own code
+    # (reason_too_short / evidence_invalid), not a bare invalid_request; only the body size is capped here.
+    for ok in (
+        {"value": 7, "reason": REASON, "evidence_ref": "SUP-12"},
         {"value": 7, "reason": "too short"},
         {"value": 7, "reason": REASON, "evidence_ref": "ab"},
         {"value": 7, "reason": REASON, "evidence_ref": "x" * 501},
     ):
+        SettingChangeIn.model_validate(ok)
+    for bad in ({"value": 7, "reason": "x" * 2001}, {"value": 7, "reason": REASON, "evidence_ref": "x" * 2001}):
         with pytest.raises(ValidationError):
             SettingChangeIn.model_validate(bad)
     d = service.definition_out(ps.definition(ps.RATE_AI))

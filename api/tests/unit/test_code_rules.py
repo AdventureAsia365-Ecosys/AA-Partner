@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import ast
 import functools
+import re
 import sys
 from pathlib import Path
 
@@ -492,6 +493,76 @@ def test_staff_contexts_are_used_only_by_the_support_modules() -> None:
     assert _users_of("staff_tx", STAFF_SESSION_MODULES) == []
     assert _users_of("support_tx", SUPPORT_READ_MODULES) == []
     assert _users_of("as_login_role", SUPPORT_READ_MODULES) == []
+
+
+# AA-1096 S280: reads._policy_reader leaves crm_support_reader (SET LOCAL ROLE NONE) for the agency's settings registry
+# rows. Inside that block the connection is crm_app with the agency's RLS context, so every agency table is readable:
+# the block may only call these registry helpers.
+# ``SET role = ...`` in an UPDATE is a column, not a role switch.
+ROLE_SWITCH = re.compile(r"\b(?:SET\s+(?:LOCAL\s+|SESSION\s+)?ROLE\b(?!\s*=)|RESET\s+ROLE\b)", re.IGNORECASE)
+POLICY_READER_CALLS = frozenset({"budget_ceiling", "agency_budget", "tenant_get"})
+
+
+def _enclosing_functions(tree: ast.Module) -> dict[ast.AST, str]:
+    """Each node -> the name of the innermost function around it ('' at module level)."""
+    owner: dict[ast.AST, str] = {}
+
+    def visit(node: ast.AST, name: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            inner = child.name if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef) else name
+            owner[child] = inner
+            visit(child, inner)
+
+    visit(tree, "")
+    return owner
+
+
+def role_switch_offenders(rel: str, tree: ast.Module) -> list[str]:
+    """A role switch in SQL outside app/tenancy.py and reads._policy_reader; _policy_reader outside reads._policy;
+    a call other than :data:`POLICY_READER_CALLS` inside ``async with _policy_reader(...)``."""
+    owner = _enclosing_functions(tree)
+    out = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and ROLE_SWITCH.search(node.value):
+            if rel != "app/tenancy.py" and (rel, owner[node]) != ("app/support/reads.py", "_policy_reader"):
+                out.append(f"{rel}:{node.lineno} switches role")
+        found = node.id if isinstance(node, ast.Name) else node.attr if isinstance(node, ast.Attribute) else None
+        if found == "_policy_reader" and (rel, owner[node]) != ("app/support/reads.py", "_policy"):
+            out.append(f"{rel}:{node.lineno} uses _policy_reader")
+        if isinstance(node, ast.ImportFrom) and any(a.name == "_policy_reader" for a in node.names):
+            out.append(f"{rel}:{node.lineno} imports _policy_reader")
+        if isinstance(node, ast.AsyncWith | ast.With) and any(
+            isinstance(item.context_expr, ast.Call) and getattr(item.context_expr.func, "id", None) == "_policy_reader"
+            for item in node.items
+        ):
+            for stmt in node.body:
+                for call in (n for n in ast.walk(stmt) if isinstance(n, ast.Call)):
+                    name = call.func.id if isinstance(call.func, ast.Name) else getattr(call.func, "attr", None)
+                    if name not in POLICY_READER_CALLS:
+                        out.append(f"{rel}:{call.lineno} calls {name} outside the support reader")
+    return out
+
+
+def test_the_support_reader_is_left_only_for_the_settings_registry() -> None:
+    offenders = [o for rel, tree in _modules() for o in role_switch_offenders(rel, tree)]
+    assert offenders == [], "role switch outside its guard: " + ", ".join(offenders)
+
+
+ROLE_SWITCH_FORBIDDEN = {
+    "a wider block": (
+        "async def _policy(ctx, row):\n    async with _policy_reader(ctx):\n"
+        "        await budget_ceiling(ctx)\n        await ctx.conn.fetch('SELECT * FROM crm.client')\n"
+    ),
+    "another user": (
+        "async def overview(ctx):\n    async with _policy_reader(ctx):\n        await budget_ceiling(ctx)\n"
+    ),
+    "a role switch elsewhere": "async def f(ctx):\n    await ctx.conn.execute('set local role none')\n",
+}
+
+
+def test_the_role_switch_guard_catches_a_wider_block() -> None:
+    for label, source in ROLE_SWITCH_FORBIDDEN.items():
+        assert role_switch_offenders("app/support/reads.py", ast.parse(source)), label
 
 
 def test_ingest_tx_is_used_only_by_the_mail_ingest_job() -> None:

@@ -248,13 +248,25 @@ function FormOrigins({ form: f, isOwner, lang, send }: FormPartProps) {
   );
 }
 
+/** The PATCH body of "Save privacy link and owner". ``owner`` is undefined when no owner list is shown. The owner goes
+ * out only when it changed: a form whose owner has since left keeps them (the list still shows them), and resending
+ * that inactive member would refuse a privacy-link-only save with invalid_owner. */
+export function formDetailsBody(
+  form: Pick<FormRow, "default_owner_member_id">,
+  privacy: string,
+  owner: string | undefined,
+): { privacy_notice_url: string | null; default_owner_member_id?: string | null } {
+  const changed = owner !== undefined && owner !== (form.default_owner_member_id ?? "");
+  return { privacy_notice_url: privacy.trim() || null, ...(changed ? { default_owner_member_id: owner || null } : {}) };
+}
+
 /** The form's privacy link (empty: the agency's own, from Connections) and, for the owner, who gets its new inquiries. */
 function FormDetails({ form: f, isOwner, lang, team, send }: FormPartProps & { team: TeamMember[] }) {
   const [privacy, setPrivacy] = useState(f.privacy_notice_url ?? "");
   const [owner, setOwner] = useState(f.default_owner_member_id ?? "");
   const owners = isOwner ? team.filter((m) => m.status === "active" || m.member_id === f.default_owner_member_id) : [];
   const helpId = `forms-privacy-help-${f.intake_form_id}`;
-  const body = () => ({ privacy_notice_url: privacy.trim() || null, ...(owners.length > 0 ? { default_owner_member_id: owner || null } : {}) });
+  const body = () => formDetailsBody(f, privacy, owners.length > 0 ? owner : undefined);
   return (
     <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
       <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>

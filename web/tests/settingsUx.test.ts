@@ -10,12 +10,13 @@ import { MESSAGES } from "@/lib/i18n";
 import { formErrorKey } from "@/lib/intakeForms";
 import { thresholdLimit } from "@/lib/invoices";
 import { thresholdInput, type PaymentSettings } from "@/lib/ledger";
+import { ownerOnlyText } from "@/lib/retailPayments";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => {}, push: () => {} }) }));
 const { aboveLimit, changedMarkups, RetailMarkupForm } = await import("@/components/proposals/RetailMarkupForm");
 const { inRange, OnlineBookingForm, serverBounds } = await import("@/components/settings/OnlineBookingForm");
 const { AiSettingsView } = await import("@/components/settings/AiSettingsView");
-const { FormsAdmin, PipelineSettingsPanel } = await import("@/components/pipeline/FormsAdmin");
+const { FormsAdmin, formDetailsBody, PipelineSettingsPanel } = await import("@/components/pipeline/FormsAdmin");
 const { PaymentsView } = await import("@/components/ledger/PaymentsView");
 
 const KINDS = ["trip_plan", "hotel_room", "transfer"];
@@ -151,6 +152,15 @@ describe("Settings > Forms", () => {
     expect(off).not.toContain('data-testid="forms-owner"');
   });
 
+  it("saves a privacy link alone when the form's owner has since left (the owner goes out only when changed)", () => {
+    const kept = { default_owner_member_id: TEAM[1].member_id };
+    expect(formDetailsBody(kept, " https://x.example/p ", TEAM[1].member_id)).toEqual({ privacy_notice_url: "https://x.example/p" });
+    expect(formDetailsBody(kept, "", TEAM[0].member_id)).toEqual({ privacy_notice_url: null, default_owner_member_id: TEAM[0].member_id });
+    expect(formDetailsBody(kept, "", "")).toEqual({ privacy_notice_url: null, default_owner_member_id: null });
+    expect(formDetailsBody({ default_owner_member_id: null }, "", "")).toEqual({ privacy_notice_url: null });
+    expect(formDetailsBody(kept, "", undefined)).toEqual({ privacy_notice_url: null });
+  });
+
   it("an owner whose pipeline settings did not load sees an error, not 'only the owner'", () => {
     const owner = renderToString(createElement(PipelineSettingsPanel, { settings: null, isOwner: true, lang: "en" }));
     expect(owner).toContain(MESSAGES.en["error.api"]);
@@ -194,5 +204,14 @@ describe("refund approval limit", () => {
     expect(thresholdLimit({ detail: "above_threshold", limit: "1000.00", limit_currency: "USD" })).toEqual({ amount: "1000.00", currency: "USD" });
     expect(thresholdLimit({ detail: "above_threshold" })).toBeNull();
     for (const lang of ["en", "vi"] as const) expect(MESSAGES[lang]["invoice.error.above_threshold_limit"]).toContain("{limit}");
+  });
+
+  it("the cancel dialog names the limit an agent may lower the charge by", () => {
+    const tr = (key: string) => MESSAGES.en[key as keyof typeof MESSAGES.en];
+    const limited = ownerOnlyText(tr, "en-GB", "cancelCharge.needsOwner", { limit: "100.00", limit_currency: "USD" });
+    expect(limited).toContain("100");
+    expect(limited).toContain("owner");
+    expect(ownerOnlyText(tr, "en-GB", "cancelCharge.needsOwner", null)).toBe(MESSAGES.en["cancelCharge.needsOwner"]);
+    for (const lang of ["en", "vi"] as const) expect(MESSAGES[lang]["cancelCharge.needsOwnerLimit"]).toContain("{limit}");
   });
 });

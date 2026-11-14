@@ -337,6 +337,8 @@ async def test_cancel_charges_by_the_policy_prefills_refunds_and_records_the_cha
     with pytest.raises(Forbidden) as err:
         await _cancel(app_pool, s, "agent", dry_run=False, charge=waive)
     assert err.value.code == "cancel_charge_owner_only"
+    limit = {"limit": "50.00", "limit_currency": err.value.extra["limit_currency"]}
+    assert agent_view["charge"]["owner_limit"] == limit and err.value.extra["limit"] == "50.00"
     out = await _cancel(app_pool, s, "owner", dry_run=False,
                         charge={"mode": "override", "amount": "60.00", "reason": "Rebooked for spring"})  # fmt: skip
     assert out["stage"] == "cancelled" and out["charge"]["decision"] == "override"
