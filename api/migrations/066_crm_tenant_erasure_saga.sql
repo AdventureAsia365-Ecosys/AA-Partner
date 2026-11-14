@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS crm.tenant_erasure_feed_state (
     ),
     CONSTRAINT tenant_erasure_feed_state_failures_chk CHECK (failures BETWEEN 0 AND 1000000)
 );
-CREATE TRIGGER tenant_erasure_feed_state_set_updated_at
+CREATE OR REPLACE TRIGGER tenant_erasure_feed_state_set_updated_at
     BEFORE UPDATE ON crm.tenant_erasure_feed_state
     FOR EACH ROW EXECUTE FUNCTION crm.set_updated_at();
 COMMENT ON TABLE crm.tenant_erasure_feed_state IS 'AA-1093 stage 2 (crm-066): the one consumer state of the CIS feed GET /tenant/v1/erasure-requests (tenant.erasure.v1, job crm_tenant_erase): the opaque cursor CIS returned last (printable ASCII, <= 200), the last successful pull, the last error class and time, the consecutive failures the job backs off on. Platform table: no tenant column, no personal data. One row, inserted by the job on first use.';
@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS crm.tenant_erasure_saga (
 CREATE INDEX IF NOT EXISTS tenant_erasure_saga_active_idx ON crm.tenant_erasure_saga (cis_updated_at)
     WHERE step_status = 'active';
 CREATE INDEX IF NOT EXISTS tenant_erasure_saga_tenant_idx ON crm.tenant_erasure_saga (subject_tenant_id);
-CREATE TRIGGER tenant_erasure_saga_set_updated_at
+CREATE OR REPLACE TRIGGER tenant_erasure_saga_set_updated_at
     BEFORE UPDATE ON crm.tenant_erasure_saga
     FOR EACH ROW EXECUTE FUNCTION crm.set_updated_at();
 COMMENT ON TABLE crm.tenant_erasure_saga IS 'AA-1093 stage 2 (crm-066): one CIS tenant erasure request (tenant.erasure.v1 ErasureRequest) as the feed served it last: phase, round, the crm step status (waiting | active | done | failed) and its not_before, the approved plan hash (apply / verify), the approval expiry, is_pilot / is_synthetic as CIS copied them at T0. subject_tenant_id is the CIS tenant (= the CRM agency id when the CRM holds one; no foreign key: the row outlives the agency erase). Written by job:crm_tenant_erase only. Platform table: ids, codes, hashes and times; no personal data.';
@@ -131,7 +131,7 @@ CREATE TABLE IF NOT EXISTS crm.tenant_erasure_report (
 );
 CREATE INDEX IF NOT EXISTS tenant_erasure_report_unposted_idx ON crm.tenant_erasure_report (created_at)
     WHERE post_outcome IS NULL;
-CREATE TRIGGER tenant_erasure_report_set_updated_at
+CREATE OR REPLACE TRIGGER tenant_erasure_report_set_updated_at
     BEFORE UPDATE ON crm.tenant_erasure_report
     FOR EACH ROW EXECUTE FUNCTION crm.set_updated_at();
 COMMENT ON TABLE crm.tenant_erasure_report IS 'AA-1093 stage 2 (crm-066): one report of the CRM step of a CIS tenant erasure request (tenant.erasure.v1 ErasureReport), unique per request, round and mode (dry_run | apply | verify): outcome ok | blocked | refused | failed, the error code, the plan hash, the body as computed (ids, codes, hashes, counts) and when it was computed. Written by job:crm_tenant_erase in the transaction that did the work (an apply''s report commits with the erase), then posted to CIS: post_outcome accepted (posted_at set) or refused:<the CIS problem code>; NULL = not posted yet (posted again with the same report_id and body). Platform table: no personal data; kept as the erasure record.';
