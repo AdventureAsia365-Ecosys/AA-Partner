@@ -17,6 +17,31 @@ export interface RetailMarkupView {
   markup_max_pct?: string;
 }
 
+/** The body of a save: only the kinds whose value changed (AA-1096 S280: a markup saved under an older, higher ceiling
+ * is not sent again, so it never blocks a change of another kind). ``undefined`` names the first invalid kind. */
+export function changedMarkups(
+  kinds: string[],
+  values: Record<string, string>,
+  stored: Record<string, string>,
+  max: number,
+): { body: Record<string, number | null> } | { invalid: string } {
+  const body: Record<string, number | null> = {};
+  for (const kind of kinds) {
+    const raw = (values[kind] ?? "").trim();
+    const before = stored[kind] ?? "";
+    if (raw === before || (raw !== "" && before !== "" && Number(raw) === Number(before))) continue;
+    const parsed = markupInput(raw, max);
+    if (parsed === undefined) return { invalid: kind };
+    body[kind] = parsed;
+  }
+  return { body };
+}
+
+/** A stored markup above AA's current limit (kept until the owner changes it). */
+export function aboveLimit(stored: string | undefined, max: number): boolean {
+  return stored !== undefined && stored !== "" && Number(stored) > max;
+}
+
 /** "" → null (no markup); a percentage 0 to ``max`` with at most 2 decimals → its number; anything else → undefined. */
 export function markupInput(value: string, max = 300): number | null | undefined {
   const v = value.trim();
@@ -37,22 +62,31 @@ export function RetailMarkupForm({ view, lang }: { view: RetailMarkupView; lang:
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "danger" | "success"; text: string } | null>(null);
 
+  const kindError = (kind: string, limit: string) =>
+    fmt(t(lang, "markup.errorKind"), { kind: tr(`markup.kind.${kind}`), max: limit });
+
   async function save() {
-    const body: Record<string, number | null> = {};
-    for (const kind of view.kinds) {
-      const parsed = markupInput(values[kind] ?? "", max);
-      if (parsed === undefined) {
-        setMessage({ tone: "danger", text: tr("markup.error") });
-        return;
-      }
-      body[kind] = parsed;
+    const changed = changedMarkups(view.kinds, values, view.retail_markup_pct, max);
+    if ("invalid" in changed) {
+      setMessage({ tone: "danger", text: kindError(changed.invalid, String(max)) });
+      return;
+    }
+    if (Object.keys(changed.body).length === 0) {
+      setMessage({ tone: "success", text: tr("markup.saved") });
+      return;
     }
     setBusy(true);
     setMessage(null);
-    const res = await bffSend("PUT", "settings/retail-markup", { retail_markup_pct: body });
+    const res = await bffSend("PUT", "settings/retail-markup", { retail_markup_pct: changed.body });
     setBusy(false);
     if (!res.ok) {
-      setMessage({ tone: "danger", text: tr("markup.error") });
+      // the API names the product type and the limit it checked (the limit may have changed since the page loaded)
+      const b = res.body as { kind?: unknown; max?: unknown } | undefined;
+      const text =
+        res.detail === "invalid_markup" && typeof b?.kind === "string"
+          ? kindError(b.kind, typeof b.max === "string" ? b.max : String(max))
+          : tr("markup.error");
+      setMessage({ tone: "danger", text });
       return;
     }
     setMessage({ tone: "success", text: tr("markup.saved") });
@@ -72,7 +106,11 @@ export function RetailMarkupForm({ view, lang }: { view: RetailMarkupView; lang:
         <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{tr("markup.help")}</p>
         <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))" }}>
           {view.kinds.map((kind) => (
-            <Field key={kind} label={`${tr(`markup.kind.${kind}`)} (%)`}>
+            <Field
+              key={kind}
+              label={`${tr(`markup.kind.${kind}`)} (%)`}
+              hint={aboveLimit(view.retail_markup_pct[kind], max) ? tr("markup.aboveLimit") : undefined}
+            >
               <Input
                 size="sm"
                 inputMode="decimal"

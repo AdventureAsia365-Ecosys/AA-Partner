@@ -17,13 +17,16 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from decimal import Decimal
 from typing import Any
 
 import asyncpg
 
+from app import platform_settings as ps
 from app.auth.route_guard import Caller
 from app.errors import Invalid, NotFound
-from app.tenancy import SupportContext, as_login_role, support_tx
+from app.llm.budget_limits import agency_budget, budget_ceiling
+from app.tenancy import SupportContext, as_login_role, as_policy_reader, support_tx
 from app.vault import KeyProvider, Vault
 
 MAX_PAGE = 100
@@ -45,6 +48,10 @@ TENANT_SQL = "SELECT tenant_id, status, display_name, default_locale FROM crm.te
 SETTINGS_KEYS = (
     "ai_enabled",
     "ai_budget_usd",
+    "ai_budget_max_usd",
+    "ai_budget_max_own",
+    "intake_form_per_hour",
+    "intake_form_per_hour_own",
     "timezone",
     "base_currency",
     "booking_validation_level",
@@ -57,6 +64,11 @@ SETTINGS_KEYS = (
     "onboarding_later",
     "onboarding_done",
 )
+# AA-1096 S280: not columns but what the agency is held to, from the settings registry (crm-064): the AI budget the
+# gateway enforces (min(saved budget, ceiling)), the agency's AI ceiling and its inquiry-form quota, and whether each is
+# the agency's own value set by AA (else the platform value).
+POLICY_KEYS = ("ai_budget_max_usd", "ai_budget_max_own", "intake_form_per_hour", "intake_form_per_hour_own")
+SETTINGS_COLUMNS = tuple(k for k in SETTINGS_KEYS if k not in POLICY_KEYS)
 SETTINGS_SQL = """
 SELECT ai_enabled, ai_budget_usd, timezone, base_currency, booking_validation_level, fx_mode, trash_days,
        auto_archive_months, stage2_auto_send, invoice_due_days, service_fee_enabled, onboarding_later, onboarding_done
@@ -128,22 +140,44 @@ def _trip(r: asyncpg.Record) -> dict[str, Any]:
     }
 
 
-def _settings(row: asyncpg.Record) -> dict[str, Any]:
+def _settings(row: asyncpg.Record, policy: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The card's values in SETTINGS_KEYS order. ``policy``: the registry values (:func:`_policy`); ``ai_budget_usd``
+    is then the budget the gateway enforces, not the stored one."""
+    policy = policy or {}
     out: dict[str, Any] = {}
     for key in SETTINGS_KEYS:
+        if key in POLICY_KEYS:
+            out[key] = policy.get(key)
+            continue
         value = row[key]
         if key == "ai_budget_usd":
-            value = str(value)
+            value = str(policy.get("ai_budget_usd", value))
         elif key in ("onboarding_later", "onboarding_done"):
             value = list(value or ())
         out[key] = value
     return out
 
 
+async def _policy(ctx: SupportContext, row: asyncpg.Record | None) -> dict[str, Any]:
+    """The registry values the agency is held to, read outside the support reader (:func:`as_policy_reader`)."""
+    async with as_policy_reader(ctx):
+        ceiling = await budget_ceiling(ctx)
+        enforced = await agency_budget(ctx, row)
+        quota = await ps.tenant_get(ctx.conn, ps.RATE_INTAKE_FORM, ctx.tenant_id)
+    return {
+        "ai_budget_usd": format(enforced.quantize(Decimal("0.01")), "f"),
+        "ai_budget_max_usd": format(ceiling.quantize(Decimal("0.01")), "f"),
+        "ai_budget_max_own": ps.resolve(ps.AI_BUDGET_MAX, ctx.tenant_id).source == "tenant",
+        "intake_form_per_hour": int(quota),
+        "intake_form_per_hour_own": ps.resolve(ps.RATE_INTAKE_FORM, ctx.tenant_id).source == "tenant",
+    }
+
+
 async def overview(pool: asyncpg.Pool, caller: Caller, tenant_id: uuid.UUID) -> dict[str, Any]:
     async with support_tx(pool, caller, tenant_id) as ctx:
         tenant = await ctx.conn.fetchrow(TENANT_SQL, tenant_id)
         settings = await ctx.conn.fetchrow(SETTINGS_SQL)
+        policy = await _policy(ctx, settings) if settings is not None else None
         pipeline = {r["stage"]: r["n"] for r in await ctx.conn.fetch(PIPELINE_SQL)}
         ctx.audit("support_read", "allowed", "tenant", str(tenant_id), reason="overview")
         return {
@@ -151,7 +185,7 @@ async def overview(pool: asyncpg.Pool, caller: Caller, tenant_id: uuid.UUID) -> 
             "agency_name": tenant["display_name"],
             "status": tenant["status"],
             "default_locale": tenant["default_locale"],
-            "settings": _settings(settings) if settings is not None else None,
+            "settings": _settings(settings, policy) if settings is not None else None,
             "pipeline": {stage: pipeline.get(stage, 0) for stage in STAGES},
             "session": _session(ctx),
         }

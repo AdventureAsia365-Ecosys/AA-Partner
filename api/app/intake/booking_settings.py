@@ -75,8 +75,13 @@ async def update(
         raise Invalid("invalid_enabled", "true or false")
     ceiling = price_checks_per_minute
     lo, hi = price_checks_bounds()
-    if ceiling is not None and (isinstance(ceiling, bool) or not isinstance(ceiling, int) or not lo <= ceiling <= hi):
-        raise Invalid("invalid_price_checks_per_minute", f"a whole number from {lo} to {hi}")
+    if ceiling is not None and (isinstance(ceiling, bool) or not isinstance(ceiling, int)):
+        raise Invalid("invalid_price_checks_per_minute", f"a whole number from {lo} to {hi}", min=lo, max=hi)
+    if ceiling is not None and not lo <= ceiling <= hi:
+        # AA-1096 S280: the agency's current value stays savable after AA narrowed the range (as the lifecycle windows)
+        row = await ctx.conn.fetchrow(READ_SQL)
+        if not (row and row["public_price_per_minute"] == ceiling):
+            raise Invalid("invalid_price_checks_per_minute", f"a whole number from {lo} to {hi}", min=lo, max=hi)
     if enabled is None and ceiling is None:
         raise Invalid("nothing_to_change", "send enabled or price_checks_per_minute")
     if enabled is not None:

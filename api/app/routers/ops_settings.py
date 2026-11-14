@@ -10,6 +10,9 @@ The thresholds, limits, caps, platform defaults and ranges of the agency-owner s
 switches; service :mod:`app.platform_settings.service`; 503 ``settings_unavailable`` before crm-064. The same route
 class as :mod:`app.routers.ops` (OPS, the L1 response allow-list): the open changes are ``pending`` because crm.ops.v1
 forbids the word "proposal" in a key.
+
+1.14 (AA-1096 S280, additive): ``agency_overrides`` / ``agency_pending`` per platform+tenant setting, ``reason_min`` /
+``evidence_min`` / ``evidence_max`` per definition; a backdated ``effective_from`` is 422 ``effective_from_in_past``.
 """
 
 from __future__ import annotations
@@ -52,6 +55,12 @@ class SettingRowOut(_Out):
     previous_value: SettingValue | None = None
 
 
+class AgencySettingRowOut(SettingRowOut):
+    """An agency's own row of a platform+tenant key, with the agency's name (the list names who keeps its own value)."""
+
+    agency_name: str | None
+
+
 class SettingGuideTextOut(_Out):
     """One language of a setting's operator guide (the CIS 416 shape the Platform > Settings page reads)."""
 
@@ -86,6 +95,10 @@ class SettingDefinitionOut(_Out):
     env_override: str | None
     cache_s: int
     enforced: bool
+    # what a change must carry (crm-064 CHECKs), so the page can say it before sending
+    reason_min: int
+    evidence_min: int
+    evidence_max: int
     guide: SettingGuideOut | None = None  # None = no guide yet (tests/unit/test_aa1096_settings_guides.py fails on it)
 
 
@@ -98,6 +111,10 @@ class SettingOut(SettingDefinitionOut):
     refused: str | None
     last_change: SettingRowOut | None
     pending: list[SettingRowOut]
+    # a platform+tenant key: each agency's own value in force and each agency's open change (approve or reject it
+    # with its tenant_id); empty lists for a platform-only key
+    agency_overrides: list[AgencySettingRowOut]
+    agency_pending: list[AgencySettingRowOut]
 
 
 class SettingsOut(_Out):
@@ -121,9 +138,12 @@ class SettingChangeIn(_In):
     records a self-approval while two-person approval is off)."""
 
     value: SettingValue
-    reason: Annotated[str, Field(min_length=1, max_length=2000)]
-    evidence_ref: Annotated[str | None, Field(max_length=500)] = None
-    effective_from: datetime | None = None
+    # the crm-064 CHECKs (reason >= 20 characters, evidence 3 to 500): refused here before the database sees them
+    reason: Annotated[str, Field(min_length=settings_service.REASON_MIN, max_length=2000)]
+    evidence_ref: Annotated[
+        str | None, Field(min_length=settings_service.EVIDENCE_MIN, max_length=settings_service.EVIDENCE_MAX)
+    ] = None
+    effective_from: datetime | None = None  # now or later (422 effective_from_in_past)
     tenant_id: uuid.UUID | None = None
     base_version: Annotated[int | None, Field(ge=0)] = None
     apply: bool = False
@@ -139,7 +159,7 @@ async def get_settings(
     request: Request, caller: FullReader, area: Annotated[str | None, Query(pattern=r"^[a-z][a-z0-9_]{0,39}$")] = None
 ) -> dict:
     pool = await request_pool(request)
-    return await settings_service.list_settings(pool, area=area)
+    return await settings_service.list_settings(pool, area=area, staff_sub=caller.sub)
 
 
 @router.get("/settings/{key}/history", response_model=SettingHistoryOut)

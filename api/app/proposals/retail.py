@@ -85,7 +85,11 @@ async def read(ctx: AnyContext) -> dict[str, Any]:
 
 
 async def update(ctx: TenantContext, changes: dict[str, Any]) -> dict[str, Any]:
-    """Merge ``{kind: percent | None}`` into the agency's markups (None removes the kind)."""
+    """Merge ``{kind: percent | None}`` into the agency's markups (None removes the kind).
+
+    A value equal to the one the agency already has is kept even when AA lowered the ceiling since (AA-1096 S280, as
+    the lifecycle windows): the form sends every kind, and a markup saved under an older ceiling must not block a change
+    of another kind. Any new value must be within the ceiling; a refusal names the product type (``kind``)."""
     current = await markups(ctx)
     # AA-1096 L4: the ceiling an owner may set is a platform setting (crm.agency_defaults.markup_max_pct, 0 to 300 %).
     ceiling = ps.decimal(ps.MARKUP_MAX)
@@ -96,15 +100,21 @@ async def update(ctx: TenantContext, changes: dict[str, Any]) -> dict[str, Any]:
             current.pop(kind, None)
             continue
         number = _decimal(value)
-        if number is None or number < 0 or number > ceiling or number != number.quantize(CENT):
-            raise Invalid("invalid_markup", f"a percentage from 0 to {ceiling:f} with at most 2 decimals")
+        unchanged = number is not None and current.get(kind) == number
+        if number is None or number < 0 or number != number.quantize(CENT) or (number > ceiling and not unchanged):
+            raise Invalid(
+                "invalid_markup",
+                f"{kind}: a percentage from 0 to {ceiling:f} with at most 2 decimals",
+                kind=kind,
+                max=format(ceiling, "f"),
+            )
         current[kind] = number
     stored = {k: float(v) if v != v.to_integral_value() else int(v) for k, v in current.items()}
     try:
         async with ctx.conn.transaction():
             await ctx.conn.execute(UPSERT_SQL, json.dumps(stored))
     except asyncpg.CheckViolationError:
-        raise Invalid("invalid_markup", "a percentage from 0 to 300 with at most 2 decimals") from None
+        raise Invalid("invalid_markup", f"a percentage from 0 to {ceiling:f} with at most 2 decimals") from None
     ctx.audit("update", "allowed", "tenant_settings", None, fields=("retail_markup_pct",))
     return await read(ctx)
 

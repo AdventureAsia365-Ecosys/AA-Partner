@@ -2972,6 +2972,18 @@ or an env var alone. The CRM keeps its own registry in `crm` (root ADR 0008a: no
   `crm.settings.two_person_approval` is off (dev phase, tech lead Q2; a high-impact one e-mails AA ops,
   `setting_self_approved`). An agency's own value is written in its `platform_tx` (one `setting_change` event in its
   audit). Routes `app/routers/ops_settings.py`, service `app/platform_settings/service.py`.
+- **What the pages show (AA-1096 S280, crm.ops.v1 1.14, additive)**: `GET /settings` also lists, per platform+tenant
+  key, `agency_overrides` (each agency's own value in force) and `agency_pending` (each agency's open change, decided
+  with its `tenant_id`), read in one platform context per agency of the registry (RLS; an `ops_read` event only in an
+  agency that has rows); each definition carries `reason_min` / `evidence_min` / `evidence_max`. A change starts now or
+  later (422 `effective_from_in_past`); an approval a later value in force would hide is 409 `superseded_by_later`. An
+  agency's history diffs its first own value against the platform value in force then. The staff agency overview
+  shows the AI budget the gateway enforces, the agency's AI ceiling and its form quota with their source
+  (`tenancy.as_policy_reader` steps out of `crm_support_reader` for those registry rows only). The owner sets the
+  refund owner-approval threshold on Settings > Payments (`refund_owner_threshold_base`, base currency); an agent's
+  `above_threshold` names `limit` / `limit_currency`. Settings > Forms reads the hourly quota from `GET /intake-forms`
+  (`submissions_per_hour`, `submissions_per_hour_own`). A new-agency default reaches new agencies only: provisioning
+  copies it into `crm.tenant_settings` (the guides say so).
 - **Guard**: `tests/unit/test_aa1096_settings_lint.py` (no new policy-looking constant in the governed modules, a
   baseline that only shrinks, every enforced key read by code).
 - **Every key ships its guide** (the CIS 416 rule): `app/platform_settings/guides.json` holds the operator's guide of

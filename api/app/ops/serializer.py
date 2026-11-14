@@ -226,6 +226,13 @@ OPS_ALLOWED_KEYS: frozenset[str] = frozenset(
         "decided_at",
         "decision_note",
         "previous_value",
+        # AA-1096 S280: the agencies with their own value of a platform+tenant key and their open changes, and what a
+        # change must carry
+        "agency_overrides",
+        "agency_pending",
+        "reason_min",
+        "evidence_min",
+        "evidence_max",
         # the operator's guide of a CRM setting (the CIS 416 shape the Settings page reads): plain text per language
         "guide",
         "en",

@@ -11,6 +11,10 @@ import { formatMoney } from "./ledger";
 export const SETTING_KEYS = [
   "ai_enabled",
   "ai_budget_usd",
+  "ai_budget_max_usd",
+  "ai_budget_max_own",
+  "intake_form_per_hour",
+  "intake_form_per_hour_own",
   "timezone",
   "base_currency",
   "booking_validation_level",
@@ -28,6 +32,8 @@ export type SettingKey = (typeof SETTING_KEYS)[number];
 const BOOLEANS = new Set<string>(["ai_enabled", "stage2_auto_send", "service_fee_enabled"]);
 const DAYS = new Set<string>(["trash_days", "invoice_due_days"]);
 const STEP_LISTS = new Set<string>(["onboarding_later", "onboarding_done"]);
+// AA-1096 S280: whether a registry value is the agency's own (set by AA) or the platform's
+const OWN = new Set<string>(["ai_budget_max_own", "intake_form_per_hour_own"]);
 
 function isKnown(key: string): key is SettingKey {
   return (SETTING_KEYS as readonly string[]).includes(key);
@@ -58,11 +64,17 @@ function count(value: unknown): number | null {
  * the agency has none. Never re-computes money (the API sends the decimal string). */
 export function settingValue(lang: Lang, key: string, value: unknown, locale: string): string {
   if (value === null || value === undefined || value === "") return "—";
+  if (OWN.has(key) && typeof value === "boolean") return t(lang, value ? "staff.setting.own.true" : "staff.setting.own.false");
+  if (key === "intake_form_per_hour") {
+    const n = count(value);
+    if (n === null) return String(value);
+    return n === 0 ? t(lang, "staff.setting.noLimit") : fmt(t(lang, "staff.setting.perHour"), { n });
+  }
   if (BOOLEANS.has(key) || typeof value === "boolean") {
     if (typeof value !== "boolean") return String(value);
     return t(lang, value ? "staff.setting.on" : "staff.setting.off");
   }
-  if (key === "ai_budget_usd") {
+  if (key === "ai_budget_usd" || key === "ai_budget_max_usd") {
     return fmt(t(lang, "staff.setting.perMonth"), { amount: formatMoney(String(value), "USD", locale) });
   }
   if (DAYS.has(key) || key === "auto_archive_months") {

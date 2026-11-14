@@ -45,6 +45,7 @@ import asyncpg
 
 from app import platform_settings as ps
 from app.agencies import NEW_AGENCY_SETTINGS_SQL, new_agency_settings
+from app.audit_export import registry
 from app.errors import Conflict, Invalid, NotFound, ServiceError, Unavailable
 from app.observability import ops_alerts
 from app.platform_settings.reader import Definition
@@ -53,6 +54,10 @@ from app.tenancy import TENANT_STATUSES, platform_tx
 log = logging.getLogger(__name__)
 
 REASON_MIN = 20  # technical-constant: mirrors the crm-064 CHECK (one break-glass minimum for the platform)
+EVIDENCE_MIN = 3  # technical-constant: mirrors the crm-064 CHECK setting_value_evidence_chk (after trimming)
+EVIDENCE_MAX = 500  # technical-constant: mirrors the crm-064 CHECK setting_value_evidence_chk
+# The clock skew between the CIS page, the relay and this API: an effective_from older than now minus this is refused.
+EFFECTIVE_FROM_SKEW_S = 300  # technical-constant: clock skew allowance, not a policy
 UNAVAILABLE = "settings_unavailable"
 
 # Platform rows only (the RLS of a context without app.tenant_id shows nothing else).
@@ -72,6 +77,26 @@ SELECT v.id, v.key, v.tenant_id::text AS tenant_id, v.value::text AS value_text,
   FROM crm.setting_value v
  WHERE v.tenant_id IS NULL AND v.status = 'proposed'
 """
+# One agency's rows of the platform+tenant keys (read inside that agency's platform context: RLS shows only its rows):
+# the approved value in force per key, and the open changes.
+AGENCY_ROWS_SQL = """
+SELECT * FROM (
+  SELECT DISTINCT ON (v.key)
+         v.id, v.key, v.tenant_id::text AS tenant_id, v.value::text AS value_text, v.version, v.status,
+         v.effective_from, v.proposed_by, v.proposed_at, v.reason, v.evidence_ref, v.self_approved,
+         v.decided_by, v.decided_at, v.decision_note
+    FROM crm.setting_value v
+   WHERE v.tenant_id = $1 AND v.key = ANY($2::text[]) AND v.status = 'approved' AND v.effective_from <= now()
+   ORDER BY v.key, v.effective_from DESC, v.version DESC
+) in_force
+UNION ALL
+SELECT v.id, v.key, v.tenant_id::text AS tenant_id, v.value::text AS value_text, v.version, v.status,
+       v.effective_from, v.proposed_by, v.proposed_at, v.reason, v.evidence_ref, v.self_approved,
+       v.decided_by, v.decided_at, v.decision_note
+  FROM crm.setting_value v
+ WHERE v.tenant_id = $1 AND v.key = ANY($2::text[]) AND v.status = 'proposed'
+"""
+AGENCY_NAME_SQL = "SELECT display_name FROM crm.tenant WHERE tenant_id = $1"
 HISTORY_SQL = """
 SELECT v.id, v.key, v.tenant_id::text AS tenant_id, v.value::text AS value_text, v.version, v.status,
        v.effective_from, v.proposed_by, v.proposed_at, v.reason, v.evidence_ref, v.self_approved,
@@ -123,6 +148,14 @@ SUPERSEDE_SQL = """
 UPDATE crm.setting_value SET status = 'superseded'
  WHERE key = $1 AND tenant_id IS NOT DISTINCT FROM $2::uuid AND status = 'approved' AND id <> $3
    AND $4::timestamptz <= now() AND effective_from <= $4::timestamptz
+"""
+# An approved row of the same scope already in force with a later effective_from: approving an older one would be
+# recorded as approved and never take effect (the value in force is the newest effective_from).
+LATER_IN_FORCE_SQL = """
+SELECT 1 FROM crm.setting_value
+ WHERE key = $1 AND tenant_id IS NOT DISTINCT FROM $2::uuid AND status = 'approved' AND id <> $3
+   AND effective_from > $4::timestamptz AND effective_from <= now()
+ LIMIT 1
 """
 # The two-person flag in force, read in the decision transaction (never the process cache). A platform row: inside an
 # agency's context it is read with app.tenant_id cleared for that one statement (the crm-064 trigger does the same).
@@ -184,6 +217,10 @@ def definition_out(d: Definition) -> dict[str, Any]:
         "env_override": d.env_override,
         "cache_s": d.cache_s,
         "enforced": d.enforced,
+        # what a change must carry (the crm-064 CHECKs): the CIS page checks these before it sends
+        "reason_min": REASON_MIN,
+        "evidence_min": EVIDENCE_MIN,
+        "evidence_max": EVIDENCE_MAX,
         "guide": ps.guide(d.key),  # the operator's guide, EN + VI (CIS 416 shape; None = none yet)
     }
 
@@ -215,7 +252,7 @@ def _definition(key: str) -> Definition:
         raise _refused(404, "unknown_setting", f"no CRM setting {key}") from None
 
 
-async def list_settings(pool: asyncpg.Pool, *, area: str | None = None) -> dict[str, Any]:
+async def list_settings(pool: asyncpg.Pool, *, area: str | None = None, staff_sub: str = "ops") -> dict[str, Any]:
     defs = [ps.definition(k) for k in ps.keys()]
     defs = [d for d in defs if area is None or d.area == area]
     try:
@@ -225,10 +262,12 @@ async def list_settings(pool: asyncpg.Pool, *, area: str | None = None) -> dict[
             pending: dict[str, list[dict[str, Any]]] = {}
             for r in await conn.fetch(OPEN_SQL):
                 pending.setdefault(r["key"], []).append(row_out(r))
+        agency_rows = await _agency_rows(pool, [d.key for d in defs if d.tenant_scoped], staff_sub=staff_sub)
     except (asyncpg.UndefinedTableError, asyncpg.InsufficientPrivilegeError):
         raise SettingsUnavailable() from None
     rows = []
     for d in defs:
+        overrides, agency_pending = agency_rows.get(d.key, ([], []))
         res = ps.resolve(d.key)
         _value, env_ignored, env_set = ps.READER.env_value(d)
         rows.append(
@@ -242,6 +281,10 @@ async def list_settings(pool: asyncpg.Pool, *, area: str | None = None) -> dict[
                 "refused": res.refused,
                 "last_change": latest.get(d.key),
                 "pending": pending.get(d.key, []),
+                # a platform+tenant key: the agencies with their own value in force, and their open changes (decide
+                # one with its tenant_id); empty for a platform-only key
+                "agency_overrides": overrides,
+                "agency_pending": agency_pending,
             }
         )
     return {
@@ -253,13 +296,67 @@ async def list_settings(pool: asyncpg.Pool, *, area: str | None = None) -> dict[
     }
 
 
-def _with_previous(rows: list[dict[str, Any]], d: Definition) -> list[dict[str, Any]]:
+async def _agency_rows(
+    pool: asyncpg.Pool, keys: list[str], *, staff_sub: str
+) -> dict[str, tuple[list[dict[str, Any]], list[dict[str, Any]]]]:
+    """``{key: (overrides, open changes)}`` of every agency that has its own rows of the platform+tenant ``keys``.
+
+    crm.setting_value is FORCE RLS: an agency's rows are seen only in its own context, so this opens one platform
+    context per agency of the registry (the L1 agency list does the same) and reads its rows of these keys only. An
+    agency with rows gets one ``ops_read`` event in its audit (reason ``settings``); one without rows none (nothing of
+    it was shown). A trashed or unreadable agency is skipped, never guessed."""
+    out: dict[str, tuple[list[dict[str, Any]], list[dict[str, Any]]]] = {}
+    if not keys:
+        return out
+    for agency in sorted(await registry.agencies(pool), key=lambda a: str(a.tenant_id)):
+        try:
+            async with platform_tx(pool, agency.tenant_id, actor=_actor(staff_sub), statuses=TENANT_STATUSES) as ctx:
+                found = await ctx.conn.fetch(AGENCY_ROWS_SQL, agency.tenant_id, keys)
+                if not found:
+                    continue
+                name = await ctx.conn.fetchval(AGENCY_NAME_SQL, agency.tenant_id)
+                ctx.audit("ops_read", "allowed", "tenant", str(agency.tenant_id), reason="settings")
+        except (NotFound, Conflict):
+            continue  # trashed or not readable as an agency now
+        for r in found:
+            row = {**row_out(r), "agency_name": name}
+            overrides, open_changes = out.setdefault(r["key"], ([], []))
+            (open_changes if r["status"] == "proposed" else overrides).append(row)
+    return out
+
+
+def _with_previous(
+    rows: list[dict[str, Any]], d: Definition, platform_rows: list[dict[str, Any]] | None = None
+) -> list[dict[str, Any]]:
+    """Each row with the value it replaced (the page's diff). For an agency's rows, the value before its first own
+    value is the platform value in force at that row's effective_from (``platform_rows``: the platform history), not
+    the compiled default."""
     previous: Any = d.default_value
+    first = True
     for row in reversed(rows):  # oldest first: each row against the approved value in force before it
+        if first and platform_rows is not None:
+            previous = _platform_value_at(platform_rows, row["effective_from"], d.default_value)
         row["previous_value"] = previous
         if row["status"] in ("approved", "superseded"):
             previous = row["value"]
+            first = False
     return rows
+
+
+def _platform_value_at(platform_rows: list[dict[str, Any]], at: str | None, default: Any) -> Any:
+    """The platform value in force at ``at`` (ISO): the approved or superseded platform row with the newest
+    effective_from not after it (ties: the higher version), else the compiled default."""
+    if at is None:
+        return default
+    limit = dt.datetime.fromisoformat(at)
+    best: tuple[dt.datetime, int, Any] | None = None
+    for row in platform_rows:
+        if row["status"] not in ("approved", "superseded") or row["effective_from"] is None:
+            continue
+        when = dt.datetime.fromisoformat(row["effective_from"])
+        if when <= limit and (best is None or (when, row["version"]) > best[:2]):
+            best = (when, row["version"], row["value"])
+    return default if best is None else best[2]
 
 
 async def history(
@@ -273,6 +370,10 @@ async def history(
         else:
             if not d.tenant_scoped:
                 raise _refused(422, "not_tenant_scoped", f"{d.label} has no per-agency value")
+            # the platform history first (outside any agency context: RLS), for the value an agency's first own value
+            # replaced
+            async with pool.acquire() as conn:
+                platform_rows = [row_out(r) for r in await conn.fetch(HISTORY_SQL, key, None)]
             async with platform_tx(pool, tenant_id, actor=_actor(staff_sub), statuses=TENANT_STATUSES) as ctx:
                 rows = [row_out(r) for r in await ctx.conn.fetch(HISTORY_SQL, key, tenant_id)]
                 ctx.audit("ops_read", "allowed", "tenant", str(tenant_id), reason="settings")
@@ -282,7 +383,7 @@ async def history(
         "key": key,
         "tenant_id": None if tenant_id is None else str(tenant_id),
         "definition": definition_out(d),
-        "history": _with_previous(rows, d),
+        "history": _with_previous(rows, d, None if tenant_id is None else platform_rows),
     }
 
 
@@ -308,6 +409,19 @@ def check_env_override(d: Definition, tenant_id: uuid.UUID | str | None) -> None
             "env_override_active",
             f"{d.label}: the env var {res.env_name} overrides every agency's value in this environment; remove it "
             "from the environment first",
+        )
+
+
+def check_effective_from(effective_from: dt.datetime | None, now: dt.datetime | None = None) -> None:
+    """A change takes effect now (None) or later, never in the past: the value in force is the approved row with the
+    newest effective_from, so a backdated row behind the one in force would be recorded as approved and never apply."""
+    if effective_from is None:
+        return
+    when = effective_from if effective_from.tzinfo else effective_from.replace(tzinfo=dt.UTC)
+    now = now or dt.datetime.now(dt.UTC)
+    if when < now - dt.timedelta(seconds=EFFECTIVE_FROM_SKEW_S):
+        raise _refused(
+            422, "effective_from_in_past", "a change takes effect now or later: leave the date empty for now"
         )
 
 
@@ -360,6 +474,13 @@ async def propose(
     evidence_ref = (evidence_ref or "").strip() or None
     if d.evidence_required and not evidence_ref:
         raise _refused(422, "evidence_required", f"{d.label} needs an evidence link")
+    if evidence_ref is not None and not EVIDENCE_MIN <= len(evidence_ref) <= EVIDENCE_MAX:
+        raise _refused(
+            422,
+            "evidence_invalid",
+            f"the evidence is a link or a reference of {EVIDENCE_MIN} to {EVIDENCE_MAX} characters",
+        )
+    check_effective_from(effective_from)
     if tenant_id is not None and not d.tenant_scoped:
         raise _refused(422, "not_tenant_scoped", f"{d.label} has no per-agency value")
     check_env_override(d, tenant_id)
@@ -491,6 +612,16 @@ async def _decide(
         check_env_override(d, proposal["tenant_id"])
         await conn.execute(LOCK_SQL, _lock_scope(d, proposal["tenant_id"]))
         await check_range(conn, d, proposal["value"], proposal["tenant_id"])
+        scope = None if proposal["tenant_id"] is None else uuid.UUID(proposal["tenant_id"])
+        effective = dt.datetime.fromisoformat(proposal["effective_from"]) if proposal["effective_from"] else None
+        if effective is not None and await conn.fetchval(LATER_IN_FORCE_SQL, d.key, scope, uuid.UUID(proposal["id"]),
+                                                         effective):  # fmt: skip
+            raise _refused(
+                409,
+                "superseded_by_later",
+                f"{d.label}: a value with a later start date is already in force, so this change would never apply; "
+                "reject it and propose again",
+            )
     self_approved = False
     if approve and actor == proposal["proposed_by"] and d.approval == "maker_checker":
         # The flag is maker_checker itself (crm-064): while it is on, the one person it checks cannot turn it off.
@@ -532,6 +663,7 @@ def _after_decision(d: Definition, out: dict[str, Any]) -> None:
 
 __all__ = [
     "SettingsUnavailable",
+    "check_effective_from",
     "check_env_override",
     "check_range",
     "check_value",

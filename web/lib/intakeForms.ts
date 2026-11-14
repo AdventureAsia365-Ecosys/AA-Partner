@@ -236,3 +236,32 @@ export function dataRequestHref(contact: string | null | undefined): string | nu
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) return `mailto:${v}`;
   return null;
 }
+
+// AA-1096 S280 — Settings > Forms: the refusals the owner can act on, named next to the form being edited.
+const FORM_ERRORS = new Set(["invalid_origins", "invalid_privacy_notice_url", "invalid_owner"]);
+const BODY_FIELDS: Record<string, string> = {
+  allowed_origins: "invalid_origins",
+  privacy_notice_url: "invalid_privacy_notice_url",
+  default_owner_member_id: "invalid_owner",
+};
+
+/** The i18n key of a refused form change: the API's own code, a request-shape refusal by its field (more than 10
+ * websites is refused before the service runs), else the generic one. */
+export function formErrorKey(res: { detail: string; body?: unknown }): string {
+  if (FORM_ERRORS.has(res.detail)) return `forms.error.${res.detail}`;
+  const issues = (res.body as { detail?: unknown } | null | undefined)?.detail;
+  if (Array.isArray(issues)) {
+    for (const issue of issues) {
+      const loc = (issue as { loc?: unknown })?.loc;
+      const field = Array.isArray(loc) ? loc.find((p): p is string => typeof p === "string" && p in BODY_FIELDS) : undefined;
+      if (field) return `forms.error.${BODY_FIELDS[field]}`;
+    }
+  }
+  return "forms.error.other";
+}
+
+/** The hourly submission quota of the agency's forms (GET /intake-forms; an older API omits it). */
+export interface FormQuota {
+  submissions_per_hour?: number;
+  submissions_per_hour_own?: boolean;
+}

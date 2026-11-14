@@ -22,6 +22,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from app import platform_settings as ps
 from app.errors import Invalid, NotFound
 from app.intake import stage1
 
@@ -129,6 +130,17 @@ async def ensure_stage1_definition(ctx: AnyContext | ProvisioningContext) -> uui
 
 async def list_forms(ctx: AnyContext | ProvisioningContext) -> list[FormView]:
     return [FormView.from_row(r) for r in await ctx.conn.fetch(LIST_SQL)]
+
+
+async def form_quota(ctx: AnyContext) -> dict[str, Any]:
+    """The submissions an hour each form of this agency takes (AA-1096 S280, shown read-only on Settings > Forms):
+    ``crm.rate.intake_form_per_hour``, the agency's own value when AA set one (``submissions_per_hour_own``), 0 = no
+    quota. The public form and Book now charge the same quota (intake/public.py, intake/booking.py)."""
+    limit = await ps.tenant_get(ctx.conn, ps.RATE_INTAKE_FORM, ctx.tenant_id)
+    return {
+        "submissions_per_hour": int(limit),
+        "submissions_per_hour_own": ps.resolve(ps.RATE_INTAKE_FORM, ctx.tenant_id).source == "tenant",
+    }
 
 
 async def create_form(

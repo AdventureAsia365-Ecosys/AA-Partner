@@ -9,7 +9,8 @@ import { PageTitle } from "@/components/PageTitle";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { t } from "@/lib/i18n";
-import type { PipelineSettings } from "@/lib/intakeForms";
+import type { FormQuota, PipelineSettings } from "@/lib/intakeForms";
+import type { TeamPage } from "@/lib/team";
 import { serverContext } from "@/lib/serverContext";
 
 export const dynamic = "force-dynamic";
@@ -19,9 +20,11 @@ export default async function FormsPage() {
   if (ctx.apiDown) return null;
   const { session } = await serverContext();
   const isOwner = ctx.role === "owner";
-  const [res, settings] = await Promise.all([
-    session ? crmCall<{ forms: FormRow[] }>(ctx.cfg, session, "GET", "intake-forms") : null,
+  const [res, settings, team] = await Promise.all([
+    session ? crmCall<{ forms: FormRow[] } & FormQuota>(ctx.cfg, session, "GET", "intake-forms") : null,
     session && isOwner ? crmCall<PipelineSettings>(ctx.cfg, session, "GET", "settings/pipeline") : null,
+    // AA-1096 S280: the members a form's new inquiries may go to (owner only; without it the picker is hidden)
+    session && isOwner ? crmCall<TeamPage>(ctx.cfg, session, "GET", "team") : null,
   ]);
   return (
     <div data-testid="crm-settings-forms" style={{ display: "grid", gap: 14, maxWidth: 900 }}>
@@ -32,7 +35,14 @@ export default async function FormsPage() {
       {!res || !res.ok ? (
         <ErrorState message={t(ctx.lang, "error.api")} />
       ) : (
-        <FormsAdmin forms={res.data.forms} clientHosts={ctx.cfg.clientHosts} isOwner={isOwner} lang={ctx.lang} />
+        <FormsAdmin
+          forms={res.data.forms}
+          clientHosts={ctx.cfg.clientHosts}
+          isOwner={isOwner}
+          lang={ctx.lang}
+          quota={res.data}
+          team={team && team.ok ? team.data.members : []}
+        />
       )}
       <PipelineSettingsPanel settings={settings && settings.ok ? settings.data : null} isOwner={isOwner} lang={ctx.lang} />
     </div>

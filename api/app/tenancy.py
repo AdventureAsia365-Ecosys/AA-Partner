@@ -1693,6 +1693,19 @@ async def as_login_role(ctx: SupportContext) -> AsyncIterator[asyncpg.Connection
         await ctx.conn.execute(f"SET LOCAL ROLE {SUPPORT_ROLE}")
 
 
+@asynccontextmanager
+async def as_policy_reader(ctx: SupportContext) -> AsyncIterator[asyncpg.Connection]:
+    """Step out of ``crm_support_reader`` for one block (AA-1096 S280): the agency's own rows of the settings registry
+    (``crm.setting_value``, crm-064), which the reader is not granted. Those rows are values AA staff set for the
+    agency (an AI ceiling, a form quota), not the agency's data, so no identity consent applies. A savepoint, as
+    :func:`as_login_role`; the role is back to the reader afterwards. Only ``app/support/reads.py`` calls it
+    (``tests/unit/test_code_rules.py``), for :mod:`app.platform_settings` reads only."""
+    async with ctx.conn.transaction():
+        await ctx.conn.execute("SET LOCAL ROLE NONE")
+        yield ctx.conn
+        await ctx.conn.execute(f"SET LOCAL ROLE {SUPPORT_ROLE}")
+
+
 async def _write_audit(
     ctx: TenantContext | SystemContext | LifecycleContext | SupportContext, events: list[AuditEvent]
 ) -> None:

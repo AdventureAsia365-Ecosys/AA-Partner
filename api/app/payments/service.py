@@ -411,17 +411,29 @@ async def decide_refund(ctx: TenantContext, refund_id: uuid.UUID, *, approve: bo
     if approve and in_base is not None:
         before = await ctx.conn.fetchval(APPROVED_BASE_SQL, row["invoice_id"], refund_id, base)
         judged = None if before is None else in_base + Decimal(before)
-    threshold = await ctx.conn.fetchval(THRESHOLD_SQL)
+    stored = await ctx.conn.fetchval(THRESHOLD_SQL)
+    threshold = default_threshold() if stored is None else Decimal(stored)
     # §4.6: the owner any amount, an agent up to the threshold on the invoice's approved refunds plus this one (no rate
     # for the day: the owner decides). A rejection moves no money: it is judged on this request alone.
-    require(
-        ctx,
-        Action.REFUND_APPROVE,
-        object_kind="refund_request",
-        object_id=str(refund_id),
-        amount=judged,
-        threshold=default_threshold() if threshold is None else threshold,
-    )
+    try:
+        require(
+            ctx,
+            Action.REFUND_APPROVE,
+            object_kind="refund_request",
+            object_id=str(refund_id),
+            amount=judged,
+            threshold=threshold,
+        )
+    except Forbidden as exc:
+        if exc.code != "above_threshold":
+            raise
+        # AA-1096 S280: the agent sees the limit it is held to (its own approval limit, set by the owner)
+        raise Forbidden(
+            "above_threshold",
+            exc.message,
+            limit=format(threshold.quantize(Decimal("0.01")), "f"),
+            limit_currency=base,
+        ) from None
     status = "approved" if approve else "rejected"
     await ctx.conn.execute(DECIDE_SQL, refund_id, status, f"member:{ctx.member_id}", text,
                            base if in_base is not None else None, in_base)  # fmt: skip

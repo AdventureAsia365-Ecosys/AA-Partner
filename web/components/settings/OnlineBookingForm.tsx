@@ -18,6 +18,18 @@ export interface OnlineBookingView {
   forms: { label: string; public_key: string }[];
 }
 
+type Bounds = OnlineBookingView["price_checks_bounds"];
+
+export function inRange(n: number, bounds: Pick<Bounds, "min" | "max">): boolean {
+  return n >= bounds.min && n <= bounds.max;
+}
+
+/** The bounds a refusal carries (``invalid_price_checks_per_minute``: ``min`` / ``max``), or null. */
+export function serverBounds(body: unknown): { min: number; max: number } | null {
+  const b = body as { min?: unknown; max?: unknown } | null;
+  return b && typeof b.min === "number" && typeof b.max === "number" ? { min: b.min, max: b.max } : null;
+}
+
 export function OnlineBookingForm({ view, lang }: { view: OnlineBookingView; lang: Lang }) {
   const router = useRouter();
   const hydrated = useHydrated();
@@ -27,11 +39,14 @@ export function OnlineBookingForm({ view, lang }: { view: OnlineBookingView; lan
   const [failed, setFailed] = useState(false);
   const [ceiling, setCeiling] = useState(String(view.price_checks_per_minute));
   const [ceilingNote, setCeilingNote] = useState<{ tone: "danger" | "success"; key: string } | null>(null);
-  const bounds = view.price_checks_bounds;
+  const [bounds, setBounds] = useState(view.price_checks_bounds);
+  const stored = view.price_checks_per_minute;
+  // AA-1096 S280: AA may narrow the range after the owner saved; the saved value still applies and stays savable
+  const storedOutside = !inRange(stored, bounds);
 
   async function saveCeiling() {
     const n = Number(ceiling);
-    if (!Number.isInteger(n) || n < bounds.min || n > bounds.max) {
+    if (!Number.isInteger(n) || (!inRange(n, bounds) && n !== stored)) {
       setCeilingNote({ tone: "danger", key: "onlineBooking.ceilingRange" });
       return;
     }
@@ -39,7 +54,15 @@ export function OnlineBookingForm({ view, lang }: { view: OnlineBookingView; lan
     const res = await bffSend("PUT", "settings/online-booking", { price_checks_per_minute: n });
     setBusy(false);
     if (!res.ok) {
-      setCeilingNote({ tone: "danger", key: "error.api" });
+      // the range may have changed since the page loaded: the API names the bounds it checked
+      const range = serverBounds(res.body);
+      if (res.detail === "invalid_price_checks_per_minute") {
+        if (range) setBounds({ ...bounds, ...range });
+        setCeilingNote({ tone: "danger", key: "onlineBooking.ceilingRange" });
+        router.refresh();
+      } else {
+        setCeilingNote({ tone: "danger", key: "error.api" });
+      }
       return;
     }
     setCeilingNote({ tone: "success", key: "onlineBooking.ceilingSaved" });
@@ -73,26 +96,31 @@ export function OnlineBookingForm({ view, lang }: { view: OnlineBookingView; lan
         <p role="status" style={{ margin: 0, fontSize: 13, color: failed ? K.danger : K.body }}>
           {failed ? tr("error.api") : tr(enabled ? "onlineBooking.on" : "onlineBooking.off")}
         </p>
-        <div style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }}>
-          <Field label={tr("onlineBooking.ceiling")}>
+        <Field
+          label={tr("onlineBooking.ceiling")}
+          hint={fmt(tr("onlineBooking.ceilingHint"), { min: String(bounds.min), max: String(bounds.max), default: String(bounds.default) })}
+        >
+          <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <Input
               size="sm"
               type="number"
-              min={bounds.min}
-              max={bounds.max}
+              min={Math.min(bounds.min, stored)}
+              max={Math.max(bounds.max, stored)}
               value={ceiling}
               onChange={(e) => setCeiling(e.target.value)}
               style={{ width: 110 }}
               data-testid="online-booking-ceiling"
             />
-          </Field>
-          <Button size="sm" variant="primary" disabled={!hydrated || busy} onClick={() => void saveCeiling()} testId="online-booking-ceiling-save">
-            {tr("onlineBooking.ceilingSave")}
-          </Button>
-        </div>
-        <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>
-          {fmt(tr("onlineBooking.ceilingHint"), { min: String(bounds.min), max: String(bounds.max), default: String(bounds.default) })}
-        </p>
+            <Button size="sm" variant="primary" disabled={!hydrated || busy} onClick={() => void saveCeiling()} testId="online-booking-ceiling-save">
+              {tr("onlineBooking.ceilingSave")}
+            </Button>
+          </span>
+        </Field>
+        {storedOutside && (
+          <p style={{ margin: 0, fontSize: 12.5, color: K.amber }} data-testid="online-booking-outside-range">
+            {fmt(tr("onlineBooking.outsideRange"), { value: String(stored), min: String(bounds.min), max: String(bounds.max) })}
+          </p>
+        )}
         {ceilingNote && (
           <p role="status" style={{ margin: 0, fontSize: 13, color: ceilingNote.tone === "danger" ? K.danger : K.success }}>
             {fmt(tr(ceilingNote.key), { min: String(bounds.min), max: String(bounds.max) })}

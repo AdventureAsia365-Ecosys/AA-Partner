@@ -263,6 +263,14 @@ export function openDocument(html: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
+/** The approval limit an ``above_threshold`` refusal carries (``limit``, ``limit_currency``; AA-1096 S280), or null. */
+export function thresholdLimit(body: unknown): { amount: string; currency: string } | null {
+  const b = body as { limit?: unknown; limit_currency?: unknown } | null | undefined;
+  return b && typeof b.limit === "string" && typeof b.limit_currency === "string" && /^[A-Z]{3}$/.test(b.limit_currency)
+    ? { amount: b.limit, currency: b.limit_currency }
+    : null;
+}
+
 /** Owner and agent may approve a refund (an agent only up to the agency threshold: the API says above_threshold). */
 export function canDecideRefund(role: string): boolean {
   return role === "owner" || role === "agent";

@@ -396,7 +396,10 @@ async def get_members(request: Request, caller: CallerDep, tenant_id: TenantDep)
 async def get_forms(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PIPELINE_VIEW) as ctx:
-        return {"forms": [f.__dict__ for f in await intake_forms.list_forms(ctx)]}
+        return {
+            "forms": [f.__dict__ for f in await intake_forms.list_forms(ctx)],
+            **await intake_forms.form_quota(ctx),
+        }
 
 
 @router.post("/intake-forms", status_code=201)

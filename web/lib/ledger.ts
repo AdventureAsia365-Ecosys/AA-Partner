@@ -120,6 +120,8 @@ export interface PaymentSettings {
   base_currency: string;
   booking_validation_level: Level;
   fx_mode: "automatic" | "manual";
+  /** AA-1096 S280: an agent approves a refund up to this amount in the base currency (an older API omits it). */
+  refund_owner_threshold_base?: string;
   levels: Level[];
   fx_modes: string[];
   attribution: { text: string; url: string };
@@ -144,6 +146,14 @@ export function seesMargin(role: string): boolean {
 }
 
 /** "2,540,000 VND" in the page's locale; amounts come as decimal strings and are never re-computed here. */
+/** The refund approval limit as typed: a decimal 0 to 10,000,000 with at most 2 decimals (the crm-008 column CHECK);
+ * "" or anything else → null. Spaces and thousands separators are ignored. */
+export function thresholdInput(value: string): string | null {
+  const v = value.replace(/[\s,]/g, "");
+  if (!/^\d{1,8}(\.\d{1,2})?$/.test(v) || Number(v) > 10_000_000) return null;
+  return v;
+}
+
 export function formatMoney(value: string | null | undefined, currency: string, locale: string): string {
   if (value === null || value === undefined || value === "") return "—";
   const n = Number(value);

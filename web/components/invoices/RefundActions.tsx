@@ -10,7 +10,7 @@ import { DateInput } from "@/components/DateInput";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
-import { invoiceErrorKey, REFUND_TONE, refundStep, type RefundRequest } from "@/lib/invoices";
+import { invoiceErrorKey, REFUND_TONE, refundStep, thresholdLimit, type RefundRequest } from "@/lib/invoices";
 import { formatAmount, PAY_METHODS } from "@/lib/proposals";
 
 export function RefundActions({
@@ -43,7 +43,14 @@ export function RefundActions({
     const res = await bffSend("POST", `refund-requests/${refund.refund_id}/${path}`, body);
     setBusy(false);
     if (!res.ok) {
-      onMessage("danger", tr(invoiceErrorKey(res.detail)));
+      // AA-1096 S280: an agent's refusal names the limit it is held to (the owner sets it on Settings > Payments)
+      const limit = thresholdLimit(res.body);
+      onMessage(
+        "danger",
+        res.detail === "above_threshold" && limit
+          ? fmt(tr("invoice.error.above_threshold_limit"), { limit: formatAmount(limit.amount, limit.currency, locale) })
+          : tr(invoiceErrorKey(res.detail)),
+      );
       return;
     }
     onMessage("success", tr(done));

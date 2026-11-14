@@ -145,12 +145,22 @@ describe("O2: the agency settings card", () => {
     expect(settingValue("en", "onboarding_done", ["connect_mailbox", "kickoff_call"], "en-GB")).toBe("Connect your mailbox, Book a kickoff call");
     expect(settingValue("en", "timezone", "Asia/Bangkok", "en-GB")).toBe("Asia/Bangkok");
     expect(settingValue("en", "base_currency", null, "en-GB")).toBe("—");
+    // AA-1096 S280: the enforced budget beside the ceiling AA allows, and where each registry value comes from
+    expect(settingValue("en", "ai_budget_max_usd", "5.00", "en-GB")).toBe("5.00 USD a month");
+    expect(settingValue("en", "ai_budget_max_own", true, "en-GB")).toBe("Set by AA for this agency");
+    expect(settingValue("vi", "intake_form_per_hour_own", false, "vi-VN")).toBe("Cài đặt chung của nền tảng");
+    expect(settingValue("en", "intake_form_per_hour", 200, "en-GB")).toBe("200 an hour per form");
+    expect(settingValue("en", "intake_form_per_hour", 0, "en-GB")).toBe("No limit");
   });
 
   it("no row shows a raw key or a bare true/false, and a newer key is still shown", () => {
     const settings: Record<string, unknown> = {
       ai_enabled: false,
       ai_budget_usd: "2.00",
+      ai_budget_max_usd: "2.00",
+      ai_budget_max_own: false,
+      intake_form_per_hour: 0,
+      intake_form_per_hour_own: true,
       timezone: "Asia/Bangkok",
       base_currency: "USD",
       booking_validation_level: "off",
