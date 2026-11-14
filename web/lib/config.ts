@@ -125,6 +125,11 @@ function hosts(raw: string): string[] {
     .filter(Boolean);
 }
 
+/** `list` without the hosts of `taken`. */
+function without(list: string[], taken: string[]): string[] {
+  return list.filter((h) => !taken.includes(h));
+}
+
 export function loadConfig(env: Env = process.env): WebConfig {
   const rawEnv = text(env, "ENVIRONMENT").toLowerCase() || "dev";
   const environment = (ENVIRONMENTS as readonly string[]).includes(rawEnv) ? (rawEnv as Environment) : "dev";
@@ -147,9 +152,9 @@ export function loadConfig(env: Env = process.env): WebConfig {
 
   // AA-1105: an academy host is never also an agency or a client host (host isolation, root ADR 0022 decision 6).
   const academyHosts = hosts(text(env, "WEB_ACADEMY_HOSTS"));
-  const partnerHosts = hosts(text(env, "WEB_PARTNER_HOSTS")).filter((h) => !academyHosts.includes(h));
+  const partnerHosts = without(hosts(text(env, "WEB_PARTNER_HOSTS")), academyHosts);
   if (partnerHosts.length === 0 && publicOrigin) partnerHosts.push(new URL(publicOrigin).host);
-  const clientHosts = hosts(text(env, "WEB_CLIENT_HOSTS")).filter((h) => !partnerHosts.includes(h) && !academyHosts.includes(h));
+  const clientHosts = without(hosts(text(env, "WEB_CLIENT_HOSTS")), [...partnerHosts, ...academyHosts]);
   const contentStudioUrl = origin(text(env, "CONTENT_STUDIO_URL"), local) ?? "";
   const cisApiUrl = origin(text(env, "CIS_API_URL"), local) ?? "";
 
@@ -170,26 +175,11 @@ export function loadConfig(env: Env = process.env): WebConfig {
   if (!publicOrigin) staffProblems.push("WEB_PUBLIC_ORIGIN");
   if (!crmApiOrigin) staffProblems.push("CRM_API_ORIGIN");
 
-  // AA-1105: the AA Academy. Its own client and its own cookie key; never the agency's or the staff console's values.
-  const academyProblems: string[] = [];
-  if (academyHosts.length === 0) academyProblems.push("WEB_ACADEMY_HOSTS");
-  const academyCognitoDomain = origin(text(env, "ACADEMY_COGNITO_DOMAIN"), false) ?? "";
-  if (!academyCognitoDomain) academyProblems.push("ACADEMY_COGNITO_DOMAIN");
-  const academyCognitoClientId = text(env, "ACADEMY_COGNITO_CLIENT_ID");
-  if (
-    !/^[A-Za-z0-9]{1,128}$/.test(academyCognitoClientId) ||
-    academyCognitoClientId === cognitoClientId ||
-    academyCognitoClientId === staffCognitoClientId
-  ) {
-    academyProblems.push("ACADEMY_COGNITO_CLIENT_ID");
-  }
-  const academyCognitoClientSecret = text(env, "ACADEMY_COGNITO_CLIENT_SECRET");
-  if (!academyCognitoClientSecret) academyProblems.push("ACADEMY_COGNITO_CLIENT_SECRET");
-  const academySessionSecret = text(env, "ACADEMY_SESSION_SECRET");
-  if (academySessionSecret.length < MIN_SECRET || academySessionSecret === sessionSecret || academySessionSecret === staffSessionSecret) {
-    academyProblems.push("ACADEMY_SESSION_SECRET");
-  }
-  if (!cisApiUrl) academyProblems.push("CIS_API_URL");
+  const academy = loadAcademy(env, academyHosts, {
+    clientIds: [cognitoClientId, staffCognitoClientId],
+    secrets: [sessionSecret, staffSessionSecret],
+    cisApiUrl,
+  });
   return {
     environment,
     publicOrigin,
@@ -215,6 +205,34 @@ export function loadConfig(env: Env = process.env): WebConfig {
     staffAuthConfigured: staffProblems.length === 0,
     staffProblems,
     academyHosts,
+    ...academy,
+  };
+}
+
+type AcademyFields = Pick<
+  WebConfig,
+  "academyCognitoDomain" | "academyCognitoClientId" | "academyCognitoClientSecret" | "academySessionSecret" | "academyAuthConfigured" | "academyProblems"
+>;
+
+/**
+ * AA-1105: the AA Academy's values. Its own client and its own cookie key: never the agency's or the staff console's
+ * (`others`), and the CIS API origin where the learning API lives. Any problem turns the academy off (names only).
+ */
+function loadAcademy(env: Env, academyHosts: string[], others: { clientIds: string[]; secrets: string[]; cisApiUrl: string }): AcademyFields {
+  const academyCognitoDomain = origin(text(env, "ACADEMY_COGNITO_DOMAIN"), false) ?? "";
+  const academyCognitoClientId = text(env, "ACADEMY_COGNITO_CLIENT_ID");
+  const academyCognitoClientSecret = text(env, "ACADEMY_COGNITO_CLIENT_SECRET");
+  const academySessionSecret = text(env, "ACADEMY_SESSION_SECRET");
+  const checks: [boolean, string][] = [
+    [academyHosts.length > 0, "WEB_ACADEMY_HOSTS"],
+    [Boolean(academyCognitoDomain), "ACADEMY_COGNITO_DOMAIN"],
+    [/^[A-Za-z0-9]{1,128}$/.test(academyCognitoClientId) && !others.clientIds.includes(academyCognitoClientId), "ACADEMY_COGNITO_CLIENT_ID"],
+    [Boolean(academyCognitoClientSecret), "ACADEMY_COGNITO_CLIENT_SECRET"],
+    [academySessionSecret.length >= MIN_SECRET && !others.secrets.includes(academySessionSecret), "ACADEMY_SESSION_SECRET"],
+    [Boolean(others.cisApiUrl), "CIS_API_URL"],
+  ];
+  const academyProblems = checks.filter(([ok]) => !ok).map(([, name]) => name);
+  return {
     academyCognitoDomain,
     academyCognitoClientId,
     academyCognitoClientSecret,

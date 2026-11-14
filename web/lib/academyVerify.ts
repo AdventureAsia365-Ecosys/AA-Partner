@@ -47,29 +47,38 @@ export class VisitorLimiter {
     if (n > 0) this.limit = n;
   }
 
+  /** This minute's count of `visitor`. */
+  private count(visitor: string, minute: number): number {
+    const w = this.windows.get(visitor);
+    return w && w.minute === minute ? w.count : 0;
+  }
+
+  /** Seconds to wait when `visitor` may not call now, or null. */
+  private refusal(visitor: string, nowMs: number, minute: number): number | null {
+    if (this.limit === null) return (this.inflight.get(visitor) ?? 0) > 0 ? 1 : null;
+    return this.count(visitor, minute) >= this.limit ? 60 - (Math.floor(nowMs / 1000) % 60) : null;
+  }
+
+  private release(visitor: string): void {
+    const n = (this.inflight.get(visitor) ?? 1) - 1;
+    if (n <= 0) this.inflight.delete(visitor);
+    else this.inflight.set(visitor, n);
+  }
+
   /** Admit one verify call of `visitor` now, or say when to retry. `release()` must be called when the call ends. */
   admit(visitor: string, nowMs: number = Date.now()): { ok: true; release: () => void } | { ok: false; retryAfterS: number } {
     const minute = Math.floor(nowMs / 60_000);
-    if (this.limit === null) {
-      if ((this.inflight.get(visitor) ?? 0) > 0) return { ok: false, retryAfterS: 1 };
-    } else {
-      const w = this.windows.get(visitor);
-      const count = w && w.minute === minute ? w.count : 0;
-      if (count >= this.limit) return { ok: false, retryAfterS: 60 - (Math.floor(nowMs / 1000) % 60) };
-    }
+    const wait = this.refusal(visitor, nowMs, minute);
+    if (wait !== null) return { ok: false, retryAfterS: wait };
     if (this.windows.size > MAX_TRACKED_VISITORS) this.windows.clear();
-    const w = this.windows.get(visitor);
-    this.windows.set(visitor, { minute, count: w && w.minute === minute ? w.count + 1 : 1 });
+    this.windows.set(visitor, { minute, count: this.count(visitor, minute) + 1 });
     this.inflight.set(visitor, (this.inflight.get(visitor) ?? 0) + 1);
     let released = false;
     return {
       ok: true,
       release: () => {
-        if (released) return;
+        if (!released) this.release(visitor);
         released = true;
-        const n = (this.inflight.get(visitor) ?? 1) - 1;
-        if (n <= 0) this.inflight.delete(visitor);
-        else this.inflight.set(visitor, n);
       },
     };
   }
@@ -87,6 +96,16 @@ export type VerifyOutcome =
 function retryAfter(raw: string | null): number {
   const n = Number((raw ?? "").trim());
   return Number.isFinite(n) && n > 0 && n <= 3600 ? Math.ceil(n) : 60;
+}
+
+async function outcomeOf(res: Response): Promise<VerifyOutcome> {
+  if (res.status === 200) {
+    const json = (await res.json().catch(() => null)) as CertificateVerify | null;
+    return typeof json?.path_title === "string" ? { kind: "ok", certificate: json } : { kind: "unavailable" };
+  }
+  if (res.status === 404) return { kind: "not_found" };
+  if (res.status === 429) return { kind: "rate_limited", retryAfterS: retryAfter(res.headers.get("retry-after")) };
+  return { kind: "unavailable" };
 }
 
 /**
@@ -113,13 +132,7 @@ export async function verifyCertificate(
       signal: AbortSignal.timeout(VERIFY_TIMEOUT_MS),
     });
     limiter.learn(res.headers.get(LIMIT_HEADER));
-    if (res.status === 200) {
-      const json = (await res.json().catch(() => null)) as CertificateVerify | null;
-      return json && typeof json.path_title === "string" ? { kind: "ok", certificate: json } : { kind: "unavailable" };
-    }
-    if (res.status === 404) return { kind: "not_found" };
-    if (res.status === 429) return { kind: "rate_limited", retryAfterS: retryAfter(res.headers.get("retry-after")) };
-    return { kind: "unavailable" };
+    return await outcomeOf(res);
   } catch {
     return { kind: "unavailable" };
   } finally {

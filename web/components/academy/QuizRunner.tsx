@@ -8,10 +8,10 @@
 import { useState } from "react";
 import { Badge, Button, Checkbox, K, Radio, Section } from "@/app/_kit";
 import { LocalTime } from "@/components/academy/LocalTime";
-import { quizResponses, toggleChoice, verifyUrl, type QuizAttempt, type QuizResult } from "@/lib/academy";
+import { quizResponses, toggleChoice, verifyUrl, type GradedItem, type QuizAttempt, type QuizItem, type QuizResult } from "@/lib/academy";
 import { academySend } from "@/lib/academyClient";
 import type { DateLocale } from "@/lib/dates";
-import { say, type AcademyDict } from "@/lib/i18nAcademy";
+import { say, type AcademyDict, type AcademyKey } from "@/lib/i18nAcademy";
 
 type Phase =
   | { kind: "idle" }
@@ -21,7 +21,8 @@ type Phase =
   | { kind: "graded"; attempt: QuizAttempt; result: QuizResult }
   | { kind: "refused"; code: string; retryAt: string | null };
 
-function WithTime({ text, iso, locale }: { text: string; iso: string; locale: DateLocale }) {
+/** A message with a {time} slot filled by the reader's local time. */
+export function WithTime({ text, iso, locale }: { text: string; iso: string; locale: DateLocale }) {
   const [before, after = ""] = text.split("{time}");
   return (
     <>
@@ -30,6 +31,150 @@ function WithTime({ text, iso, locale }: { text: string; iso: string; locale: Da
       {after}
     </>
   );
+}
+
+const REFUSAL_KEY: Record<string, AcademyKey> = {
+  prerequisites_open: "academy.quiz.prerequisites",
+  attempt_closed: "academy.quiz.closed",
+  conflict: "academy.quiz.closed",
+  not_found: "academy.notFound",
+};
+
+/** Whether a refusal lets the learner simply start again (the attempt was closed or replaced). */
+export function restartable(code: string): boolean {
+  return code === "attempt_closed" || code === "conflict";
+}
+
+function Refused({ title, code, retryAt, locale, dict, onRetry, back }: { title: string; code: string; retryAt: string | null; locale: DateLocale; dict: AcademyDict; onRetry: () => void; back: React.ReactNode }) {
+  const wait = code === "retake_wait" && retryAt;
+  return (
+    <Section title={title} testId="academy-quiz-refused">
+      <div style={{ display: "grid", gap: 12, justifyItems: "start" }}>
+        <p role="alert" style={{ margin: 0, fontSize: 13.5, color: K.amber }} data-testid="academy-quiz-refused-message">
+          {wait ? <WithTime text={dict["academy.quiz.retakeWait"]} iso={retryAt} locale={locale} /> : dict[REFUSAL_KEY[code] ?? "academy.error"]}
+        </p>
+        {restartable(code) && <Button onClick={onRetry}>{dict["academy.retry"]}</Button>}
+        {back}
+      </div>
+    </Section>
+  );
+}
+
+function Intro({ title, starting, dict, onStart, back }: { title: string; starting: boolean; dict: AcademyDict; onStart: () => void; back: React.ReactNode }) {
+  return (
+    <Section title={title} testId="academy-quiz-intro">
+      <div style={{ display: "grid", gap: 12, justifyItems: "start" }}>
+        <p style={{ margin: 0, fontSize: 13.5, color: K.body }}>{dict["academy.quiz.intro"]}</p>
+        <span data-testid="academy-quiz-start">
+          <Button variant="primary" onClick={onStart} disabled={starting}>
+            {starting ? dict["academy.quiz.starting"] : dict["academy.quiz.start"]}
+          </Button>
+        </span>
+        {back}
+      </div>
+    </Section>
+  );
+}
+
+function ResultPanel({ title, result, origin, locale, dict, back }: { title: string; result: QuizResult; origin: string; locale: DateLocale; dict: AcademyDict; back: React.ReactNode }) {
+  const link = result.certificate ? verifyUrl(origin, result.certificate.verify_path) : null;
+  return (
+    <Section title={title} testId="academy-quiz-result">
+      <div style={{ display: "grid", gap: 10, justifyItems: "start" }}>
+        <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <Badge tone={result.passed ? "success" : "warning"}>{result.passed ? dict["academy.quiz.resultPassed"] : dict["academy.quiz.resultFailed"]}</Badge>
+          <span style={{ fontSize: 14, color: K.ink, fontWeight: 600 }} data-testid="academy-quiz-score">
+            {say(dict, "academy.quiz.score", { score: Math.round(result.score_pct), pct: result.pass_mark_pct })}
+          </span>
+        </span>
+        {result.module_complete && <p style={{ margin: 0, fontSize: 13.5, color: K.success }}>{dict["academy.quiz.moduleComplete"]}</p>}
+        {!result.passed && result.retake_at && (
+          <p style={{ margin: 0, fontSize: 13.5, color: K.amber }} data-testid="academy-quiz-retake">
+            <WithTime text={dict["academy.quiz.retakeWait"]} iso={result.retake_at} locale={locale} />
+          </p>
+        )}
+        {link && (
+          <div style={{ display: "grid", gap: 4 }} data-testid="academy-quiz-certificate">
+            <span style={{ fontSize: 13.5, color: K.body }}>{dict["academy.quiz.certificate"]}</span>
+            <code style={{ fontSize: 12.5, overflowWrap: "anywhere", color: K.ink }}>{link}</code>
+          </div>
+        )}
+        {back}
+      </div>
+    </Section>
+  );
+}
+
+/** The correct answer, the explanation and the source of one graded item. */
+function Feedback({ item, g, n, dict }: { item: QuizItem; g: GradedItem; n: number; dict: AcademyDict }) {
+  const answer = g.correct_choices.map((c) => item.choices[c]).filter(Boolean).join("; ");
+  return (
+    <div style={{ display: "grid", gap: 4, marginTop: 6 }} data-testid={`academy-quiz-feedback-${n}`}>
+      <span>
+        <Badge tone={g.correct ? "success" : "danger"}>{g.correct ? dict["academy.quiz.correct"] : dict["academy.quiz.wrong"]}</Badge>
+      </span>
+      {!g.correct && <span style={{ fontSize: 13, color: K.body }}>{say(dict, "academy.quiz.correctAnswer", { answer })}</span>}
+      {g.explain && <span style={{ fontSize: 13, color: K.body }}>{g.explain}</span>}
+      {g.source_ref && <span style={{ fontSize: 12, color: K.muted, overflowWrap: "anywhere" }}>{say(dict, "academy.quiz.source", { ref: g.source_ref })}</span>}
+    </div>
+  );
+}
+
+/** One question: its choices (Radio for one answer, Checkbox for several) and, once graded, its feedback. */
+export function ItemCard({
+  item,
+  n,
+  total,
+  chosen,
+  graded,
+  locked,
+  onToggle,
+  dict,
+  namePrefix = "q",
+}: {
+  item: QuizItem;
+  n: number;
+  total: number;
+  chosen: number[];
+  graded: GradedItem | undefined;
+  locked: boolean;
+  onToggle: (choice: number) => void;
+  dict: AcademyDict;
+  namePrefix?: string;
+}) {
+  const Control = item.kind === "single" ? Radio : Checkbox;
+  return (
+    <Section title={total > 0 ? say(dict, "academy.quiz.question", { n, total }) : undefined} testId={`academy-quiz-item-${n}`}>
+      <fieldset style={{ border: "none", margin: 0, padding: 0, display: "grid", gap: 8, minWidth: 0 }} disabled={locked}>
+        <legend style={{ fontSize: 14, color: K.ink, fontWeight: 600, marginBottom: 4, padding: 0 }}>{item.prompt}</legend>
+        <span style={{ fontSize: 12, color: K.muted }}>{item.kind === "single" ? dict["academy.quiz.single"] : dict["academy.quiz.multiple"]}</span>
+        {item.choices.map((choice, ci) => (
+          <div key={ci} style={{ display: "flex", alignItems: "center", gap: 8, color: graded?.correct_choices.includes(ci) ? K.success : K.body }}>
+            <Control name={`${namePrefix}-${item.id}`} checked={chosen.includes(ci)} onChange={() => onToggle(ci)} label={choice} />
+          </div>
+        ))}
+        {graded && <Feedback item={item} g={graded} n={n} dict={dict} />}
+      </fieldset>
+    </Section>
+  );
+}
+
+function SubmitBar({ unanswered, submitting, dict, onSubmit }: { unanswered: number; submitting: boolean; dict: AcademyDict; onSubmit: () => void }) {
+  return (
+    <div style={{ display: "grid", gap: 8, justifyItems: "start" }}>
+      {unanswered > 0 && <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{say(dict, "academy.quiz.unanswered", { n: unanswered })}</p>}
+      <span data-testid="academy-quiz-submit">
+        <Button variant="primary" onClick={onSubmit} disabled={submitting}>
+          {submitting ? dict["academy.quiz.submitting"] : dict["academy.quiz.submit"]}
+        </Button>
+      </span>
+    </div>
+  );
+}
+
+function attemptPath(scope: "module" | "final", targetId: string): string {
+  const id = encodeURIComponent(targetId);
+  return scope === "module" ? `modules/${id}/quiz/attempts` : `paths/${id}/final-quiz/attempts`;
 }
 
 export function QuizRunner({
@@ -53,13 +198,16 @@ export function QuizRunner({
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [answers, setAnswers] = useState<Record<string, number[]>>({});
 
+  const refused = (status: number, problem: { error: string; retry_at?: string | null }) => {
+    if (status !== 401) setPhase({ kind: "refused", code: problem.error, retryAt: problem.retry_at ?? null });
+  };
+
   async function start() {
     setPhase({ kind: "starting" });
     setAnswers({});
-    const path = scope === "module" ? `modules/${encodeURIComponent(targetId)}/quiz/attempts` : `paths/${encodeURIComponent(targetId)}/final-quiz/attempts`;
-    const res = await academySend<QuizAttempt>("POST", path);
+    const res = await academySend<QuizAttempt>("POST", attemptPath(scope, targetId));
     if (res.ok) setPhase({ kind: "answering", attempt: res.data });
-    else if (res.status !== 401) setPhase({ kind: "refused", code: res.problem.error, retryAt: res.problem.retry_at ?? null });
+    else refused(res.status, res.problem);
   }
 
   async function submit(attempt: QuizAttempt) {
@@ -68,7 +216,7 @@ export function QuizRunner({
       body: { responses: quizResponses(attempt.items, answers) },
     });
     if (res.ok) setPhase({ kind: "graded", attempt, result: res.data });
-    else if (res.status !== 401) setPhase({ kind: "refused", code: res.problem.error, retryAt: res.problem.retry_at ?? null });
+    else refused(res.status, res.problem);
   }
 
   const title = scope === "module" ? `${dict["academy.quiz.title"]} · ${targetId}` : dict["academy.quiz.finalTitle"];
@@ -79,45 +227,10 @@ export function QuizRunner({
   );
 
   if (phase.kind === "idle" || phase.kind === "starting") {
-    return (
-      <Section title={title} testId="academy-quiz-intro">
-        <div style={{ display: "grid", gap: 12, justifyItems: "start" }}>
-          <p style={{ margin: 0, fontSize: 13.5, color: K.body }}>{dict["academy.quiz.intro"]}</p>
-          <span data-testid="academy-quiz-start">
-            <Button variant="primary" onClick={start} disabled={phase.kind === "starting"}>
-              {phase.kind === "starting" ? dict["academy.quiz.starting"] : dict["academy.quiz.start"]}
-            </Button>
-          </span>
-          {back}
-        </div>
-      </Section>
-    );
+    return <Intro title={title} starting={phase.kind === "starting"} dict={dict} onStart={start} back={back} />;
   }
-
   if (phase.kind === "refused") {
-    const message =
-      phase.code === "retake_wait" && phase.retryAt ? (
-        <WithTime text={dict["academy.quiz.retakeWait"]} iso={phase.retryAt} locale={locale} />
-      ) : phase.code === "prerequisites_open" ? (
-        dict["academy.quiz.prerequisites"]
-      ) : phase.code === "attempt_closed" || phase.code === "conflict" ? (
-        dict["academy.quiz.closed"]
-      ) : phase.code === "not_found" ? (
-        dict["academy.notFound"]
-      ) : (
-        dict["academy.error"]
-      );
-    return (
-      <Section title={title} testId="academy-quiz-refused">
-        <div style={{ display: "grid", gap: 12, justifyItems: "start" }}>
-          <p role="alert" style={{ margin: 0, fontSize: 13.5, color: K.amber }} data-testid="academy-quiz-refused-message">
-            {message}
-          </p>
-          {(phase.code === "attempt_closed" || phase.code === "conflict") && <Button onClick={start}>{dict["academy.retry"]}</Button>}
-          {back}
-        </div>
-      </Section>
-    );
+    return <Refused title={title} code={phase.code} retryAt={phase.retryAt} locale={locale} dict={dict} onRetry={start} back={back} />;
   }
 
   const attempt = phase.attempt;
@@ -127,83 +240,21 @@ export function QuizRunner({
 
   return (
     <div style={{ display: "grid", gap: 16 }} data-testid="academy-quiz">
-      {graded && (
-        <Section title={title} testId="academy-quiz-result">
-          <div style={{ display: "grid", gap: 10, justifyItems: "start" }}>
-            <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <Badge tone={graded.passed ? "success" : "warning"}>
-                {graded.passed ? dict["academy.quiz.resultPassed"] : dict["academy.quiz.resultFailed"]}
-              </Badge>
-              <span style={{ fontSize: 14, color: K.ink, fontWeight: 600 }} data-testid="academy-quiz-score">
-                {say(dict, "academy.quiz.score", { score: Math.round(graded.score_pct), pct: graded.pass_mark_pct })}
-              </span>
-            </span>
-            {graded.module_complete && <p style={{ margin: 0, fontSize: 13.5, color: K.success }}>{dict["academy.quiz.moduleComplete"]}</p>}
-            {!graded.passed && graded.retake_at && (
-              <p style={{ margin: 0, fontSize: 13.5, color: K.amber }} data-testid="academy-quiz-retake">
-                <WithTime text={dict["academy.quiz.retakeWait"]} iso={graded.retake_at} locale={locale} />
-              </p>
-            )}
-            {graded.certificate && verifyUrl(origin, graded.certificate.verify_path) && (
-              <div style={{ display: "grid", gap: 4 }} data-testid="academy-quiz-certificate">
-                <span style={{ fontSize: 13.5, color: K.body }}>{dict["academy.quiz.certificate"]}</span>
-                <code style={{ fontSize: 12.5, overflowWrap: "anywhere", color: K.ink }}>{verifyUrl(origin, graded.certificate.verify_path)}</code>
-              </div>
-            )}
-            {back}
-          </div>
-        </Section>
-      )}
-      {attempt.items.map((item, idx) => {
-        const g = byItem.get(item.id);
-        const chosen = graded ? (g?.chosen ?? []) : (answers[item.id] ?? []);
-        const Control = item.kind === "single" ? Radio : Checkbox;
-        return (
-          <Section key={item.id} title={say(dict, "academy.quiz.question", { n: idx + 1, total: attempt.items.length })} testId={`academy-quiz-item-${idx + 1}`}>
-            <fieldset style={{ border: "none", margin: 0, padding: 0, display: "grid", gap: 8, minWidth: 0 }} disabled={graded !== null || phase.kind === "submitting"}>
-              <legend style={{ fontSize: 14, color: K.ink, fontWeight: 600, marginBottom: 4, padding: 0 }}>{item.prompt}</legend>
-              <span style={{ fontSize: 12, color: K.muted }}>{item.kind === "single" ? dict["academy.quiz.single"] : dict["academy.quiz.multiple"]}</span>
-              {item.choices.map((choice, ci) => {
-                const right = g?.correct_choices.includes(ci);
-                return (
-                  <div key={ci} style={{ display: "flex", alignItems: "center", gap: 8, color: g ? (right ? K.success : K.body) : K.body }}>
-                    <Control
-                      name={`q-${item.id}`}
-                      checked={chosen.includes(ci)}
-                      onChange={() => setAnswers((a) => ({ ...a, [item.id]: toggleChoice(a[item.id] ?? [], ci, item.kind) }))}
-                      label={choice}
-                    />
-                  </div>
-                );
-              })}
-              {g && (
-                <div style={{ display: "grid", gap: 4, marginTop: 6 }} data-testid={`academy-quiz-feedback-${idx + 1}`}>
-                  <span>
-                    <Badge tone={g.correct ? "success" : "danger"}>{g.correct ? dict["academy.quiz.correct"] : dict["academy.quiz.wrong"]}</Badge>
-                  </span>
-                  {!g.correct && (
-                    <span style={{ fontSize: 13, color: K.body }}>
-                      {say(dict, "academy.quiz.correctAnswer", { answer: g.correct_choices.map((c) => item.choices[c]).filter(Boolean).join("; ") })}
-                    </span>
-                  )}
-                  {g.explain && <span style={{ fontSize: 13, color: K.body }}>{g.explain}</span>}
-                  {g.source_ref && <span style={{ fontSize: 12, color: K.muted, overflowWrap: "anywhere" }}>{say(dict, "academy.quiz.source", { ref: g.source_ref })}</span>}
-                </div>
-              )}
-            </fieldset>
-          </Section>
-        );
-      })}
-      {!graded && (
-        <div style={{ display: "grid", gap: 8, justifyItems: "start" }}>
-          {unanswered > 0 && <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{say(dict, "academy.quiz.unanswered", { n: unanswered })}</p>}
-          <span data-testid="academy-quiz-submit">
-            <Button variant="primary" onClick={() => submit(attempt)} disabled={phase.kind === "submitting"}>
-              {phase.kind === "submitting" ? dict["academy.quiz.submitting"] : dict["academy.quiz.submit"]}
-            </Button>
-          </span>
-        </div>
-      )}
+      {graded && <ResultPanel title={title} result={graded} origin={origin} locale={locale} dict={dict} back={back} />}
+      {attempt.items.map((item, idx) => (
+        <ItemCard
+          key={item.id}
+          item={item}
+          n={idx + 1}
+          total={attempt.items.length}
+          chosen={graded ? (byItem.get(item.id)?.chosen ?? []) : (answers[item.id] ?? [])}
+          graded={byItem.get(item.id)}
+          locked={graded !== null || phase.kind === "submitting"}
+          onToggle={(ci) => setAnswers((a) => ({ ...a, [item.id]: toggleChoice(a[item.id] ?? [], ci, item.kind) }))}
+          dict={dict}
+        />
+      ))}
+      {!graded && <SubmitBar unanswered={unanswered} submitting={phase.kind === "submitting"} dict={dict} onSubmit={() => submit(attempt)} />}
     </div>
   );
 }

@@ -22,6 +22,14 @@ function asProblem(json: unknown): Problem | null {
   return { error, message: typeof message === "string" ? message : "", retry_at: typeof retryAt === "string" ? retryAt : null };
 }
 
+async function answer<T>(res: Response): Promise<LearnResult<T>> {
+  const json = (await res.json().catch(() => null)) as unknown;
+  if (res.ok) return { ok: true, status: res.status, data: json as T };
+  const problem = asProblem(json);
+  if (res.status === 401) return { ok: false, status: 401, kind: "unauthorized", problem };
+  return { ok: false, status: res.status, kind: errorKind(res.status, problem?.error), problem };
+}
+
 /** GET (or POST) one allow-listed learning route with the learner's token. */
 export async function learnCall<T>(
   cisApiUrl: string,
@@ -31,11 +39,10 @@ export async function learnCall<T>(
   opts: { query?: URLSearchParams; body?: unknown; fetchImpl?: typeof fetch } = {},
 ): Promise<LearnResult<T>> {
   if (!cisApiUrl || !matchAcademyBff(method, subPath)) return { ok: false, status: 404, kind: "not_found", problem: null };
-  const qs = opts.query && opts.query.toString() ? `?${opts.query.toString()}` : "";
+  const qs = opts.query?.toString() ? `?${opts.query.toString()}` : "";
   const body = opts.body === undefined ? undefined : JSON.stringify(opts.body);
-  let res: Response;
   try {
-    res = await (opts.fetchImpl ?? fetch)(`${cisApiUrl}${LEARN_API_PREFIX}/${subPath}${qs}`, {
+    const res = await (opts.fetchImpl ?? fetch)(`${cisApiUrl}${LEARN_API_PREFIX}/${subPath}${qs}`, {
       method,
       headers: academyUpstreamHeaders(accessToken, randomUUID(), body !== undefined),
       body,
@@ -43,12 +50,8 @@ export async function learnCall<T>(
       redirect: "manual",
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     });
+    return await answer<T>(res);
   } catch {
     return { ok: false, status: 0, kind: "unavailable", problem: null };
   }
-  const json = (await res.json().catch(() => null)) as unknown;
-  if (res.ok) return { ok: true, status: res.status, data: json as T };
-  const problem = asProblem(json);
-  if (res.status === 401) return { ok: false, status: 401, kind: "unauthorized", problem };
-  return { ok: false, status: res.status, kind: errorKind(res.status, problem?.error), problem };
 }

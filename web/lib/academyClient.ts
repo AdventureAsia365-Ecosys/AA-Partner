@@ -9,16 +9,33 @@ import { ACADEMY_CALL_HEADER } from "./academyBff";
 
 export type AcademyResult<T> = { ok: true; status: number; data: T } | { ok: false; status: number; problem: Problem };
 
+function headersFor(withBody: boolean): Record<string, string> {
+  const h: Record<string, string> = { Accept: "application/json", [ACADEMY_CALL_HEADER]: "1" };
+  if (withBody) h["Content-Type"] = "application/json";
+  return h;
+}
+
+function text(json: Record<string, unknown> | null, key: string): string | null {
+  const v = json ? json[key] : null;
+  return typeof v === "string" ? v : null;
+}
+
+/** A refused call: the learning API's Problem body ({error, message, retry_at}) or the BFF's own {detail}. */
+export function problemOf(json: Record<string, unknown> | null): Problem {
+  return { error: text(json, "error") ?? text(json, "detail") ?? "error", message: text(json, "message") ?? "", retry_at: text(json, "retry_at") };
+}
+
+function goRefresh(): void {
+  window.location.assign(`/academy/auth/refresh?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+}
+
 export async function academySend<T>(method: "GET" | "POST", path: string, opts: { body?: unknown; query?: URLSearchParams } = {}): Promise<AcademyResult<T>> {
-  const qs = opts.query && opts.query.toString() ? `?${opts.query.toString()}` : "";
+  const qs = opts.query?.toString() ? `?${opts.query.toString()}` : "";
   let res: Response;
   try {
     res = await fetch(`/academy/bff/${path}${qs}`, {
       method,
-      headers:
-        opts.body === undefined
-          ? { Accept: "application/json", [ACADEMY_CALL_HEADER]: "1" }
-          : { Accept: "application/json", "Content-Type": "application/json", [ACADEMY_CALL_HEADER]: "1" },
+      headers: headersFor(opts.body !== undefined),
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
       credentials: "same-origin",
     });
@@ -26,15 +43,9 @@ export async function academySend<T>(method: "GET" | "POST", path: string, opts:
     return { ok: false, status: 0, problem: { error: "unavailable", message: "" } };
   }
   if (res.status === 401 && typeof window !== "undefined") {
-    window.location.assign(`/academy/auth/refresh?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+    goRefresh();
     return { ok: false, status: 401, problem: { error: "unauthorized", message: "" } };
   }
   const json = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-  if (!res.ok) {
-    // The learning API's Problem body ({error, message, retry_at}) or the BFF's own {detail}.
-    const error = typeof json?.error === "string" ? json.error : typeof json?.detail === "string" ? json.detail : "error";
-    const retryAt = typeof json?.retry_at === "string" ? json.retry_at : null;
-    return { ok: false, status: res.status, problem: { error, message: typeof json?.message === "string" ? json.message : "", retry_at: retryAt } };
-  }
-  return { ok: true, status: res.status, data: json as T };
+  return res.ok ? { ok: true, status: res.status, data: json as T } : { ok: false, status: res.status, problem: problemOf(json) };
 }

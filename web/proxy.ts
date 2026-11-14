@@ -134,16 +134,15 @@ export function gate(request: NextRequest): NextResponse {
   // AA-979 P2b: the public origin of THIS host (partner-dev. or portal.), so the refresh redirect stays on it.
   const cfg = forHost(webConfig(), request.headers.get("host"));
   const kind = classifyHost(request.headers.get("host"), cfg);
-  if (kind === "unknown") return notFound();
-  // AA-1105: the academy host serves the academy only (see the header).
-  if (kind === "academy") return academyGate(request, cfg);
+  // Unknown hosts (404) and, AA-1105, everything the academy decides (see the header).
+  const early = hostRoute(request, cfg, kind);
+  if (early) return early;
   const ancestors = formKey(pathname) ? "'self'" : undefined;
   if (kind === "client") return clientPathAllowed(pathname) ? pass(request, kind, cfg.cognitoDomain, ancestors) : notFound();
 
-  // Partner host. Client pages (/c/*, the trip page /trip/*) live only on the client host, the academy pages only on
-  // the academy host (local development serves all of them on localhost).
+  // Partner host. Client pages (/c/*, the trip page /trip/*) live only on the client host (local development serves
+  // both on localhost).
   const localDev = cfg.environment === "local" || cfg.environment === "test";
-  if (isAcademyPath(pathname)) return localDev ? academyGate(request, cfg) : notFound();
   if (clientOnlyPath(pathname) && !localDev) return notFound();
   if (ancestors) return pass(request, kind, cfg.cognitoDomain, ancestors);
   if (isStaffPath(pathname)) return staffGate(request, cfg);
@@ -185,6 +184,17 @@ function staffGate(request: NextRequest, cfg: ReturnType<typeof forHost>): NextR
   const res = NextResponse.redirect(target, 307);
   res.headers.set("Cache-Control", "no-store");
   return res;
+}
+
+/**
+ * The decisions made by the Host alone: an unknown host is 404; the academy host goes to its own gate; an academy path
+ * on another host is 404 (local development serves it on localhost). Null: the partner or client rules decide.
+ */
+function hostRoute(request: NextRequest, cfg: WebConfig, kind: HostKind): NextResponse | null {
+  if (kind === "unknown") return notFound();
+  if (kind === "academy") return academyGate(request, cfg);
+  if (!isAcademyPath(request.nextUrl.pathname)) return null;
+  return cfg.environment === "local" || cfg.environment === "test" ? academyGate(request, cfg) : notFound();
 }
 
 /**

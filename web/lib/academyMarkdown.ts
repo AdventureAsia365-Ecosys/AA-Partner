@@ -30,86 +30,104 @@ const RULE_RE = /^\s*([-*_])(\s*\1){2,}\s*$/;
 const FENCE_RE = /^\s*(```|~~~)/;
 const TABLE_RE = /^\s*\|.*\|\s*$/;
 
-export function parseBlocks(text: string): MdBlock[] {
-  const blocks: MdBlock[] = [];
-  let cur: MdBlock | null = null;
-  let fence: string[] | null = null;
-  const flush = () => {
-    if (cur) blocks.push(cur);
-    cur = null;
-  };
-  for (const raw of (text ?? "").split(/\r?\n/)) {
-    if (fence !== null) {
-      if (FENCE_RE.test(raw)) {
-        blocks.push({ kind: "code", text: fence.join("\n") });
-        fence = null;
-      } else fence.push(raw);
-      continue;
-    }
-    if (FENCE_RE.test(raw)) {
-      flush();
-      fence = [];
-      continue;
-    }
-    if (!raw.trim()) {
-      flush();
-      continue;
-    }
-    const c = cur as MdBlock | null;
-    if (TABLE_RE.test(raw)) {
-      if (c && c.kind === "table") c.text += `\n${raw.trim()}`;
-      else {
-        flush();
-        cur = { kind: "table", text: raw.trim() };
-      }
-      continue;
-    }
-    if (RULE_RE.test(raw)) {
-      flush();
-      blocks.push({ kind: "rule" });
-      continue;
-    }
-    const h = HEADING_RE.exec(raw);
-    if (h) {
-      flush();
-      blocks.push({ kind: "heading", level: h[1].length, text: h[2] });
-      continue;
-    }
-    const b = BULLET_RE.exec(raw);
-    const o = b ? null : ORDERED_RE.exec(raw);
-    if (b || o) {
-      const kind = b ? "ul" : "ol";
-      const item = (b ?? o)![1];
-      if (c && c.kind === kind) c.items.push(item);
-      else {
-        flush();
-        cur = { kind, items: [item] };
-      }
-      continue;
-    }
-    const q = QUOTE_RE.exec(raw);
-    if (q) {
-      if (c && c.kind === "quote") c.lines.push(q[1]);
-      else {
-        flush();
-        cur = { kind: "quote", lines: [q[1]] };
-      }
-      continue;
-    }
-    // A wrapped line of a list item continues that item.
-    if (c && (c.kind === "ul" || c.kind === "ol") && /^\s{2,}\S/.test(raw)) {
-      c.items[c.items.length - 1] += ` ${raw.trim()}`;
-      continue;
-    }
-    if (c && c.kind === "para") c.lines.push(raw.trim());
+type Grouped = Extract<MdBlock, { kind: "para" | "quote" | "ul" | "ol" | "table" }>;
+
+/** Line by line: each kind of line has its own small step (complexity budget of the code-health ratchet). */
+class BlockReader {
+  readonly blocks: MdBlock[] = [];
+  private cur: Grouped | null = null;
+  private fence: string[] | null = null;
+
+  flush(): void {
+    if (this.cur) this.blocks.push(this.cur);
+    this.cur = null;
+  }
+
+  /** Start a new grouped block unless the current one is of the same kind (then `add` extends it). */
+  private group(kind: Grouped["kind"], add: (b: Grouped) => void, make: () => Grouped): void {
+    if (this.cur?.kind === kind) add(this.cur);
     else {
-      flush();
-      cur = { kind: "para", lines: [raw.trim()] };
+      this.flush();
+      this.cur = make();
     }
   }
-  if (fence !== null) blocks.push({ kind: "code", text: fence.join("\n") });
-  flush();
-  return blocks;
+
+  private fenced(raw: string): boolean {
+    if (this.fence === null) return false;
+    if (FENCE_RE.test(raw)) {
+      this.blocks.push({ kind: "code", text: this.fence.join("\n") });
+      this.fence = null;
+    } else this.fence.push(raw);
+    return true;
+  }
+
+  private single(raw: string): boolean {
+    if (FENCE_RE.test(raw)) {
+      this.flush();
+      this.fence = [];
+      return true;
+    }
+    if (!raw.trim()) {
+      this.flush();
+      return true;
+    }
+    if (RULE_RE.test(raw) && !TABLE_RE.test(raw)) {
+      this.flush();
+      this.blocks.push({ kind: "rule" });
+      return true;
+    }
+    const h = HEADING_RE.exec(raw);
+    if (!h) return false;
+    this.flush();
+    this.blocks.push({ kind: "heading", level: h[1].length, text: h[2] });
+    return true;
+  }
+
+  private list(raw: string): boolean {
+    const b = BULLET_RE.exec(raw);
+    const m = b ?? ORDERED_RE.exec(raw);
+    if (!m) return false;
+    const kind = b ? "ul" : "ol";
+    this.group(kind, (c) => (c as { items: string[] }).items.push(m[1]), () => ({ kind, items: [m[1]] }));
+    return true;
+  }
+
+  private grouped(raw: string): boolean {
+    if (TABLE_RE.test(raw)) {
+      this.group("table", (c) => ((c as { text: string }).text += `\n${raw.trim()}`), () => ({ kind: "table", text: raw.trim() }));
+      return true;
+    }
+    const q = QUOTE_RE.exec(raw);
+    if (!q) return false;
+    this.group("quote", (c) => (c as { lines: string[] }).lines.push(q[1]), () => ({ kind: "quote", lines: [q[1]] }));
+    return true;
+  }
+
+  /** A wrapped line of a list item continues that item. */
+  private continuation(raw: string): boolean {
+    const c = this.cur;
+    if (!c || (c.kind !== "ul" && c.kind !== "ol") || !/^\s{2,}\S/.test(raw)) return false;
+    c.items[c.items.length - 1] += ` ${raw.trim()}`;
+    return true;
+  }
+
+  line(raw: string): void {
+    if (this.fenced(raw) || this.single(raw) || this.grouped(raw) || this.list(raw) || this.continuation(raw)) return;
+    this.group("para", (c) => (c as { lines: string[] }).lines.push(raw.trim()), () => ({ kind: "para", lines: [raw.trim()] }));
+  }
+
+  end(): MdBlock[] {
+    if (this.fence !== null) this.blocks.push({ kind: "code", text: this.fence.join("\n") });
+    this.fence = null;
+    this.flush();
+    return this.blocks;
+  }
+}
+
+export function parseBlocks(text: string): MdBlock[] {
+  const reader = new BlockReader();
+  for (const raw of (text ?? "").split(/\r?\n/)) reader.line(raw);
+  return reader.end();
 }
 
 // One inline token per match: link, code, bold (** / __), italic (* / _ with a non-word char around it).

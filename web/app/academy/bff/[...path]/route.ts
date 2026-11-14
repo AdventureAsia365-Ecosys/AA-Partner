@@ -9,9 +9,9 @@
 //   5. forwarded to CIS /learn/v1/<path> (only listed query parameters) with the academy token; the learning API's
 //      status and Problem body come back (only Content-Type, never a Set-Cookie).
 import { randomUUID } from "node:crypto";
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { proxyPath } from "@/lib/bffPath";
-import { requestConfig } from "@/lib/config";
+import { requestConfig, type WebConfig } from "@/lib/config";
 import { academyHostAllowed } from "@/lib/hosts";
 import { streamUpstream } from "@/lib/proxyResponse";
 import { json } from "@/lib/respond";
@@ -24,32 +24,32 @@ export const dynamic = "force-dynamic";
 const UPSTREAM_TIMEOUT_MS = 15_000; // technical constant: one learning API call
 const MAX_BODY_BYTES = 64 * 1024; // technical constant: a quiz submission (learn.http.v1 caps it at 200 x 20 choices)
 
-async function handle(request: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
-  const cfg = requestConfig(request);
+/** Steps 0 to 3 (before any cookie): a refusal, or the encoded sub-path to forward. */
+function check(request: NextRequest, cfg: WebConfig, path: string[] | undefined): NextResponse | string {
   if (!academyHostAllowed(request.headers.get("host"), cfg)) return json({ detail: "not_found" }, 404);
   const refused = refuseForeignWrite(cfg, request);
   if (refused) return refused;
   const notPage = academyCallRefusal(request.headers);
   if (notPage) return json({ detail: notPage }, 403);
-  const { path } = await ctx.params;
   const sub = proxyPath(path ?? []);
   if (sub === null) return json({ detail: "invalid_path" }, 400);
-  if (!matchAcademyBff(request.method, sub)) return json({ detail: "not_found" }, 404);
+  return matchAcademyBff(request.method, sub) ? sub : json({ detail: "not_found" }, 404);
+}
 
-  const session = readAcademySession(cfg, request.cookies);
-  if (!academyAccessValid(session)) return json({ detail: "session_expired" }, 401);
+/** The body of a POST (capped), undefined for none; a NextResponse when it is too large. */
+async function bodyOf(request: NextRequest): Promise<string | undefined | NextResponse> {
+  if (request.method !== "POST") return undefined;
+  const body = await request.text();
+  if (Buffer.byteLength(body) > MAX_BODY_BYTES) return json({ detail: "body_too_large" }, 413);
+  return body === "" ? undefined : body;
+}
 
-  let body: string | undefined;
-  if (request.method === "POST") {
-    body = await request.text();
-    if (Buffer.byteLength(body) > MAX_BODY_BYTES) return json({ detail: "body_too_large" }, 413);
-    if (body === "") body = undefined;
-  }
+async function forward(cfg: WebConfig, request: NextRequest, sub: string, token: string, body: string | undefined): Promise<NextResponse> {
   const query = allowedAcademyQuery(sub, request.nextUrl.searchParams).toString();
   try {
     const upstream = await fetch(`${cfg.cisApiUrl}${LEARN_API_PREFIX}/${sub}${query ? `?${query}` : ""}`, {
       method: request.method,
-      headers: academyUpstreamHeaders(session.at, randomUUID(), body !== undefined),
+      headers: academyUpstreamHeaders(token, randomUUID(), body !== undefined),
       body,
       cache: "no-store",
       redirect: "manual",
@@ -62,6 +62,17 @@ async function handle(request: NextRequest, ctx: { params: Promise<{ path: strin
     const timedOut = err instanceof DOMException && err.name === "TimeoutError";
     return json({ detail: timedOut ? "api_timeout" : "api_unreachable" }, timedOut ? 504 : 502);
   }
+}
+
+async function handle(request: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
+  const cfg = requestConfig(request);
+  const sub = check(request, cfg, (await ctx.params).path);
+  if (typeof sub !== "string") return sub;
+  const session = readAcademySession(cfg, request.cookies);
+  if (!academyAccessValid(session)) return json({ detail: "session_expired" }, 401);
+  const body = await bodyOf(request);
+  if (body instanceof NextResponse) return body;
+  return forward(cfg, request, sub, session.at, body);
 }
 
 export const GET = handle;

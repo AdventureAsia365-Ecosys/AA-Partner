@@ -225,12 +225,16 @@ export interface CertificateVerify {
 /** A learner-facing error kind for a refused call (Problem.error, or the BFF's own detail). */
 export type AcademyErrorKind = "not_a_learner" | "partner_not_open" | "unavailable" | "not_found" | "forbidden" | "error";
 
+const KIND_BY_CODE: Record<string, AcademyErrorKind> = {
+  not_a_learner: "not_a_learner",
+  partner_not_open: "partner_not_open",
+  not_found: "not_found",
+  unavailable: "unavailable",
+};
+const KIND_BY_STATUS: Record<number, AcademyErrorKind> = { 0: "unavailable", 403: "forbidden", 404: "not_found", 502: "unavailable", 503: "unavailable", 504: "unavailable" };
+
 export function errorKind(status: number, code: string | null | undefined): AcademyErrorKind {
-  if (code === "not_a_learner" || code === "partner_not_open") return code;
-  if (status === 404 || code === "not_found") return "not_found";
-  if (status === 403) return "forbidden";
-  if (status === 503 || status === 502 || status === 504 || status === 0 || code === "unavailable") return "unavailable";
-  return "error";
+  return KIND_BY_CODE[code ?? ""] ?? KIND_BY_STATUS[status] ?? "error";
 }
 
 /** The tone of a certificate status badge. */
@@ -273,4 +277,11 @@ export function quizResponses(items: readonly QuizItem[], answers: Record<string
 /** The academy URL of a public verify path the API returned ("/verify/<code>"), or null for any other shape. */
 export function verifyUrl(origin: string, verifyPath: string): string | null {
   return /^\/verify\/[A-Za-z0-9_-]{22}$/.test(verifyPath) ? `${origin}${verifyPath}` : null;
+}
+
+/** The lessons before and after `id` in its module's order (null at either end, or when `id` is not in it). */
+export function lessonNeighbours(order: readonly string[], id: string): { prev: string | null; next: string | null } {
+  const at = order.indexOf(id);
+  if (at < 0) return { prev: null, next: null };
+  return { prev: order[at - 1] ?? null, next: order[at + 1] ?? null };
 }

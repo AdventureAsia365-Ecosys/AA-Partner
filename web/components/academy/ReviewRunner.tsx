@@ -4,11 +4,43 @@
 // academyReview.ts), then CIS grades the answer and stores the next schedule (POST /learn/v1/review/{item}/result);
 // the correct choices and the explanation show after.
 import { useState } from "react";
-import { Badge, Button, Checkbox, K, Radio, Section } from "@/app/_kit";
-import { toggleChoice, type ReviewCard, type ReviewResult } from "@/lib/academy";
+import { Badge, Button, K, Section } from "@/app/_kit";
+import { ItemCard } from "@/components/academy/QuizRunner";
+import { toggleChoice, type QuizItem, type ReviewCard, type ReviewResult } from "@/lib/academy";
 import { academySend } from "@/lib/academyClient";
 import { RATINGS, reviewSubmission, type ReviewRating } from "@/lib/academyReview";
 import { say, type AcademyDict } from "@/lib/i18nAcademy";
+
+function Answer({ item, result, dict, onNext }: { item: QuizItem; result: ReviewResult; dict: AcademyDict; onNext: () => void }) {
+  const answer = result.correct_choices.map((c) => item.choices[c]).filter(Boolean).join("; ");
+  return (
+    <>
+      <Badge tone={result.correct ? "success" : "danger"}>{result.correct ? dict["academy.quiz.correct"] : dict["academy.quiz.wrong"]}</Badge>
+      {!result.correct && <span style={{ fontSize: 13, color: K.body }}>{say(dict, "academy.quiz.correctAnswer", { answer })}</span>}
+      {result.explain && <span style={{ fontSize: 13, color: K.body }}>{result.explain}</span>}
+      <span data-testid="academy-review-next">
+        <Button variant="primary" onClick={onNext}>
+          {dict["academy.review.next"]}
+        </Button>
+      </span>
+    </>
+  );
+}
+
+function Ratings({ busy, dict, onRate }: { busy: boolean; dict: AcademyDict; onRate: (r: ReviewRating) => void }) {
+  return (
+    <>
+      <span style={{ fontSize: 12.5, color: K.muted }}>{dict["academy.review.howSure"]}</span>
+      <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap" }} data-testid="academy-review-rate">
+        {RATINGS.map((r) => (
+          <Button key={r} size="sm" variant={r === "good" ? "primary" : "secondary"} onClick={() => onRate(r)} disabled={busy}>
+            {dict[`academy.review.rate.${r}`]}
+          </Button>
+        ))}
+      </span>
+    </>
+  );
+}
 
 export function ReviewRunner({ cards, targetRetention, dict }: { cards: ReviewCard[]; targetRetention?: number; dict: AcademyDict }) {
   const [index, setIndex] = useState(0);
@@ -26,7 +58,6 @@ export function ReviewRunner({ cards, targetRetention, dict }: { cards: ReviewCa
   }
   const card = cards[index];
   const item = card.item;
-  const Control = item.kind === "single" ? Radio : Checkbox;
 
   async function rate(rating: ReviewRating) {
     setBusy(true);
@@ -35,7 +66,7 @@ export function ReviewRunner({ cards, targetRetention, dict }: { cards: ReviewCa
     const res = await academySend<ReviewResult>("POST", `review/${encodeURIComponent(item.id)}/result`, { body });
     setBusy(false);
     if (res.ok) setResult(res.data);
-    else if (res.status !== 401) setFailed(true);
+    else setFailed(res.status !== 401);
   }
 
   function next() {
@@ -46,50 +77,27 @@ export function ReviewRunner({ cards, targetRetention, dict }: { cards: ReviewCa
   }
 
   return (
-    <Section title={say(dict, "academy.review.card", { n: index + 1, total: cards.length })} testId="academy-review-card">
-      <fieldset style={{ border: "none", margin: 0, padding: 0, display: "grid", gap: 8, minWidth: 0 }} disabled={busy || result !== null}>
-        <legend style={{ fontSize: 14, color: K.ink, fontWeight: 600, marginBottom: 4, padding: 0 }}>{item.prompt}</legend>
-        <span style={{ fontSize: 12, color: K.muted }}>{item.kind === "single" ? dict["academy.quiz.single"] : dict["academy.quiz.multiple"]}</span>
-        {item.choices.map((choice, ci) => (
-          <div key={ci} style={{ display: "flex", alignItems: "center", gap: 8, color: result?.correct_choices.includes(ci) ? K.success : K.body }}>
-            <Control name={`r-${item.id}`} checked={chosen.includes(ci)} onChange={() => setChosen((c) => toggleChoice(c, ci, item.kind))} label={choice} />
-          </div>
-        ))}
-      </fieldset>
-      <div style={{ display: "grid", gap: 10, marginTop: 12, justifyItems: "start" }}>
-        {result ? (
-          <>
-            <Badge tone={result.correct ? "success" : "danger"}>{result.correct ? dict["academy.quiz.correct"] : dict["academy.quiz.wrong"]}</Badge>
-            {!result.correct && (
-              <span style={{ fontSize: 13, color: K.body }}>
-                {say(dict, "academy.quiz.correctAnswer", { answer: result.correct_choices.map((c) => item.choices[c]).filter(Boolean).join("; ") })}
-              </span>
-            )}
-            {result.explain && <span style={{ fontSize: 13, color: K.body }}>{result.explain}</span>}
-            <span data-testid="academy-review-next">
-              <Button variant="primary" onClick={next}>
-                {dict["academy.review.next"]}
-              </Button>
-            </span>
-          </>
-        ) : (
-          <>
-            <span style={{ fontSize: 12.5, color: K.muted }}>{dict["academy.review.howSure"]}</span>
-            <span style={{ display: "inline-flex", gap: 8, flexWrap: "wrap" }} data-testid="academy-review-rate">
-              {RATINGS.map((r) => (
-                <Button key={r} size="sm" variant={r === "good" ? "primary" : "secondary"} onClick={() => rate(r)} disabled={busy}>
-                  {dict[`academy.review.rate.${r}`]}
-                </Button>
-              ))}
-            </span>
-          </>
-        )}
+    <div style={{ display: "grid", gap: 12 }} data-testid="academy-review-card">
+      <span style={{ fontSize: 12.5, color: K.muted }}>{say(dict, "academy.review.card", { n: index + 1, total: cards.length })}</span>
+      <ItemCard
+        item={item}
+        n={index + 1}
+        total={0}
+        chosen={chosen}
+        graded={undefined}
+        locked={busy || result !== null}
+        onToggle={(ci) => setChosen((c) => toggleChoice(c, ci, item.kind))}
+        dict={dict}
+        namePrefix="r"
+      />
+      <div style={{ display: "grid", gap: 10, justifyItems: "start" }}>
+        {result ? <Answer item={item} result={result} dict={dict} onNext={next} /> : <Ratings busy={busy} dict={dict} onRate={rate} />}
         {failed && (
           <span role="alert" style={{ fontSize: 12.5, color: K.danger }}>
             {dict["academy.error"]}
           </span>
         )}
       </div>
-    </Section>
+    </div>
   );
 }

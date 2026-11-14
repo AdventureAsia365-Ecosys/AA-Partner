@@ -41,22 +41,31 @@ function ModuleRow({ m, dict }: { m: PathModule; dict: AcademyDict }) {
   );
 }
 
-function PathCard({ path, dict }: { path: PathSummary; dict: AcademyDict }) {
-  const progress = pathProgress(path);
-  const ready = progress.total > 0 && progress.done === progress.total;
-  const certKey = path.certificate_status ? (`academy.cert.${path.certificate_status}` as const) : null;
-  const badges = (
+function PathBadges({ path, dict }: { path: PathSummary; dict: AcademyDict }) {
+  const status = path.completed ? "completed" : path.enrolled ? "enrolled" : null;
+  return (
     <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-      {path.completed ? (
-        <Badge tone="success">{dict["academy.path.completed"]}</Badge>
-      ) : path.enrolled ? (
-        <Badge tone="info">{dict["academy.path.enrolled"]}</Badge>
-      ) : null}
-      {certKey && <Badge tone={certificateTone(path.certificate_status)}>{dict[certKey]}</Badge>}
+      {status && <Badge tone={status === "completed" ? "success" : "info"}>{dict[`academy.path.${status}`]}</Badge>}
+      {path.certificate_status && <Badge tone={certificateTone(path.certificate_status)}>{dict[`academy.cert.${path.certificate_status}`]}</Badge>}
     </span>
   );
+}
+
+function FinalQuiz({ path, ready, dict }: { path: PathSummary; ready: boolean; dict: AcademyDict }) {
+  if (!path.final_quiz) return null;
+  if (!ready) return <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{dict["academy.path.finalQuizLocked"]}</p>;
   return (
-    <Section title={path.title} description={say(dict, "academy.path.progress", progress)} actions={badges} testId={`academy-path-${path.id}`}>
+    <Link href={`/academy/quiz/final/${encodeURIComponent(path.id)}`} style={{ fontSize: 13.5, fontWeight: 600, color: K.accentDeep }} data-testid={`academy-final-quiz-${path.id}`}>
+      {dict["academy.path.finalQuiz"]}
+    </Link>
+  );
+}
+
+function PathCard({ path, dict }: { path: PathSummary; dict: AcademyDict }) {
+  const progress = pathProgress(path);
+  const planned = path.planned ?? [];
+  return (
+    <Section title={path.title} description={say(dict, "academy.path.progress", progress)} actions={<PathBadges path={path} dict={dict} />} testId={`academy-path-${path.id}`}>
       <div style={{ display: "grid", gap: 12 }}>
         {!path.enrolled && (
           <div>
@@ -68,21 +77,8 @@ function PathCard({ path, dict }: { path: PathSummary; dict: AcademyDict }) {
             <ModuleRow key={m.id} m={m} dict={dict} />
           ))}
         </ul>
-        {path.planned && path.planned.length > 0 && (
-          <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{say(dict, "academy.path.planned", { list: path.planned.join(", ") })}</p>
-        )}
-        {path.final_quiz &&
-          (ready ? (
-            <Link
-              href={`/academy/quiz/final/${encodeURIComponent(path.id)}`}
-              style={{ fontSize: 13.5, fontWeight: 600, color: K.accentDeep }}
-              data-testid={`academy-final-quiz-${path.id}`}
-            >
-              {dict["academy.path.finalQuiz"]}
-            </Link>
-          ) : (
-            <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{dict["academy.path.finalQuizLocked"]}</p>
-          ))}
+        {planned.length > 0 && <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{say(dict, "academy.path.planned", { list: planned.join(", ") })}</p>}
+        <FinalQuiz path={path} ready={progress.total > 0 && progress.done === progress.total} dict={dict} />
       </div>
     </Section>
   );

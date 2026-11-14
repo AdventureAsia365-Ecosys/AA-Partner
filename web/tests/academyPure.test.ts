@@ -5,7 +5,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import { errorKind, pathProgress, quizResponses, retakeWaiting, toggleChoice, verifyUrl, type PathSummary, type ReviewCard } from "@/lib/academy";
+import { errorKind, lessonNeighbours, pathProgress, quizResponses, retakeWaiting, toggleChoice, verifyUrl, type PathSummary, type ReviewCard } from "@/lib/academy";
 import { parseBlocks, parseInline, safeHref } from "@/lib/academyMarkdown";
 import { reviewSubmission, retention } from "@/lib/academyReview";
 import { isCertificateCode, verifyCertificate, VisitorLimiter } from "@/lib/academyVerify";
@@ -208,6 +208,9 @@ describe("quiz and catalogue helpers", () => {
     expect(pathProgress(path)).toEqual({ done: 1, total: 2 });
     expect(verifyUrl("https://academy.example.test", `/verify/${CODE}`)).toBe(`https://academy.example.test/verify/${CODE}`);
     expect(verifyUrl("https://academy.example.test", "https://evil.example.test")).toBeNull();
+    expect(lessonNeighbours(["F3-01", "F3-02", "F3-03"], "F3-02")).toEqual({ prev: "F3-01", next: "F3-03" });
+    expect(lessonNeighbours(["F3-01"], "F3-01")).toEqual({ prev: null, next: null });
+    expect(lessonNeighbours([], "F3-01")).toEqual({ prev: null, next: null });
   });
 });
 
