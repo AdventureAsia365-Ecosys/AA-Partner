@@ -14,6 +14,7 @@ the session see the same numbers), on keys tests/integration/test_crm064_schema.
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from collections.abc import AsyncIterator
 
@@ -146,3 +147,33 @@ async def test_an_agency_value_is_refused_under_an_env_override(app_pool: asyncp
         assert (await service.history(app_pool, ps.RATE_INTAKE_FORM, tenant_id, staff_sub=SUB))["history"] == []
     finally:
         ps.configure_env({})
+
+
+async def test_the_newest_approval_supersedes_the_schedules_of_its_scope(app_pool: asyncpg.Pool) -> None:
+    """S280 UX fix round (the CIS rule): an approval in force cancels a schedule approved before it (which would
+    otherwise replace it on its date); a future-dated approval cancels only the schedules dated at or after it."""
+    tenant_id, _ = await _agency(app_pool)
+    key = ps.RATE_INTAKE_FORM
+    now = dt.datetime.now(dt.UTC)
+
+    async def change(value: int, effective: dt.datetime | None, base: int = 0) -> dict:
+        return await service.propose(app_pool, key, value=value, reason=REASON, staff_sub=SUB, base_version=base,
+                                     effective_from=effective, tenant_id=tenant_id, apply=True)  # fmt: skip
+
+    scheduled = await change(300, now + dt.timedelta(days=2))  # nothing in force at this scope yet: base 0
+    assert scheduled["status"] == "approved" and "superseded_versions" not in scheduled
+    in_force = await change(250, None)
+    assert in_force["superseded_versions"] == [scheduled["version"]]
+    assert in_force["cancelled_scheduled_versions"] == [scheduled["version"]]
+    later = await change(400, now + dt.timedelta(days=5), in_force["version"])
+    assert "superseded_versions" not in later  # the value in force stays until its date
+    sooner = await change(350, now + dt.timedelta(days=3), in_force["version"])
+    assert sooner["cancelled_scheduled_versions"] == [later["version"]]
+    status = {r["version"]: r["status"] for r in (await service.history(app_pool, key, tenant_id, staff_sub=SUB))[
+        "history"]}  # fmt: skip
+    assert status == {
+        scheduled["version"]: "superseded",
+        in_force["version"]: "approved",
+        later["version"]: "superseded",
+        sooner["version"]: "approved",
+    }

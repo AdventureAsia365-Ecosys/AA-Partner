@@ -13,6 +13,10 @@ forbids the word "proposal" in a key.
 
 1.14 (AA-1096 S280, additive): ``agency_overrides`` / ``agency_pending`` per platform+tenant setting, ``reason_min`` /
 ``evidence_min`` / ``evidence_max`` per definition; a backdated ``effective_from`` is 422 ``effective_from_in_past``.
+
+1.15 (AA-1096 S280 UX fix round, additive): ``approved_version`` and ``scheduled`` per setting; an approval answers
+``superseded_versions`` / ``cancelled_scheduled_versions`` (the newest decision wins: an approval in force supersedes
+every other approved row of its scope, scheduled ones too; a future-dated one the schedules dated at or after it).
 """
 
 from __future__ import annotations
@@ -53,6 +57,23 @@ class SettingRowOut(_Out):
     decided_at: str | None
     decision_note: str | None
     previous_value: SettingValue | None = None
+
+
+class SettingDecisionOut(SettingRowOut):
+    """A change as written (POST): an approval also names the versions it superseded and the scheduled ones it cancelled
+    (1.15; absent when none), for the CIS audit row of the change."""
+
+    superseded_versions: list[int] | None = None
+    cancelled_scheduled_versions: list[int] | None = None
+
+
+class ScheduledSettingOut(_Out):
+    """An approved platform value whose effective_from is still ahead."""
+
+    tenant_id: str | None
+    value: SettingValue
+    version: int
+    effective_from: str | None
 
 
 class AgencySettingRowOut(SettingRowOut):
@@ -106,6 +127,10 @@ class SettingOut(SettingDefinitionOut):
     value: SettingValue
     source: Literal["env", "tenant", "platform", "default"]
     version: int | None
+    # 1.15: the approved platform version in force (0 = none; the base_version of a platform change, also under an env
+    # override or a refused stored value, where ``version`` is None) and the scheduled platform approvals
+    approved_version: int
+    scheduled: list[ScheduledSettingOut]
     overridden_by_env: bool
     env_ignored: str | None
     refused: str | None
@@ -170,7 +195,7 @@ async def get_setting_history(
     return await settings_service.history(pool, key, tenant_id, staff_sub=caller.sub)
 
 
-@router.post("/settings/{key}/changes", response_model=SettingRowOut, status_code=201)
+@router.post("/settings/{key}/changes", response_model=SettingDecisionOut, status_code=201)
 async def post_setting_change(request: Request, key: SettingKey, body: SettingChangeIn, caller: PlatformAdmin) -> dict:
     pool = await request_pool(request)
     return await settings_service.propose(
@@ -187,7 +212,7 @@ async def post_setting_change(request: Request, key: SettingKey, body: SettingCh
     )
 
 
-@router.post("/settings/changes/{value_id}/{decision}", response_model=SettingRowOut)
+@router.post("/settings/changes/{value_id}/{decision}", response_model=SettingDecisionOut)
 async def post_setting_decision(
     request: Request,
     value_id: uuid.UUID,

@@ -97,6 +97,20 @@ SELECT v.id, v.key, v.tenant_id::text AS tenant_id, v.value::text AS value_text,
  WHERE v.tenant_id = $1 AND v.key = ANY($2::text[]) AND v.status = 'proposed'
 """
 AGENCY_NAME_SQL = "SELECT display_name FROM crm.tenant WHERE tenant_id = $1"
+# S280 UX fix round: the approved platform version in force per key (the change form's base version, also under an env
+# override or a refused stored value, where the resolved version is None) and the scheduled platform approvals.
+IN_FORCE_SQL = """
+SELECT DISTINCT ON (v.key) v.key, v.version
+  FROM crm.setting_value v
+ WHERE v.status = 'approved' AND v.tenant_id IS NULL AND v.effective_from <= now()
+ ORDER BY v.key, v.effective_from DESC, v.version DESC
+"""
+SCHEDULED_SQL = """
+SELECT v.key, v.tenant_id::text AS tenant_id, v.value::text AS value_text, v.version, v.effective_from
+  FROM crm.setting_value v
+ WHERE v.status = 'approved' AND v.tenant_id IS NULL AND v.effective_from > now()
+ ORDER BY v.key, v.effective_from, v.version
+"""
 HISTORY_SQL = """
 SELECT v.id, v.key, v.tenant_id::text AS tenant_id, v.value::text AS value_text, v.version, v.status,
        v.effective_from, v.proposed_by, v.proposed_at, v.reason, v.evidence_ref, v.self_approved,
@@ -144,10 +158,15 @@ SELECT value::text AS value_text FROM crm.setting_value
    AND effective_from <= now()
  ORDER BY effective_from DESC, version DESC LIMIT 1
 """
+# S280 UX fix round (the CIS rule, settings_registry._SUPERSEDE_SQL): the newest decision wins. An approval in force now
+# supersedes every other approved row of its scope, the rows in force and the scheduled ones (a schedule approved
+# earlier would otherwise replace it on its date); a future-dated approval supersedes the scheduled rows dated at or
+# after it, and the rows in force give way on its date. effective_from stays as written (crm-064 trigger: append-only).
 SUPERSEDE_SQL = """
 UPDATE crm.setting_value SET status = 'superseded'
- WHERE key = $1 AND tenant_id IS NOT DISTINCT FROM $2::uuid AND status = 'approved' AND id <> $3
-   AND $4::timestamptz <= now() AND effective_from <= $4::timestamptz
+ WHERE key = $1 AND status = 'approved' AND tenant_id IS NOT DISTINCT FROM $2::uuid AND id <> $3
+   AND ($4::timestamptz <= now() OR effective_from >= $4::timestamptz)
+RETURNING version, effective_from > now() AS scheduled
 """
 # An approved row of the same scope already in force with a later effective_from: approving an older one would be
 # recorded as approved and never take effect (the value in force is the newest effective_from).
@@ -245,6 +264,15 @@ def row_out(r: Any) -> dict[str, Any]:
     }
 
 
+def _scheduled_out(r: Any) -> dict[str, Any]:
+    return {
+        "tenant_id": r["tenant_id"],
+        "value": _json(r["value_text"]),
+        "version": r["version"],
+        "effective_from": _iso(r["effective_from"]),
+    }
+
+
 def _definition(key: str) -> Definition:
     try:
         return ps.definition(key)
@@ -262,6 +290,10 @@ async def list_settings(pool: asyncpg.Pool, *, area: str | None = None, staff_su
             pending: dict[str, list[dict[str, Any]]] = {}
             for r in await conn.fetch(OPEN_SQL):
                 pending.setdefault(r["key"], []).append(row_out(r))
+            in_force = {r["key"]: r["version"] for r in await conn.fetch(IN_FORCE_SQL)}
+            scheduled: dict[str, list[dict[str, Any]]] = {}
+            for r in await conn.fetch(SCHEDULED_SQL):
+                scheduled.setdefault(r["key"], []).append(_scheduled_out(r))
         agency_rows = await _agency_rows(pool, [d.key for d in defs if d.tenant_scoped], staff_sub=staff_sub)
     except (asyncpg.UndefinedTableError, asyncpg.InsufficientPrivilegeError):
         raise SettingsUnavailable() from None
@@ -276,6 +308,10 @@ async def list_settings(pool: asyncpg.Pool, *, area: str | None = None, staff_su
                 "value": res.value,
                 "source": res.source,
                 "version": res.version,
+                # the approved platform version in force (0 = none): what a platform change names as base_version
+                "approved_version": in_force.get(d.key, 0),
+                # the approved platform changes not in force yet, soonest first
+                "scheduled": scheduled.get(d.key, []),
                 "overridden_by_env": res.source == "env",
                 "env_ignored": env_ignored if env_set else None,
                 "refused": res.refused,
@@ -640,7 +676,8 @@ async def _decide(
     out = row_out(row)
     tenant = None if out["tenant_id"] is None else uuid.UUID(out["tenant_id"])
     if approve:
-        await conn.execute(SUPERSEDE_SQL, d.key, tenant, row["id"], row["effective_from"])
+        superseded = list(await conn.fetch(SUPERSEDE_SQL, d.key, tenant, row["id"], row["effective_from"]))
+        out.update(_superseded_out(superseded))
         if self_approved and d.impact == "high":
             ops_alerts.emit("setting_self_approved", out["id"], key=d.key, version=out["version"])
     log.info(
@@ -652,6 +689,17 @@ async def _decide(
         out["tenant_id"] is not None,
     )
     return out
+
+
+def _superseded_out(superseded: list[Any]) -> dict[str, Any]:
+    """The versions an approval superseded, for the caller's audit (the CIS relay's audit row): every one, and the
+    scheduled ones it cancelled. None superseded: no field."""
+    if not superseded:
+        return {}
+    return {
+        "superseded_versions": [r["version"] for r in superseded],
+        "cancelled_scheduled_versions": [r["version"] for r in superseded if r["scheduled"]],
+    }
 
 
 def _after_decision(d: Definition, out: dict[str, Any]) -> None:

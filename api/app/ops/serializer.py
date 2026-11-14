@@ -230,6 +230,11 @@ OPS_ALLOWED_KEYS: frozenset[str] = frozenset(
         # change must carry
         "agency_overrides",
         "agency_pending",
+        # S280 UX fix round (1.15): the approved version in force, the scheduled approvals, what an approval superseded
+        "approved_version",
+        "scheduled",
+        "superseded_versions",
+        "cancelled_scheduled_versions",
         "reason_min",
         "evidence_min",
         "evidence_max",
