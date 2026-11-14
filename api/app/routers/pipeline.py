@@ -175,6 +175,13 @@ class FormChange(_Body):
     privacy_notice_url: str | None = Field(default=None, max_length=500)
 
 
+def _client_origin(request: Request) -> str | None:
+    """AA-1089: the client host's origin (the first INTAKE_PAGE_ORIGINS entry), where the public AA tour page lives."""
+    settings = getattr(request.app.state, "settings", None)
+    origins = getattr(settings, "intake_page_origins", ()) or ()
+    return origins[0] if origins else None
+
+
 def _owner(ctx: TenantContext) -> None:
     # The matrix again (tenant_tx refused already): Settings > Forms is owner-only (design §4.6 "team, settings").
     require(ctx, Action.SETTINGS_FORMS_MANAGE, object_kind="intake_form")
@@ -205,7 +212,7 @@ async def get_trip(request: Request, caller: CallerDep, tenant_id: TenantDep, tr
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_VIEW) as ctx:
-        return await trip_detail(ctx, Vault(keys, ctx), trip_id)
+        return await trip_detail(ctx, Vault(keys, ctx), trip_id, _client_origin(request))
 
 
 @router.patch("/trips/{trip_id}")

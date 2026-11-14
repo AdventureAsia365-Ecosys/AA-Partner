@@ -1250,6 +1250,16 @@ below; the guided "AA cancelled the departure" flow (crm-13) of the same issue i
   language; the agent closes the task. The trip page card (`aa_tour_retired` of `GET /trips/{id}`), the card badge
   and the pipeline filter `issue=aa_tour_retired` read the open flags; the builder option badge reads the live
   `no_longer_offered`.
+- **The AA tour a trip came from** (AA-1089, S275 study rank 48; `app/catalog/trip_source.py`): `GET /trips/{id}`
+  carries `aa_source` (null when the trip names no AA tour), computed on each read, nothing stored (no migration):
+  the "Book now" attempt that made the trip (`crm.public_booking_attempt` `created`: its tour, its departure, the
+  start of the proposal it sent; `origin` `web_booking`), else the AA booking line still standing with the earliest
+  service date (not cancelled, not refused by Booking: the `app.catalog.retired` rule; `origin` `aa_line`). The title
+  is the catalogue cache's (`crm.aa_catalog_tour`; null when not cached), `page_url` the public tour page on the
+  client host (`<first INTAKE_PAGE_ORIGINS entry>/trip/<catalogue key>`, only while the tour is served and the key
+  is a uuid; CIS answers a catalogue key with a 301 to the tour's current version since AA-1089). The web shows it
+  under the trip title (`components/pipeline/TripSourceLine.tsx`: "AA tour", the title, "Departs <date>", "Booked
+  online", "Tour page" in a new tab).
 
 ## Sales partners and their commission (AA-1071)
 
