@@ -94,6 +94,8 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   1.2 `/aa-content` (AA prep packs and starter templates, AA-977) into `crm.aa_content` (section "CRM-22" below).
   AA-1030: `booking.b2b.v1` is consumed up to **1.4** (`GET /tariff`, the agency's AA tariff; section "CRM-19",
   "AA prices").
+- **Consumes** (AA-1105, root ADR 0022) the CIS learning API `learn.http.v1` from the web only, on the academy host
+  (section "AA Academy host"), with the learner's WORKFORCE `academy-web` token.
 - **Publishes** `crm.ops.v1` under `/crm/ops/v1` to the CIS admin (L1 platform console); since 1.5 (AA-966) it also
   carries the AA insights read `GET /insights` (spec module 17, design S-03), instead of a separate `crm.insights.v1`;
   since 1.6 (AA-964) the CRM ledger rows `GET /llm/calls` for the CIS Calls tab (section "CRM-33a" below).
@@ -133,6 +135,7 @@ The shortest path that works without AWS access. The [README](README.md#run-the-
 | Web | `web/`: Next.js 16 standalone (React 19, TypeScript, vitest), the AA UI kit core vendored from AA-CIS-App (`web/app/_kit/core/`, root ADR 0016; inline styles from the kit tokens); ECS Fargate **ARM64** service `aa-crm-dev-web` (port 3000, `/healthz`), ECR `aa-crm-dev-web` (AA-CIS-Infra `crm_web.tf`) |
 | Portal | retired (AA-1036 R3 slice 2): the tenant Content studio is part of `web/` (`web/app/(studio)`, section "One agency app"); the separate `portal/` app, its Fargate service `aa-crm-dev-portal` and its deploy were deleted after the cut-over. Section "Tenant portal" below is its history |
 | Edge for the web | the same CloudFront distribution: the ALB rule `crm_api` (`/crm`, `/crm/*`) stays above `crm_partner_default`, which forwards every other path of the partner host to the web target group |
+| Edge for the academy | AA-1105: `academy.<zone>` is a second alias of the agency distribution; the ALB rule `crm_academy_default` sends every path to the web target group (no `/crm/*` rule there); the web serves the academy only on that host (section "AA Academy host") |
 
 AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everything `aa-crm-<env>-*`, tag `App = crm`
 (the product is AA-Partner, the resource prefix is `crm`).
@@ -1252,6 +1255,16 @@ below; the guided "AA cancelled the departure" flow (crm-13) of the same issue i
   language; the agent closes the task. The trip page card (`aa_tour_retired` of `GET /trips/{id}`), the card badge
   and the pipeline filter `issue=aa_tour_retired` read the open flags; the builder option badge reads the live
   `no_longer_offered`.
+- **The AA tour a trip came from** (AA-1089, S275 study rank 48; `app/catalog/trip_source.py`): `GET /trips/{id}`
+  carries `aa_source` (null when the trip names no AA tour), computed on each read, nothing stored (no migration):
+  the "Book now" attempt that made the trip (`crm.public_booking_attempt` `created`: its tour, its departure, the
+  start of the proposal it sent; `origin` `web_booking`), else the AA booking line still standing with the earliest
+  service date (not cancelled, not refused by Booking: the `app.catalog.retired` rule; `origin` `aa_line`). The title
+  is the catalogue cache's (`crm.aa_catalog_tour`; null when not cached), `page_url` the public tour page on the
+  client host (`<first INTAKE_PAGE_ORIGINS entry>/trip/<catalogue key>`, only while the tour is served and the key
+  is a uuid; CIS answers a catalogue key with a 301 to the tour's current version since AA-1089). The web shows it
+  under the trip title (`components/pipeline/TripSourceLine.tsx`: "AA tour", the title, "Departs <date>", "Booked
+  online", "Tour page" in a new tab).
 
 ## Sales partners and their commission (AA-1071)
 
@@ -2872,6 +2885,39 @@ ADR 0006b decision 6). Decisions: `docs/implementation-notes/AA-1019.md`.
   is created synthetic, the pilot included, so `crm_entitlement_pull` clears `is_synthetic` for good the first time it
   sees the pilot marker, and `app.tenancy.E2E_SYNTHETIC_SQL` and the studio relay's `SYNTHETIC_AGENCY_SQL` both read
   `is_synthetic IS TRUE AND is_pilot IS NOT TRUE` (the marker CIS sets and the feed projects, crm-044).
+
+## AA Academy host (`web/app/academy`, `web/app/verify`, AA-1105)
+
+Root ADR 0022 decisions 2 and 6 (D17): one learner front door on its own host `academy.<zone>` (Dev
+`academy.lumiguides.it.com`), a second alias of the agency distribution whose ALB rule `crm_academy_default` (AA-CIS-Infra
+`academy_edge.tf`) sends every path to this web. The pages talk only to the CIS learning API `learn.http.v1` (root
+`docs/contracts/`), never to the CRM API. Decisions: `docs/implementation-notes/AA-1105.md`.
+
+- **Host isolation** (`web/lib/hosts.ts`, `web/proxy.ts`): `WEB_ACADEMY_HOSTS` makes the host kind `academy`, checked
+  first; there only `/academy/*`, `/verify/<code>`, `/prefs/locale` and static files are served (`/` goes to
+  `/academy`), every agency, studio, staff-console, client or `/crm/*` path is 404; `/academy` and `/verify` are 404 on
+  the partner and client hosts (served on localhost in local / test).
+- **Own session** (`web/lib/academySession.ts`): cookies `__Secure-aa_academy_s` (Path `/academy`), `_r` and `_tx`
+  (Path `/academy/auth`), host-only on the academy host, sealed with `ACADEMY_SESSION_SECRET` (never the agency or the
+  staff key) under the seal purposes `academy-*`; the access token must belong to the WORKFORCE `academy-web` client.
+  Routes `/academy/auth/{sign-in,callback,refresh,sign-out}` and `/academy/signed-out`. No group is required: CIS
+  decides who is a learner (403 `not_a_learner`), and the pages say so.
+- **Reads and BFF**: server components read `/learn/v1/*` of `CIS_API_URL` with the session token
+  (`web/lib/academyApi.ts`); the browser calls `/academy/bff/<path>` (`web/lib/academyBff.ts`: the learner routes only,
+  `lang` the only query, header `x-aa-academy: 1` on every call, cross-site writes refused first). Captions are proxied
+  from the academy origin (`/academy/captions/<lesson>/<lang>`: fresh presigned URLs, S3 hosts only, WebVTT only); the
+  video plays straight from S3.
+- **Public verify page** `/verify/<code>`: no sign-in, no Referer, not indexed; the web limits its own visitors
+  (`web/lib/academyVerify.ts`, per CloudFront viewer address) with the CIS setting
+  `cis.learn.verify_visitor_requests_per_minute` as CIS reports it in `X-Learn-Visitor-Limit` on every verify answer
+  (contract `learn.http.v1` 1.1; CIS clamps it below its per-address limit `cis.learn.verify_requests_per_minute`, which
+  all the web's visitors share); until CIS has said it, one call per visitor per minute and none while one is in flight.
+- **Pages** (kit only: `app/_kit/local/AcademyShell.tsx` over `PageFrame`; EN with VI in `web/lib/i18nAcademy.ts`):
+  catalogue `/academy`, module, lesson reader (cited sources, video, progress), module and final quiz (started on
+  click, graded on the server), spaced review (ts-fsrs in the browser), certificates with a share link.
+- **Configuration** (AA-CIS-Infra `crm_web.tf`): `WEB_ACADEMY_HOSTS`, `ACADEMY_COGNITO_DOMAIN`,
+  `ACADEMY_COGNITO_CLIENT_ID`, and from the web secret `ACADEMY_COGNITO_CLIENT_SECRET`, `ACADEMY_SESSION_SECRET`; with
+  `CIS_API_URL`. `/healthz` reports `academy_auth_configured` and the web post-deploy verify requires it.
 
 ## Dev seeder (`api/app/seed/`, AA-935)
 

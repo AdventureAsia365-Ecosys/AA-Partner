@@ -12,14 +12,28 @@ login role must own nothing in schema crm (the runner's ownership post-check).
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
+from zoneinfo import ZoneInfo
 
 import asyncpg
 import pytest
 import pytest_asyncio
+
+# The agency's default time zone (crm.tenant_settings.timezone). Views such as crm.v_schedule_status and the cancel
+# policy count days from "today" in it, so a test that builds dates must use the same day: from 17:00 to 24:00 UTC the
+# agency is already on the next calendar day and a UTC current_date or date.today() is one day short.
+AGENCY_TZ = "Asia/Ho_Chi_Minh"
+SET_AGENCY_TZ = f"SET LOCAL TIME ZONE '{AGENCY_TZ}'"
+
+
+def agency_today() -> dt.date:
+    """Today in the agency's default time zone (what the CRM views and services call today)."""
+    return dt.datetime.now(ZoneInfo(AGENCY_TZ)).date()
+
 
 ADMIN_DSN = os.environ.get("CRM_TEST_ADMIN_DSN", "")
 MIGRATIONS = sorted((Path(__file__).resolve().parents[2] / "migrations").glob("*.sql"))

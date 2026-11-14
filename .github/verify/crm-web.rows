@@ -9,12 +9,14 @@
 # the API may run an older commit on a healthy Dev. $required is not used for the same reason.
 #
 # AA-1019: staff_auth_configured = the AA staff console (/staff/*) has its WORKFORCE client and cookie key.
+# AA-1105: academy_auth_configured = the AA Academy host has its WORKFORCE academy-web client, its own cookie key and the
+# CIS API origin (the learning API).
 #
 # AA-1036 (R3 slice 2): the Content studio is part of the web and the agency host sends /api/* here, so studio-healthz
 # reads the studio BFF's liveness on this commit and version; `studio: "merged"` tells it from the retiring studio
 # service ("aa-partner-portal"), i.e. a crm_agency_studio rule still pointing at the old target group is red.
 
-healthz|public|GET /healthz|200|.status == "ok" and .service == "aa-crm-web" and .git_sha == $sha and .version == $version and .auth_configured == true and .staff_auth_configured == true
+healthz|public|GET /healthz|200|.status == "ok" and .service == "aa-crm-web" and .git_sha == $sha and .version == $version and .auth_configured == true and .staff_auth_configured == true and .academy_auth_configured == true
 api-health|public|GET /crm/health|200|.status == "ok" and .service == "aa-crm-api"
 api-ready|public|GET /crm/health/ready|200|.status == "ok" and .db == "ok"
 studio-healthz|public|GET /api/healthz|200|.ok == true and .service == "aa-crm-web" and .studio == "merged" and .sha == $sha and .version == $version

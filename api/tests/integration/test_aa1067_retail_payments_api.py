@@ -42,6 +42,7 @@ from app.tenancy import system_tx, tenant_tx
 from app.vault import Vault
 from app.workflows import engine, tick
 from app.workflows import service as workflows
+from tests.integration.conftest import SET_AGENCY_TZ, agency_today
 from tests.integration.test_builder_api import _as, _pid, _publishable
 from tests.integration.test_builder_api import _setup as _builder_setup
 from tests.integration.test_lifecycle_api import PLAIN, _token
@@ -56,6 +57,7 @@ async def _rows(pool: asyncpg.Pool, s: dict[str, Any], sql: str, *args: Any) -> 
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(s["tenant"]))
         await conn.execute("SELECT set_config('app.actor', 'seed:test', true)")
+        await conn.execute(SET_AGENCY_TZ)  # current_date = the CRM's agency-local today
         return list(await conn.fetch(sql, *args))
 
 
@@ -140,6 +142,7 @@ async def test_a_builder_version_with_instalments_from_draft_to_live_status(app_
         await invoices.issue(ctx, uuid.UUID(bill["invoice_id"]))
         await payments.record_payment(ctx, Vault(s["keys"], ctx), uuid.UUID(bill["invoice_id"]), amount=D("100"),
                                       method="bank_transfer", received_on=None)  # fmt: skip
+        await ctx.conn.execute(SET_AGENCY_TZ)
         await ctx.conn.execute("UPDATE crm.payment_schedule SET due_on = current_date - 4 WHERE schedule_id = $1",
                                uuid.UUID(second["schedule_id"]))  # fmt: skip
         overview = await service.trip_overview(ctx, Vault(s["keys"], ctx), s["trip"])
@@ -190,7 +193,7 @@ async def _accepted_text(pool: asyncpg.Pool, s: dict[str, Any], *, terms: uuid.U
     async with tenant_tx(pool, s["who"]["agent"], s["tenant"]) as ctx:
         draft = await service.create_draft(ctx, Vault(s["keys"], ctx), s["trip"], body="Day 1 harbour. Day 2 hills.",
                                            currency="USD", total=D("1000"), deposit=D("300"),
-                                           balance_due_on=dt.date.today() + dt.timedelta(days=7),
+                                           balance_due_on=agency_today() + dt.timedelta(days=7),
                                            terms_doc_id=terms or s["terms"])  # fmt: skip
         sent = await service.send(ctx, Vault(s["keys"], ctx), uuid.UUID(draft["proposal_id"]))
     sent["token"] = _token(sent["link_path"])
