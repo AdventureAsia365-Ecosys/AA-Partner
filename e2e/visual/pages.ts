@@ -151,4 +151,14 @@ export const EXCLUDED: Record<string, string> = {
   "/staff/support": "the AA staff console: a staff Cognito sign-in, no staff E2E user in CI",
   "/staff/support/[tenantId]": "the AA staff console: a staff Cognito sign-in, no staff E2E user in CI",
   "/staff/support/[tenantId]/trips/[tripId]": "the AA staff console: a staff Cognito sign-in, no staff E2E user in CI",
+  // AA-1105: the AA Academy is served on its own host only (academy.<zone>); the agency host this run opens answers 404
+  // for every academy route. Its pages are captured by the academy live steps (desktop + mobile, light + dark).
+  "/academy": "the AA Academy host only (404 on the agency host); an academy-web Cognito sign-in",
+  "/academy/certificates": "the AA Academy host only (404 on the agency host); an academy-web Cognito sign-in",
+  "/academy/lessons/[lessonId]": "the AA Academy host only (404 on the agency host); an academy-web Cognito sign-in",
+  "/academy/modules/[moduleId]": "the AA Academy host only (404 on the agency host); an academy-web Cognito sign-in",
+  "/academy/quiz/[scope]/[targetId]": "the AA Academy host only (404 on the agency host); an academy-web Cognito sign-in",
+  "/academy/review": "the AA Academy host only (404 on the agency host); an academy-web Cognito sign-in",
+  "/academy/signed-out": "the AA Academy host only (404 on the agency host)",
+  "/verify/[code]": "the AA Academy's public certificate check: academy host only (404 on the agency host)",
 };

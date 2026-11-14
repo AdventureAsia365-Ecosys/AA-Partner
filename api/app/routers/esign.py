@@ -7,6 +7,10 @@ Route                                           What                            
                                                 terms acceptances, re-accept state, signing log
 ``POST /signatures/{id}/envelope``              the sealed envelope + seal check (a reveal:      every role
                                                 ``{"reason": <code>}``)
+``POST /signatures/{id}/pdf``                   AA-1012: the envelope as a PAdES-B-B signed PDF  every role
+                                                (a reveal: ``{"reason": <code>}``; 503
+                                                ``pdf_seal_not_configured`` without the seal key
+                                                and certificate)
 ==============================================  ===============================================  =====================
 
 Agreement versions themselves are in :mod:`app.routers.proposals` (``/agreements``); the traveller side is
@@ -60,3 +64,15 @@ async def post_envelope(
     sealer = getattr(request.app.state, "sealer", None)
     async with tenant_tx(pool, caller, tenant_id, action=Action.DOCUMENT_DOWNLOAD) as ctx:
         return await service.envelope(ctx, Vault(keys, ctx), sealer, request_id, body.reason)
+
+
+@router.post("/signatures/{request_id}/pdf")
+async def post_envelope_pdf(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, request_id: uuid.UUID, body: RevealIn
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    sealer = getattr(request.app.state, "sealer", None)
+    pades = getattr(request.app.state, "pades", None)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.DOCUMENT_DOWNLOAD) as ctx:
+        return await service.envelope_pdf(ctx, Vault(keys, ctx), sealer, pades, request_id, body.reason)

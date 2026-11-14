@@ -201,7 +201,8 @@ def test_the_gate_order_and_the_retired_api_key_sign_in() -> None:
     body = gate[gate.index("export function gate(") :]
     order = [
         body.index('if (pathname === "/healthz")'),
-        body.index('if (kind === "unknown") return notFound();'),
+        # AA-1105: the unknown-host 404 and the academy host's own gate are one host step (hostRoute) before the rest.
+        body.index("const early = hostRoute(request, cfg, kind);"),
         body.index("if (clientOnlyPath(pathname) && !localDev) return notFound();"),
         body.index("if (isStaffPath(pathname)) return staffGate(request, cfg);"),
         body.index("if (isApiKeySignIn(pathname))"),
@@ -209,6 +210,9 @@ def test_the_gate_order_and_the_retired_api_key_sign_in() -> None:
         body.index("accessValid(readSession(cfg, request.cookies))"),
     ]
     assert order == sorted(order)
+    host = gate[gate.index("function hostRoute(") :]
+    unknown = host.index('if (kind === "unknown") return notFound();')
+    assert unknown < host.index('if (kind === "academy") return academyGate(request, cfg);')
     assert "encodeURIComponent(STUDIO_HOME_PATH)}`, 308)" in body
     assert "isStudioPage(request.nextUrl.pathname)) return studioGate(request);" in gate
 

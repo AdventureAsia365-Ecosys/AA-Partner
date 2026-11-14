@@ -395,6 +395,7 @@ export function PortalPage({
 
       {home.agreements ? (
         <SignEnvelope
+          base={base}
           box={home.agreements}
           locked={stage3.locked}
           busy={busy}
@@ -402,6 +403,7 @@ export function PortalPage({
           hint={hint}
           onCode={(d) => setHint(devHint(d))}
           onSigned={() => saved(t("client.signedThanks"))}
+          onError={(status, detail) => setNote({ tone: "danger", text: refused(detail ? { detail } : {}, status) })}
           t={t}
           locale={locale}
         />

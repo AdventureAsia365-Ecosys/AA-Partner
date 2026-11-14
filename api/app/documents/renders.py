@@ -9,6 +9,9 @@
 - **Proposal** (``proposal_pdf``): the version's text proposal (the e-mail text of :mod:`app.proposals.text_render`,
   the price visibility the agent chose).
 - **Voucher** (``voucher``): one confirmed service for the travellers (:mod:`app.travel_ops.vouchers`).
+- **Signed agreement** (``signed_agreement``, AA-1012): the sealed e-sign envelope of one traveller (booking terms,
+  waiver, insurance declination, the audit page with signer and times) as printed pages; built at download and signed
+  PAdES-B-B by :mod:`app.esign.pades` (nothing stored, no job).
 
 Labels are English or Vietnamese (the agency's locale); the content is the agency's own wording.
 """
@@ -20,6 +23,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from app.documents.pdf import MUTED, Document
+from app.esign import envelope as esign_envelope
 
 STRINGS: dict[str, dict[str, str]] = {
     "en": {
@@ -66,6 +70,24 @@ STRINGS: dict[str, dict[str, str]] = {
         "lead_role": "lead",
         "adults": "{n} adults",
         "children": "{n} children",
+        "signed_agreement": "Signed agreement",
+        "signed_at": "Signed at (UTC)",
+        "envelope_sha256": "Envelope SHA-256",
+        "seal": "Platform seal",
+        "seal_kms": "KMS RSASSA-PSS SHA-256",
+        "seal_dev": "Test seal (not legal evidence)",
+        "seal_verified": "checked",
+        "seal_unchecked": "not checked",
+        "document_of": "Document {i} of {n}: {title}",
+        "version": "Version",
+        "audit_page": "Audit page",
+        "envelope_text": "Sealed envelope",
+        "verify_note": "This PDF carries a PAdES digital signature made with the platform seal key. The sealed "
+        "envelope is attached to this file as envelope.txt and its seal as seal.json; the SHA-256 of envelope.txt is "
+        "the envelope SHA-256 above.",
+        "kind.booking_terms": "Booking terms",
+        "kind.waiver": "Traveller waiver",
+        "kind.insurance_declination": "Travel insurance declination",
     },
     "vi": {
         "confirmation": "Xác nhận đặt chỗ",
@@ -111,6 +133,24 @@ STRINGS: dict[str, dict[str, str]] = {
         "lead_role": "đại diện",
         "adults": "{n} người lớn",
         "children": "{n} trẻ em",
+        "signed_agreement": "Thoả thuận đã ký",
+        "signed_at": "Thời điểm ký (UTC)",
+        "envelope_sha256": "SHA-256 của bộ hồ sơ",
+        "seal": "Con dấu nền tảng",
+        "seal_kms": "KMS RSASSA-PSS SHA-256",
+        "seal_dev": "Con dấu thử (không có giá trị pháp lý)",
+        "seal_verified": "đã kiểm tra",
+        "seal_unchecked": "chưa kiểm tra",
+        "document_of": "Tài liệu {i}/{n}: {title}",
+        "version": "Phiên bản",
+        "audit_page": "Trang kiểm chứng",
+        "envelope_text": "Bộ hồ sơ đã niêm phong",
+        "verify_note": "Tệp PDF này mang chữ ký số PAdES tạo bằng khoá con dấu của nền tảng. Bộ hồ sơ đã niêm phong "
+        "được đính kèm trong tệp là envelope.txt, con dấu là seal.json; SHA-256 của envelope.txt chính là SHA-256 "
+        "của bộ hồ sơ ở trên.",
+        "kind.booking_terms": "Điều khoản đặt chỗ",
+        "kind.waiver": "Cam kết miễn trừ trách nhiệm",
+        "kind.insurance_declination": "Từ chối bảo hiểm du lịch",
     },
 }
 MONTHS = {
@@ -284,4 +324,45 @@ def voucher(trip: dict[str, Any], v: dict[str, Any], locale: str) -> bytes:
     ])  # fmt: skip
     doc.rule()
     doc.small(s["present"])
+    return doc.render()
+
+
+def signed_agreement(view: dict[str, Any], locale: str) -> bytes:
+    """``view``: agency_name, envelope_text (the sealed canonical text), envelope_sha256 (hex), signed_at (ISO),
+    seal_alg, seal_verified (True / None; a False seal never reaches a PDF). The envelope's own lines are printed as
+    they were sealed; only the section titles and the summary labels follow ``locale``."""
+    s = _s(locale)
+    doc = _doc(s["signed_agreement"], view.get("agency_name"))
+    alg = view.get("seal_alg") or ""
+    seal = s["seal_dev"] if alg.startswith("dev-") else s["seal_kms"]
+    seal += f" ({s['seal_verified'] if view.get('seal_verified') else s['seal_unchecked']})"
+    signed = str(view.get("signed_at") or "")
+    parsed = esign_envelope.parse(view.get("envelope_text") or "")
+    doc.pairs([
+        (s["signed_at"], signed[:19].replace("T", " ") if signed else None),
+        (s["seal"], seal),
+        (s["envelope_sha256"], view.get("envelope_sha256")),
+    ])  # fmt: skip
+    if parsed is None:
+        doc.rule()
+        doc.text(s["envelope_text"], size=12, bold=True)
+        doc.text(view.get("envelope_text") or "", size=9)
+    else:
+        for line in parsed.header:
+            doc.text(line, size=10, gap=1)
+        titles = {v: k for k, v in esign_envelope.KIND_TITLES.items()}
+        for i, item in enumerate(parsed.documents, start=1):
+            doc.rule()
+            kind = titles.get(item.title)
+            title = s[f"kind.{kind}"] if kind else item.title
+            doc.text(s["document_of"].format(i=i, n=len(parsed.documents), title=title), size=12, bold=True)
+            doc.small(f"{s['version']}: {item.version}")
+            for paragraph in item.text.split("\n\n"):
+                doc.text(paragraph, gap=6)
+        doc.rule()
+        doc.text(s["audit_page"], size=12, bold=True)
+        for line in parsed.audit:
+            doc.text(line, size=8.5, gap=1)
+    doc.rule()
+    doc.small(s["verify_note"])
     return doc.render()
