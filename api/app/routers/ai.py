@@ -72,9 +72,9 @@ class _Body(BaseModel):
 FeedbackCode = Literal["good", "wrong_facts", "wrong_tone", "not_relevant", "too_long", "other"]
 # Request body bounds (AA-965): technical caps above the highest value the admin settings allow; the settings
 # (crm.ai.*_max_chars) are the policy and are checked in the services.
-SOURCE_TEXT_BOUND = 60_000  # technical-constant: = crm.ai.supplier_confirm_max_chars max_value (crm-077)
-NOTES_TEXT_BOUND = 30_000  # technical-constant: = crm.ai.notes_options_max_chars max_value (crm-077)
-APPLY_LINES_BOUND = 50  # technical-constant: = crm.ai.supplier_confirm_max_lines max_value (crm-077)
+SOURCE_TEXT_BOUND = 60_000  # technical-constant: = crm.ai.supplier_confirm_max_chars max_value (crm-070)
+NOTES_TEXT_BOUND = 30_000  # technical-constant: = crm.ai.notes_options_max_chars max_value (crm-070)
+APPLY_LINES_BOUND = 50  # technical-constant: = crm.ai.supplier_confirm_max_lines max_value (crm-070)
 
 
 class AiSettingsIn(_Body):

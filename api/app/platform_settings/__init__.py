@@ -56,7 +56,7 @@ SCHEMA = "crm"
 AI_BUDGET_MAX = "crm.ai.budget_max_usd"
 AI_BUDGET_DEFAULT = "crm.ai.budget_default_usd"
 AI_DRAFT_MAX_TOKENS = "crm.ai.draft_reply_max_tokens"
-# AA-965 (crm-077): the CRM-33b AI features (supplier confirmations, notes to options, voice profiles).
+# AA-965 (crm-070): the CRM-33b AI features (supplier confirmations, notes to options, voice profiles).
 AI_SUPPLIER_CONFIRM_MAX_TOKENS = "crm.ai.supplier_confirm_max_tokens"
 AI_SUPPLIER_CONFIRM_MAX_CHARS = "crm.ai.supplier_confirm_max_chars"
 AI_SUPPLIER_CONFIRM_MAX_LINES = "crm.ai.supplier_confirm_max_lines"

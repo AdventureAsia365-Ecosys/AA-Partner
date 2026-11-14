@@ -7,7 +7,7 @@ block, so nothing a member types about a voice ever reaches the model (the name 
 picker only). Every member reads the agency's voices and uses any of them on a draft; a member edits and deletes their
 own (the owner every voice). How many voices one member keeps is the admin-editable setting
 ``crm.ai.voice_profiles_per_member_max`` (AA-1096: never a literal), checked under a per-member advisory lock so two
-requests cannot both pass at the limit. Delete is a hard delete (crm-076: never trashed); a draft that used a deleted
+requests cannot both pass at the limit. Delete is a hard delete (crm-069: never trashed); a draft that used a deleted
 voice keeps its id as history.
 """
 
@@ -23,7 +23,7 @@ from app.tenancy import TenantContext
 
 LOCALES = ("en", "vi")
 CHANNELS = ("email", "whatsapp")
-# The closed lists of the descriptor codes (crm-076 COMMENT); the first value of each is the default.
+# The closed lists of the descriptor codes (crm-069 COMMENT); the first value of each is the default.
 DESCRIPTORS: dict[str, tuple[str, ...]] = {
     "formality": ("neutral", "formal", "casual"),
     "warmth": ("warm", "neutral", "direct"),

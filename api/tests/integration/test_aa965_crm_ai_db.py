@@ -1,4 +1,4 @@
-"""AA-965 (card CRM-33b) on PostgreSQL with the RDS role shape, after crm-076: the real ``tenant_tx()``, a stub
+"""AA-965 (card CRM-33b) on PostgreSQL with the RDS role shape, after crm-069: the real ``tenant_tx()``, a stub
 gateway (no network, cost 0), the vault and the crm.ai_draft / crm.llm_call / crm.voice_profile rows.
 
 - R10: a run on a flight supplier's open lines stores one pending ``supplier_confirmation`` draft next to its
