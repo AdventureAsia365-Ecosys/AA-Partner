@@ -101,6 +101,23 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   either direction: the isolation probe asserts 42501 both ways), never writes content (ADR 0002), never owns prices
   (ADR 0005: Booking does).
 
+## Run it locally
+
+The shortest path that works without AWS access. The [README](README.md#run-the-tests) has the full commands.
+
+| Part | Command | Needs |
+|---|---|---|
+| Python setup | `cd api && python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt` | Python 3.12 |
+| Unit tests | `ENVIRONMENT=test .venv/bin/pytest tests/unit -q` (in `api/`) | nothing else: no database, no AWS |
+| API | `ENVIRONMENT=local .venv/bin/uvicorn app.main:app --port 8010`, then `curl -s localhost:8010/crm/health` | nothing for liveness (the database is optional at start); `/crm/health/ready` and every data route need one |
+| Integration tests | `.venv/bin/python -m tests.integration.bootstrap_roles <superuser-dsn>`, then `.venv/bin/pytest tests/integration -q` with the admin DSN set as in the README | a throwaway PostgreSQL 15 database whose name ends in `_test` or `_ci` |
+| Agency app | `cd web && npm ci && npm run dev` (port 3005); `npm test`, `npm run typecheck` | Node 22; a worktree, never the main checkout of the workspace |
+| Synthetic agencies | `.venv/bin/python -m app.seed` (in `api/`): a DRY RUN unless told otherwise | a database |
+| Pre-push checks | `scripts/install-hooks.sh` once per clone; each push then runs `scripts/pre-push.sh` | |
+
+- Never point a local run at the Dev database. A full `npm run build` of `web/` needs
+  `NODE_OPTIONS=--max-old-space-size=1536` on a workstation with little memory (README).
+
 ## Stack (same as AA-Booking)
 
 | Part | Choice |
