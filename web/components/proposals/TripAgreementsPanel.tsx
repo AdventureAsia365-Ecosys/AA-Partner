@@ -117,22 +117,14 @@ export function TripAgreementsPanel({
                       {sig.seal_alg && <span style={{ color: K.muted }}>{tr(sig.seal_alg.startsWith("dev-") ? "esign.sealDev" : "esign.sealKms")}</span>}
                       {sig.envelope_sha256 &&
                         (opening === sig.request_id ? (
-                          <>
-                            <select aria-label={tr("esign.reason")} value={reason} onChange={(e) => setReason(e.target.value)} style={select} data-testid="esign-reason">
-                              <option value="">{tr("esign.reason")}</option>
-                              {REVEAL_REASONS.map((r) => (
-                                <option key={r} value={r}>
-                                  {tr(`why.${r}`)}
-                                </option>
-                              ))}
-                            </select>
-                            <Button size="sm" variant="secondary" disabled={!reason || busy} onClick={() => void open(sig.request_id)}>
-                              {tr("esign.view")}
-                            </Button>
-                            <Button size="sm" variant="secondary" disabled={!reason || busy} testId="esign-download-pdf" onClick={() => void downloadPdf(sig.request_id)}>
-                              {tr("esign.downloadPdf")}
-                            </Button>
-                          </>
+                          <RevealControls
+                            reason={reason}
+                            busy={busy}
+                            tr={tr}
+                            onReason={setReason}
+                            onView={() => void open(sig.request_id)}
+                            onPdf={() => void downloadPdf(sig.request_id)}
+                          />
                         ) : (
                           <Button size="sm" variant="ghost" disabled={!hydrated} onClick={() => setOpening(sig.request_id)}>
                             {tr("esign.view")}
@@ -195,5 +187,42 @@ export function TripAgreementsPanel({
         )}
       </Modal>
     </Panel>
+  );
+}
+
+/** The reason picker of a reveal and its two actions: view the sealed text, or download the signed PDF (AA-1012). */
+function RevealControls({
+  reason,
+  busy,
+  tr,
+  onReason,
+  onView,
+  onPdf,
+}: {
+  reason: string;
+  busy: boolean;
+  tr: (key: string) => string;
+  onReason: (value: string) => void;
+  onView: () => void;
+  onPdf: () => void;
+}) {
+  const blocked = !reason || busy;
+  return (
+    <>
+      <select aria-label={tr("esign.reason")} value={reason} onChange={(e) => onReason(e.target.value)} style={select} data-testid="esign-reason">
+        <option value="">{tr("esign.reason")}</option>
+        {REVEAL_REASONS.map((r) => (
+          <option key={r} value={r}>
+            {tr(`why.${r}`)}
+          </option>
+        ))}
+      </select>
+      <Button size="sm" variant="secondary" disabled={blocked} onClick={onView}>
+        {tr("esign.view")}
+      </Button>
+      <Button size="sm" variant="secondary" disabled={blocked} testId="esign-download-pdf" onClick={onPdf}>
+        {tr("esign.downloadPdf")}
+      </Button>
+    </>
   );
 }

@@ -75,6 +75,7 @@ from fastapi.responses import JSONResponse
 from app.db import request_pool
 from app.documents.store import require_store
 from app.errors import NotFound
+from app.portal import agreements as portal_agreements
 from app.portal import public as portal
 from app.proposals import public as proposal_page
 from app.ratelimit import PublicRateLimit, client_address
@@ -686,7 +687,7 @@ async def get_traveller_agreement_pdf(
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     return _json(
-        await portal.agreement_pdf(
+        await portal_agreements.agreement_pdf(
             pool,
             keys,
             _cookie_token(token),

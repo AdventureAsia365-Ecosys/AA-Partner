@@ -229,6 +229,7 @@ async def test_esign_v1_end_to_end(app_pool: asyncpg.Pool) -> None:
 
     from app.esign import certificate, pades
     from app.esign.seal import KmsSealer
+    from app.portal import agreements as portal_agreements
     from tests.unit.test_aa1012_pades import SoftKms, _ca
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
@@ -243,16 +244,15 @@ async def test_esign_v1_end_to_end(app_pool: asyncpg.Pool) -> None:
     status = await async_validate_pdf_signature(sig, ValidationContext(trust_roots=[_ca(pem)], allow_fetching=False))
     assert status.bottom_line and sig.sig_object["/SubFilter"] == "/ETSI.CAdES.detached"
     assert got["envelope_sha256"] == by[str(s["lead"])]["envelope_sha256"] and got["seal_verified"] is True
-    own = await portal.agreement_pdf(app_pool, s["keys"], lead_token, lead_session, str(s["lead"]), sealer=SEALER,
-                                     pades=signer)  # fmt: skip
+    pdf_for = portal_agreements.agreement_pdf
+    own = await pdf_for(app_pool, s["keys"], lead_token, lead_session, str(s["lead"]), sealer=SEALER, pades=signer)
     assert own["envelope_sha256"] == by[str(s["lead"])]["envelope_sha256"]
-    minor = await portal.agreement_pdf(app_pool, s["keys"], lead_token, lead_session, str(s["companion"]),
-                                       sealer=SEALER, pades=signer)  # fmt: skip
+    minor = await pdf_for(app_pool, s["keys"], lead_token, lead_session, str(s["companion"]), sealer=SEALER,
+                          pades=signer)  # fmt: skip
     assert minor["envelope_sha256"] == by[str(s["companion"])]["envelope_sha256"]
-    mine = await portal.agreement_pdf(app_pool, s["keys"], child_token, child_session, str(s["companion"]),
-                                      sealer=SEALER, pades=signer)  # fmt: skip
+    mine = await pdf_for(app_pool, s["keys"], child_token, child_session, str(s["companion"]), sealer=SEALER,
+                         pades=signer)  # fmt: skip
     assert mine["filename"].endswith(".pdf")
     with pytest.raises(Forbidden) as err:
-        await portal.agreement_pdf(app_pool, s["keys"], child_token, child_session, str(s["lead"]), sealer=SEALER,
-                                   pades=signer)  # fmt: skip
+        await pdf_for(app_pool, s["keys"], child_token, child_session, str(s["lead"]), sealer=SEALER, pades=signer)
     assert err.value.code == "envelope_not_yours"

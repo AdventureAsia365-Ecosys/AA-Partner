@@ -35,7 +35,7 @@ from app.esign import certificate, pades, service
 from app.esign import envelope as env
 from app.esign.seal import KMS_ALG, DevStubSealer, KmsSealer
 from app.main import create_app
-from app.portal import public as portal
+from app.portal import agreements as portal_agreements
 from app.routers import client_pages
 from app.routers import esign as esign_router
 from app.settings import Settings
@@ -396,7 +396,7 @@ async def test_a_broken_envelope_or_seal_gives_no_pdf(seal_key: rsa.RSAPrivateKe
 
 async def _portal_pdf(monkeypatch: pytest.MonkeyPatch, row: Any, traveler: Any = LEAD) -> tuple[Any, Any]:
     conn = _signed_in(ScriptedConn()).on("ORDER BY signed_at DESC LIMIT 1", row)
-    ctx = _portal(monkeypatch, conn)
+    ctx = _portal(monkeypatch, conn, module=portal_agreements)
     calls: list[Any] = []
 
     async def signed_pdf(*args: Any, **kw: Any) -> dict[str, Any]:
@@ -404,14 +404,14 @@ async def _portal_pdf(monkeypatch: pytest.MonkeyPatch, row: Any, traveler: Any =
         return {"filename": "x.pdf"}
 
     monkeypatch.setattr(service, "signed_pdf", signed_pdf)
-    out = await portal.agreement_pdf(object(), object(), TOKEN, "s", traveler, sealer=None, pades=None)  # type: ignore[arg-type]
+    out = await portal_agreements.agreement_pdf(object(), object(), TOKEN, "s", traveler, sealer=None, pades=None)  # type: ignore[arg-type]
     return (out, calls, ctx)  # type: ignore[return-value]
 
 
 @pytest.mark.asyncio
 async def test_the_traveller_downloads_only_their_own_or_their_minors(monkeypatch: pytest.MonkeyPatch) -> None:
     with _raises(NotFound, "signature_not_found"):
-        await portal.agreement_pdf(object(), object(), TOKEN, "s", "not-an-id", sealer=None, pades=None)  # type: ignore[arg-type]
+        await portal_agreements.agreement_pdf(object(), object(), TOKEN, "s", "not-an-id", sealer=None, pades=None)  # type: ignore[arg-type]
     with _raises(NotFound, "signature_not_found"):
         await _portal_pdf(monkeypatch, None)
     own = {"request_id": REQUEST, "traveler_id": LEAD, "signer_traveler_id": None}
@@ -473,7 +473,7 @@ def test_the_traveller_pdf_route(pools: LocalPools, monkeypatch: pytest.MonkeyPa
         seen.append((token, session, traveler, sorted(kw)))
         return {"filename": "x.pdf", "content_b64": "JVBERg=="}
 
-    monkeypatch.setattr(portal, "agreement_pdf", agreement_pdf)
+    monkeypatch.setattr(portal_agreements, "agreement_pdf", agreement_pdf)
     path = f"/crm/public/v1/traveller/agreements/{LEAD}/pdf"
     with TestClient(app, base_url="https://go.test") as client:
         assert client.get(path).status_code == 404  # no link cookie

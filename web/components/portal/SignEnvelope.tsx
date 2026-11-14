@@ -125,24 +125,7 @@ export function SignEnvelope({
         <p key={e.traveler_id} style={{ margin: 0, fontSize: 14, color: e.signed ? K.success : K.body }} data-testid={e.for === "self" ? (e.signed ? "portal-signed" : "portal-envelope-self") : `portal-envelope-minor-${e.minor_number}`}>
           {label(e)}: {e.signed ? signedLine(e) : t("client.waiverMissing")}
           {e.signed && e.insurance_choice ? ` · ${t(`client.insurance.${e.insurance_choice}`)}` : ""}
-          {e.signed && base && (
-            <>
-              {" · "}
-              <LinkButton
-                size="inherit"
-                disabled={fetching !== null}
-                testId={e.for === "self" ? "portal-signed-pdf" : `portal-signed-pdf-minor-${e.minor_number}`}
-                onClick={async () => {
-                  setFetching(e.traveler_id);
-                  const res = await downloadSigned(base, e.traveler_id);
-                  setFetching(null);
-                  if (res.status !== 200) onError?.(res.status, res.detail);
-                }}
-              >
-                {t("client.downloadSignedPdf")}
-              </LinkButton>
-            </>
-          )}
+          <SignedPdfLink base={base} envelope={e} busy={fetching !== null} onBusy={setFetching} onError={onError} t={t} />
           {!e.signed && !locked && open.length > 1 && e.traveler_id !== current?.traveler_id && (
             <>
               {" "}
@@ -236,5 +219,39 @@ export function SignEnvelope({
         </div>
       )}
     </section>
+  );
+}
+
+/** " · Download PDF" after a signed envelope (AA-1012); nothing for an unsigned one or without the API base. */
+function SignedPdfLink({
+  base,
+  envelope,
+  busy,
+  onBusy,
+  onError,
+  t,
+}: {
+  base?: string;
+  envelope: PortalEnvelope;
+  busy: boolean;
+  onBusy: (travelerId: string | null) => void;
+  onError?: (status: number, detail: string | null) => void;
+  t: (k: string) => string;
+}) {
+  if (!envelope.signed || !base) return null;
+  const api = base;
+  async function fetchPdf() {
+    onBusy(envelope.traveler_id);
+    const res = await downloadSigned(api, envelope.traveler_id);
+    onBusy(null);
+    if (res.status !== 200) onError?.(res.status, res.detail);
+  }
+  return (
+    <>
+      {" · "}
+      <LinkButton size="inherit" disabled={busy} testId={envelope.for === "self" ? "portal-signed-pdf" : `portal-signed-pdf-minor-${envelope.minor_number}`} onClick={() => void fetchPdf()}>
+        {t("client.downloadSignedPdf")}
+      </LinkButton>
+    </>
   );
 }

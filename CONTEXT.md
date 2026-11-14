@@ -1842,8 +1842,8 @@ signing in `app/portal/public.py`, the terms re-accept in `app/proposals/public.
   `api/app/esign/certs/seal-chain-<environment>.pem` (Dev: a self-issued company CA made by
   `api/scripts/esign_seal_certificate.py`, CA key discarded; prod CA at go-live), checked against `kms:GetPublicKey`
   before the first signature (503 `pdf_seal_mismatch`). Agency: `POST /crm/v1/signatures/{id}/pdf` (a reveal with a
-  reason, field `envelope_pdf`); traveller: `GET /crm/public/v1/traveller/agreements/{traveler_id}/pdf` (own envelope or
-  one signed as guardian, else 403 `envelope_not_yours`). No KMS seal key or no chain file = 503
+  reason, field `envelope_pdf`); traveller: `GET /crm/public/v1/traveller/agreements/{traveler_id}/pdf` (`app/portal/agreements.py`; own
+  envelope or one signed as guardian, else 403 `envelope_not_yours`). No KMS seal key or no chain file = 503
   `pdf_seal_not_configured`; a stored seal KMS rejects = 503 `document_integrity`. Decisions:
   `docs/implementation-notes/AA-1012.md`.
 - **Card R**: every refused signing code (expired, wrong, missing, attempts used up) is a `signature_event`

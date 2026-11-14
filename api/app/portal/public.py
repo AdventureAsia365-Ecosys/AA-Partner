@@ -72,10 +72,8 @@ from app.documents.store import DocumentStore
 from app.errors import Conflict, Forbidden, Invalid, NotFound, RateLimited, Unavailable
 from app.esign import envelope as env
 from app.esign import events as sign_events
-from app.esign import service as esign_service
 from app.esign import signing
 from app.esign import terms as esign_terms
-from app.esign.pades import PadesSealer
 from app.esign.seal import Sealer, require_sealer
 from app.intake import stage1
 from app.intake.public import origin_allowed, record_drop
@@ -209,12 +207,6 @@ SIGNATURE_SQL = """
 SELECT request_id, status, signed_at, signer_role FROM crm.signature_request
  WHERE trip_id = $1 AND traveler_id = $2 AND doc_id = $3 AND status <> 'void' AND deleted_at IS NULL
    FOR UPDATE
-"""
-# AA-1012: the newest signed envelope of a traveller of the trip, and who signed it.
-SIGNED_ENVELOPE_SQL = """
-SELECT request_id, traveler_id, signer_traveler_id FROM crm.signature_request
- WHERE trip_id = $1 AND traveler_id = $2 AND status = 'signed' AND deleted_at IS NULL
- ORDER BY signed_at DESC LIMIT 1
 """
 INSERT_SIGNATURE_SQL = """
 INSERT INTO crm.signature_request (request_id, trip_id, traveler_id, access_id, doc_id, signer_traveler_id, signer_role)
@@ -1089,46 +1081,6 @@ async def open_document(
             access["access_id"],
             wanted,  # type: ignore[arg-type]
         )
-
-
-async def agreement_pdf(
-    pool: asyncpg.Pool,
-    keys: KeyProvider,
-    token: str,
-    session: str | None,
-    traveler_id: Any,
-    *,
-    sealer: Sealer | None,
-    pades: PadesSealer | None,
-) -> dict[str, Any]:
-    """AA-1012: the PAdES-signed PDF of a signed envelope for the signed-in traveller: their own envelope (whoever
-    signed it, a minor's included) or one they signed as guardian; 403 ``envelope_not_yours`` for anyone else's, 404
-    ``signature_not_found`` when the traveller has no signed envelope on this trip."""
-    try:
-        wanted = uuid.UUID(str(traveler_id))
-    except ValueError:
-        raise NotFound("signature_not_found") from None
-    async with client_link_tx(pool, hash_hex(token), purpose=PURPOSE) as (ctx, link):
-        access = await _signed_in(ctx, await _access(ctx, link), session)
-        row = await ctx.conn.fetchrow(SIGNED_ENVELOPE_SQL, access["trip_id"], wanted)
-        if row is None:
-            raise NotFound("signature_not_found")
-        me = access["traveler_id"]
-        if row["traveler_id"] != me and row["signer_traveler_id"] != me:
-            ctx.audit("portal_document", "denied", "signature_request", str(row["request_id"]),
-                      reason="envelope_not_yours")  # fmt: skip
-            raise Forbidden("envelope_not_yours", "you can download your own signed documents")
-        out = await esign_service.signed_pdf(
-            ctx,
-            Vault(keys, ctx),  # type: ignore[arg-type]
-            sealer,
-            pades,
-            row["request_id"],
-            action="portal_document",
-        )
-        ctx.audit("portal_document", "allowed", "signature_request", str(row["request_id"]),
-                  fields=("envelope_pdf",), object_ids=(str(access["access_id"]),))  # fmt: skip
-        return out
 
 
 async def invite_companion(
