@@ -6,11 +6,16 @@
 //                                     AA-936 and later cards) and, since AA-979 P2b, the public trip page
 //                                     /trip/<tourId> (moved from the CIS admin host); no agency route, no BFF, no
 //                                     sign-in
+//   academy host (Dev academy.)      AA-1105 (root ADR 0022 decisions 2 and 6): the AA Academy only: /academy/* (pages,
+//                                     its own sign-in, its BFF), the public certificate verify page /verify/<code>, the
+//                                     language switch and static files; "/" goes to /academy. Every agency, studio,
+//                                     staff-console and client route answers 404 there, and /academy and /verify answer
+//                                     404 on the partner and client hosts (local development serves them on localhost)
 //   any other Host                   404 (the ALB already sends only the partner host here; this is the second line)
 //
 // Cookies are host-only (lib/session.ts), so the two hosts never share a session. Edge-safe: no Node API.
 
-export type HostKind = "partner" | "client" | "unknown";
+export type HostKind = "partner" | "client" | "academy" | "unknown";
 
 /** Paths the client host serves. Everything else on it is 404. */
 export const CLIENT_PATH_PREFIXES = [
@@ -62,10 +67,12 @@ export function hostOnly(hostHeader: string | null): string {
 
 export function classifyHost(
   hostHeader: string | null,
-  cfg: { partnerHosts: string[]; clientHosts: string[]; environment: string },
+  cfg: { partnerHosts: string[]; clientHosts: string[]; academyHosts?: string[]; environment: string },
 ): HostKind {
   const host = hostOnly(hostHeader);
   if (!host) return "unknown";
+  // AA-1105: checked first, so an academy host listed by mistake in another list still serves the academy only.
+  if ((cfg.academyHosts ?? []).includes(host)) return "academy";
   if (cfg.partnerHosts.includes(host)) return "partner";
   if (cfg.clientHosts.includes(host)) return "client";
   const bare = host.replace(/:\d+$/, "");
@@ -141,3 +148,42 @@ export function isApiKeySignIn(pathname: string): boolean {
 
 /** The studio home: where a tenant lands (root ADR 0019 d7) and where the retired API-key sign-in now leads. */
 export const STUDIO_HOME_PATH = "/portal/dashboard";
+
+// ── AA-1105 (root ADR 0022): the AA Academy host ───────────────────────────────────────────────────────────────────
+
+/** The academy's own prefix: pages, sign-in (/academy/auth), BFF (/academy/bff), captions (/academy/captions). */
+export const ACADEMY_PREFIX = "/academy";
+/** The public certificate verify page (learn.http.v1 CertificateCode.verify_path "/verify/<code>"). */
+export const VERIFY_PREFIX = "/verify/";
+
+/** Paths the academy host serves besides /academy/* and /verify/*: static files, liveness, the language switch. */
+export const ACADEMY_EXTRA_PATHS = [
+  "/_next/",
+  "/healthz",
+  "/favicon.ico",
+  "/icon.svg",
+  "/robots.txt",
+  "/prefs/locale",
+] as const;
+
+/** Whether a path belongs to the academy (its pages or the public verify page): 404 on every other host. */
+export function isAcademyPath(pathname: string): boolean {
+  return pathname === ACADEMY_PREFIX || pathname.startsWith(`${ACADEMY_PREFIX}/`) || pathname.startsWith(VERIFY_PREFIX);
+}
+
+/** Whether the academy host serves a path at all (everything else there is 404). */
+export function academyPathAllowed(pathname: string): boolean {
+  return isAcademyPath(pathname) || matches(pathname, ACADEMY_EXTRA_PATHS);
+}
+
+/** Whether a request's Host may reach the academy's route handlers: the academy host (or localhost in development). */
+export function academyHostAllowed(
+  hostHeader: string | null,
+  cfg: { partnerHosts: string[]; clientHosts: string[]; academyHosts?: string[]; environment: string },
+): boolean {
+  const kind = classifyHost(hostHeader, cfg);
+  if (kind === "academy") return true;
+  const localDev = cfg.environment === "local" || cfg.environment === "test";
+  const bare = hostOnly(hostHeader).replace(/:\d+$/, "");
+  return localDev && kind === "partner" && (bare === "localhost" || bare === "127.0.0.1");
+}

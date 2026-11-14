@@ -20,6 +20,7 @@ import { commissionEn, commissionVi } from "./i18nCommission";
 import { offlineEn, offlineVi } from "./i18nOffline";
 import { opsReleaseEn, opsReleaseVi } from "./i18nOpsRelease";
 import { staffEn, staffVi } from "./i18nStaff";
+import { academyEn, academyVi } from "./i18nAcademy";
 import { supportEn, supportVi } from "./i18nSupport";
 import { addOnsEn, addOnsVi } from "./i18nAddOns";
 import { pluralsEn, pluralsVi } from "./i18nPlurals";
@@ -76,6 +77,7 @@ const en = {
   ...tripClosedEn, // AA-957 round 3: a cancelled trip on every card, lead sources (lib/i18nTripClosed.ts)
   ...pluralsEn, // AA-957 round 3: the singular of counted messages, read by plural() (lib/i18nPlurals.ts)
   ...staffEn, // AA-1019: the AA staff console, S-02 and S-04 (lib/i18nStaff.ts)
+  ...academyEn, // AA-1105: the AA Academy host (lib/i18nAcademy.ts)
   ...messagingEn, // AA-958: SMS and WhatsApp, Settings > Channels and the trip panel (lib/i18nMessaging.ts)
   ...workflowsEn, // AA-959: Tasks, Automations, the trip's automations panel, workflow task kinds (lib/i18nWorkflows.ts)
   ...retailPricingEn, // AA-1066: traveller prices, price rules, the discount and its approval (lib/i18nRetailPricing.ts)
@@ -2803,6 +2805,7 @@ const vi: Record<MessageKey, string> = {
   ...tripClosedVi,
   ...pluralsVi,
   ...staffVi,
+  ...academyVi,
   ...messagingVi,
   ...workflowsVi,
   ...retailPricingVi,

@@ -13,6 +13,7 @@ import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:cr
 // "invite" / "invite-claim" / "invite-notice": the invitation token, the claim result and the "already claimed" notice
 // of the join pages (AA-939, lib/invite.ts; the notice has its own purpose and cookie since S263).
 // "staff-*": the AA staff console's own cookies (AA-1019, lib/staffSession.ts), sealed with STAFF_SESSION_SECRET.
+// "academy-*": the AA Academy's own cookies (AA-1105, lib/academySession.ts), sealed with ACADEMY_SESSION_SECRET.
 export type Purpose =
   | "session"
   | "refresh"
@@ -23,7 +24,10 @@ export type Purpose =
   | "invite-notice"
   | "staff-session"
   | "staff-refresh"
-  | "staff-oauth-tx";
+  | "staff-oauth-tx"
+  | "academy-session"
+  | "academy-refresh"
+  | "academy-oauth-tx";
 
 const VERSION = 1;
 const IV_BYTES = 12;
