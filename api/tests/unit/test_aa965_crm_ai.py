@@ -12,23 +12,28 @@ import ast
 import datetime as dt
 import re
 import uuid
+from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app import platform_settings as ps
+from app.booking.client import BookingUnavailable
 from app.booking.contract import Component, Product
 from app.errors import Conflict, Forbidden, Invalid, NotFound, PayloadTooLarge
 from app.llm import agency_ai, ai_drafts, notes_options, structured, supplier_confirm, voices
 from app.llm import gateway as gateway_module
 from app.llm.providers.bedrock import BedrockConverseProvider
+from app.main import create_app
 from app.platform_settings.reader import _Row
 from app.privacy.scrubber import KnownValues
+from app.routers import ai as ai_router
+from tests.tokens import LocalPools
 from tests.unit.fakes import ScriptedConn
-from tests.unit.slice_fakes import MEMBER, OTHER_MEMBER, FakeVault, tenant_ctx
-
+from tests.unit.slice_fakes import MEMBER, OTHER_MEMBER, TENANT, FakeVault, fake_tx, tenant_ctx
 
 API = Path(__file__).resolve().parents[2]
 CALL_ID = "00000000-0000-4000-8000-000000000965"
@@ -590,3 +595,107 @@ async def test_the_gateway_passes_the_stage_cap_to_the_provider() -> None:
     assert result.outcome == "ok" and seen == [444]
     await gw.call(tenant_ctx(c), stage="crm_draft_reply", role="writer", prompt="hello", system="s")
     assert seen == [444, None]
+
+
+# ── Routes ──────────────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture(scope="module")
+def pools() -> LocalPools:
+    return LocalPools()
+
+
+async def _pool(_request: Any) -> object:
+    return object()
+
+
+class FakeProducts:
+    def __init__(self, products: dict[str, Any] | Exception) -> None:
+        self.answer = products
+
+    async def products(self, _tenant_id: uuid.UUID) -> dict[str, Any]:
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        return self.answer
+
+
+def _client(
+    pools: LocalPools, monkeypatch: pytest.MonkeyPatch, c: ScriptedConn, *, role: str = "agent",
+    gateway: Any = None, products: Any = None,
+) -> Iterator[tuple[TestClient, dict[str, str]]]:  # fmt: skip
+    settings = pools.settings()
+    app = create_app(settings, verifier=pools.verifier(settings), keys=object())
+    monkeypatch.setattr(ai_router, "request_pool", _pool)
+    monkeypatch.setattr(ai_router, "tenant_tx", fake_tx(tenant_ctx(c, role=role)))
+    monkeypatch.setattr(ai_router, "Vault", lambda keys, ctx: FakeVault())
+    monkeypatch.setattr(ai_router, "require_keys", lambda keys: keys)
+    headers = {"Authorization": f"Bearer {pools.partner_web()}", "X-AA-Tenant-Id": str(TENANT)}
+    with TestClient(app) as client:
+        client.app.state.llm_gateway = gateway or RecordingGateway(ANSWER)  # type: ignore[attr-defined]
+        client.app.state.aa_products = products  # type: ignore[attr-defined]
+        yield client, headers
+
+
+def test_routes_voices(pools: LocalPools, monkeypatch: pytest.MonkeyPatch) -> None:
+    c = (
+        ScriptedConn()
+        .on("SELECT count(*) FROM crm.voice_profile", 0)
+        .on("INSERT INTO crm.voice_profile", VOICE)
+        .on("FROM crm.voice_profile WHERE voice_profile_id", _voice_row())
+        .on("FROM crm.voice_profile ORDER BY", [_voice_row()])
+    )
+    for client, headers in _client(pools, monkeypatch, c):
+        listed = client.get("/crm/v1/ai/voices", headers=headers).json()
+        assert listed["per_member_max"] == 4 and listed["mine"] == 1 and listed["voices"][0]["name"] == "Warm and short"
+        made = client.post(
+            "/crm/v1/ai/voices", headers=headers, json={"name": "Brisk", "descriptors": {"length": "short"}}
+        )
+        assert made.status_code == 201
+        assert client.patch(f"/crm/v1/ai/voices/{VOICE}", headers=headers, json={"locale": "vi"}).status_code == 200
+        assert client.delete(f"/crm/v1/ai/voices/{VOICE}", headers=headers).json()["deleted"] is True
+        bad = client.post("/crm/v1/ai/voices", headers=headers, json={"name": "x", "tone": "loud"})
+        assert bad.status_code == 422  # unknown body field
+        bad = client.post("/crm/v1/ai/voices", headers=headers, json={"name": "x", "descriptors": {"warmth": "icy"}})
+        assert bad.status_code == 422 and bad.json()["detail"] == "invalid_descriptors"
+
+
+def test_routes_supplier_confirmation_and_apply(pools: LocalPools, monkeypatch: pytest.MonkeyPatch) -> None:
+    c = supplier_conn()
+    gateway = RecordingGateway(ANSWER)
+    for client, headers in _client(pools, monkeypatch, c, gateway=gateway):
+        body = {"agency_supplier_id": str(SUPPLIER), "text": "Confirmed, reference SKY7Q2."}
+        res = client.post(f"/crm/v1/trips/{TRIP}/ai/supplier-confirmation", headers=headers, json=body)
+        assert res.status_code == 200 and res.json()["lines"][0]["booking_line_id"] == str(LINE_A)
+        both = {**body, "message_id": str(MESSAGE)}
+        bad = client.post(f"/crm/v1/trips/{TRIP}/ai/supplier-confirmation", headers=headers, json=both)
+        assert bad.status_code == 422 and bad.json()["detail"] == "source_required"
+
+    async def _confirm(*_: Any, **__: Any) -> dict[str, Any]:
+        return {}
+
+    monkeypatch.setattr(supplier_confirm.ledger_lines, "confirm", _confirm)
+    for client, headers in _client(pools, monkeypatch, apply_conn({LINE_A: _line(LINE_A)})):
+        apply = {"lines": [{"booking_line_id": str(LINE_A), "action": "confirm", "confirmation_no": "SKY7Q2"}]}
+        res = client.post(f"/crm/v1/ai/drafts/{DRAFT}/apply", headers=headers, json=apply)
+        assert res.status_code == 200 and res.json()["decision"] == "accepted"
+        res = client.post(f"/crm/v1/ai/drafts/{DRAFT}/apply", headers=headers, json={"lines": []})
+        assert res.status_code == 422
+        wrong = {"lines": [{"booking_line_id": str(LINE_A), "action": "cancel"}]}
+        assert client.post(f"/crm/v1/ai/drafts/{DRAFT}/apply", headers=headers, json=wrong).status_code == 422
+
+
+def test_routes_notes_options(pools: LocalPools, monkeypatch: pytest.MonkeyPatch) -> None:
+    c = options_conn().on("FROM crm.proposal_day d", DAY_ROW)
+    gateway = RecordingGateway('{"options": [{"code": "A1", "why": "Hills."}]}')
+    for client, headers in _client(pools, monkeypatch, c, gateway=gateway, products=FakeProducts(PRODUCTS)):
+        res = client.post(f"/crm/v1/proposal-days/{DAY}/ai/options", headers=headers, json={"notes": "Likes hills"})
+        assert res.status_code == 200 and res.json()["options"][0]["tour_source_id"] == "tour-hills"
+        assert len(gateway.calls) == 1
+    down = FakeProducts(BookingUnavailable("timeout"))
+    for client, headers in _client(pools, monkeypatch, c, gateway=gateway, products=down):
+        res = client.post(f"/crm/v1/proposal-days/{DAY}/ai/options", headers=headers)
+        assert res.status_code == 503 and res.json()["detail"] == "booking_unavailable"
+    for client, headers in _client(pools, monkeypatch, c, gateway=gateway, products=None):
+        res = client.post(f"/crm/v1/proposal-days/{DAY}/ai/options", headers=headers)
+        assert res.status_code == 503 and res.json()["detail"] == "booking_not_configured"
+    assert len(gateway.calls) == 1  # Booking down: no model call

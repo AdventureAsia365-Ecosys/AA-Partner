@@ -170,6 +170,19 @@ async def post_ai_draft(
         )
 
 
+# AA-965: registered before the generic "/ai/drafts/{id}/{decision}" route, which would otherwise take "apply" (and
+# answer 422 for a decision that is not accept / discard).
+@router.post("/ai/drafts/{draft_id}/apply")
+async def post_ai_draft_apply(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, draft_id: uuid.UUID, body: ApplyIn
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.AI_USE) as ctx:
+        return await supplier_confirm.apply(
+            ctx, draft_id, [line.model_dump() for line in body.lines], feedback_code=body.feedback_code
+        )
+
+
 @router.post("/ai/drafts/{draft_id}/{decision}")
 async def post_ai_draft_decision(
     request: Request,
@@ -233,17 +246,6 @@ async def post_supplier_confirmation(
             agency_supplier_id=body.agency_supplier_id,
             message_id=body.message_id,
             text=body.text,
-        )
-
-
-@router.post("/ai/drafts/{draft_id}/apply")
-async def post_ai_draft_apply(
-    request: Request, caller: CallerDep, tenant_id: TenantDep, draft_id: uuid.UUID, body: ApplyIn
-) -> dict[str, Any]:
-    pool = await request_pool(request)
-    async with tenant_tx(pool, caller, tenant_id, action=Action.AI_USE) as ctx:
-        return await supplier_confirm.apply(
-            ctx, draft_id, [line.model_dump() for line in body.lines], feedback_code=body.feedback_code
         )
 
 

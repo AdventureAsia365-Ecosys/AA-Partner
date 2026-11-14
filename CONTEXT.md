@@ -391,6 +391,8 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-062` | `api/migrations/062_crm_book_now_price_ceiling.sql` | AA-1092 residual (**contract**, MIG-4; crm-062..065 are other cards' of the same wave, independent): `tenant_settings.public_price_per_minute` (SMALLINT, default 60, CHECK 10..600): the "Book now" price checks a minute the agency's public page takes from every address together (per API task), the owner's setting on Settings > Payments "Online booking"; past it the price check answers 429 `agency_rate_limited`. |
 | `crm-063` | `api/migrations/063_crm_tour_retired_flag.sql` | AA-1093 part 1 (**expand**: one new table): `crm.tour_retired_flag` (one item of an agency trip on an AA tour Adventure Asia no longer serves: `kind` open_option / held_line / quoted_line / confirmed_line, `option_id` or `booking_line_id` as snapshot references, `state` open -> cleared (a `state` column, not `status`: no `crm.status_transition` rows, so the file stays expand), `raised_key` / `cleared_key` = the transition); one flag set per tour, transition and item, one open flag per item; cascades from the trip; hold guard `crm.guard_held_travel_doc` (CRM10); no reader grant. |
 | `crm-065` | `api/migrations/065_crm_aa_line_traveller_visibility.sql` | AA-1086 follow-up (S279 rehearsal REH-10-portal; **contract**: replaces a trigger function, MIG-4): `crm.guard_booking_line` section a lets a member (crm_app, not a job: / platform: actor) change only `visible_to_travelers` on a confirmed, live AA line (show or hide it to the trip's travellers; the code shows a confirmed AA line by default, tech lead 13/11/2026); every other member write to an AA line stays CRM24 `aa_line_read_only`. No backfill, no data written, no new table. |
+| `crm-076` | `api/migrations/076_crm_ai_voice_profiles_supplier_options.sql` | AA-965 CRM-33b (**contract**, MIG-4; crm-066..075 are other cards' of the S281 wave): `crm.voice_profile` (base template, R41: a member's writing voice for the reply draft: name, locale en / vi, channel email / whatsapp, `descriptors` = fixed codes only (formality, warmth, length, emoji, greeting, sign_off; at most 1000 bytes); never trashed, hard delete; cascades from `tenant_settings` and its member); `crm.ai_draft` kinds + `supplier_confirmation` / `notes_to_options`, `voice_profile_id` (no key, history), `validation` (the code's check of the answer: ids, codes, short references; object <= 16 KB; a voice only on a message draft); AI stages `crm_supplier_confirm` / `crm_notes_options` (writer) copied from the `crm_draft_reply` profile and route at apply time |
+| `crm-077` | `api/migrations/077_crm_ai_crm33b_settings.sql` | AA-965 CRM-33b (**contract**: config rows; ships in the code PR like crm-068, the settings lint binds seed, readers and compiled defaults): eight `crm.setting_definition` rows, area ai: `crm.ai.supplier_confirm_max_tokens` (800), `_max_chars` (12000), `_max_lines` (20), `crm.ai.notes_options_max_tokens` (600), `_max_chars` (8000), `_max_candidates` (80), `_max_suggestions` (5), `crm.ai.voice_profiles_per_member_max` (4) |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -2784,6 +2786,42 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   core's `insert_sql()` (it targets `shared.llm_call_log`) or the CIS contract views (guarded by that test). Coverage
   omits the copy (tested in CIS).
 
+## CRM-33b supplier confirmations, notes to AA options, voices (AA-965)
+
+Design v3 card CRM-33b (R10, R40, R41; root ADR 0019 b6); decisions in `docs/implementation-notes/AA-965.md`. Every
+call is a CRM gateway call (CRM-33a above: stage profile and kill switch, app profile, rate cap, the agency budget as a
+hard stop, `ai_enabled`, the F3 scrub with the trip's known values, the route, the `crm.llm_call` row); every run is
+behind the plan's `ai_assist` (403) and the AI switch (409) before anything is scrubbed or paid. Limits are settings
+(crm-077, read at each call); the stage's output cap is held by the gateway (`gateway.STAGE_OUTPUT_CAPS`).
+
+- **R10 supplier confirmations** (`app/llm/supplier_confirm.py`; `POST /crm/v1/trips/{id}/ai/supplier-confirmation`
+  `{agency_supplier_id, message_id | text}`, `ai_use`): only an **own** supplier of category flight, insurance, visa,
+  transport (transfers) or other (fees); the AA row is 403 `aa_line_read_only`, a hotel / activity / guide / restaurant
+  / DMC 422 `supplier_not_ancillary`. The source is an inbound e-mail on the trip's supplier request thread with that
+  supplier (crm-053) or pasted text; **only the body text** is read (never an attachment, never `crm.document`: a
+  passport image cannot reach a model; unit guard `test_ai_modules_never_read_documents_or_images`). The closed list is
+  that supplier's planning / requested agency lines of the trip (codes L1..Ln, at most `_max_lines`); any other code is
+  rejected in code. The run writes only a pending `crm.ai_draft` (`supplier_confirmation`, `validation` = the kept
+  lines, statuses, references, dates, times). `POST /crm/v1/ai/drafts/{id}/apply` `{lines: [{booking_line_id, action
+  confirm | back_to_planning, confirmation_no?}], feedback_code?}` (`ai_draft_approve` + `trip_edit`) writes the agent's
+  values through the normal "Record confirmation" / "Back to planning", one transaction, then accepts the draft; a line
+  outside the run's list is 422, an AA line 403 (audited). A plain "accept" of such a draft is 409 `draft_needs_apply`.
+- **R40 notes to AA options** (`app/llm/notes_options.py`; `POST /crm/v1/proposal-days/{id}/ai/options` `{notes?}`):
+  the day's closed list = the components of the products Booking sells this agency (`ProductCache.products`, read
+  outside the transaction) whose tour is `served` in `crm.aa_catalog_tour` and in the trip's countries, at most
+  `_max_candidates` (codes A1..An); kept picks at most `_max_suggestions`; the rest is rejected in code
+  (`not_in_closed_list`, `duplicate`, `over_limit`). The notes are the typed text or the trip's `crm.note` rows newest
+  first up to `_max_chars`. A preview only (`crm.ai_draft` `notes_to_options`, ids and codes in `validation`): the agent
+  adds an idea with the builder's normal AA add (a live Booking quote). Web: the builder drawer's "AI ideas" tab.
+- **R41 voices** (`app/llm/voices.py`; `GET / POST /crm/v1/ai/voices`, `PATCH / DELETE /crm/v1/ai/voices/{id}`): every
+  member reads and uses the agency's voices, adds their own up to `crm.ai.voice_profiles_per_member_max` (409
+  `voice_limit_reached`, counted under a per-member advisory lock), edits / deletes their own (the owner any). The draft
+  (`voice_profile_id`) adds fixed sentences of ours for the codes to its system block (prompt `crm-draft-voice-1`); the
+  voice's name never reaches the model. Web: Settings > AI > Voices and the draft drawer's voice picker.
+- AI boundary (next section): R10 reads a supplier's booking status for the agency and every change is reviewed by a
+  member before it is written; no feature here advises a client on insurance, visas or refunds. Every result shows the
+  staff `AiNotice`.
+
 ## AI boundary for high-risk advice (AA-820)
 
 The CRM sells non-AA ancillaries (flights, insurance, visas, transfers, fees; root ADR 0019 b6), so it is where an AI
@@ -2795,8 +2833,9 @@ feature could drift into advice the Anthropic Usage Policy (effective 12/11/2026
   told that AI was used.** The disclosure need not name the provider or the model.
 - General travel information that does not apply a rule to one client's situation ("a visa on arrival exists for many
   nationalities") is not advice (the policy's exclusion for general information).
-- Today this holds by design: the only AI feature is the reply / follow-up draft, which a member copies and sends by
-  hand (`approval_required: true`, CRM-33a above), under the staff `AiNotice`. A new AI feature that touches these
+- Today this holds by design: the AI features are the reply / follow-up draft, which a member copies and sends by
+  hand (`approval_required: true`, CRM-33a above), and the CRM-33b proposals (a supplier's booking status, AA option
+  ideas), which a member reviews before anything is written; all under the staff `AiNotice`. A new AI feature that touches these
   topics (an insurance or visa suggester, an auto-reply, a traveller-facing chat) must add the review step and the
   disclosure before it ships, and its design cites this section.
 - The agency-facing wording is in the terms of use (`web/lib/i18nTerms.ts`, keys `terms.ai.highRisk` and
