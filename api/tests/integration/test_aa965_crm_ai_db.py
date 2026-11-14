@@ -170,23 +170,30 @@ async def test_notes_to_options_keeps_only_the_closed_list(app_pool: asyncpg.Poo
                                                            Component("c-lodge", "hotel_room", 1))),
         "T-966": Product("T-966", "tp-966", True, False, (Component("c-paddle", "activity", 1),)),
     }  # fmt: skip
-    v = await _create(app_pool, s)
-    day = next(d for d in v["days"] if d["day_no"] == 2)
-    stub = JsonStub('{"options": [{"code": "A2", "why": "Wants a cosy lodge."}, {"code": "A3"}, {"code": "c-paddle"}]}')
-    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
-        row = await notes_options.day_of(ctx, uuid.UUID(day["proposal_day_id"]))
-        out = await notes_options.run(
-            ctx, LlmGateway(StubScrubber(), stub), Vault(s["keys"], ctx), row, products, destinations=["nepal"],
-            notes="The family wants a cosy lodge after the walk.",
-        )  # fmt: skip
-    assert "Lakeside paddle" not in stub.prompts[0]  # another country: not in the closed list
-    assert [(o["code"], o["component_id"]) for o in out["options"]] == [("A2", "c-lodge")]
-    assert out["closed_list_size"] == 2 and out["rejected"] == 2
-    [draft] = await _owner_fetch(admin, s["tenant"], "SELECT kind, validation FROM crm.ai_draft")
-    stored = json.loads(draft["validation"])
-    assert draft["kind"] == "notes_to_options" and [o["component_id"] for o in stored["options"]] == ["c-lodge"]
-    [call] = await _owner_fetch(admin, s["tenant"], "SELECT stage FROM crm.llm_call")
-    assert call["stage"] == "crm_notes_options"
+    try:
+        v = await _create(app_pool, s)
+        day = next(d for d in v["days"] if d["day_no"] == 2)
+        stub = JsonStub(
+            '{"options": [{"code": "A2", "why": "Wants a cosy lodge."}, {"code": "A3"}, {"code": "c-paddle"}]}'
+        )
+        async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+            row = await notes_options.day_of(ctx, uuid.UUID(day["proposal_day_id"]))
+            out = await notes_options.run(
+                ctx, LlmGateway(StubScrubber(), stub), Vault(s["keys"], ctx), row, products, destinations=["nepal"],
+                notes="The family wants a cosy lodge after the walk.",
+            )  # fmt: skip
+        assert "Lakeside paddle" not in stub.prompts[0]  # another country: not in the closed list
+        assert [(o["code"], o["component_id"]) for o in out["options"]] == [("A2", "c-lodge")]
+        assert out["closed_list_size"] == 2 and out["rejected"] == 2
+        [draft] = await _owner_fetch(admin, s["tenant"], "SELECT kind, validation FROM crm.ai_draft")
+        stored = json.loads(draft["validation"])
+        assert draft["kind"] == "notes_to_options" and [o["component_id"] for o in stored["options"]] == ["c-lodge"]
+        [call] = await _owner_fetch(admin, s["tenant"], "SELECT stage FROM crm.llm_call")
+        assert call["stage"] == "crm_notes_options"
+    finally:  # the catalogue cache is a platform table other tests count (test_aa_lines_api); crm_app may not delete
+        async with admin.transaction():
+            await admin.execute("SET LOCAL ROLE crm_owner")
+            await admin.execute("DELETE FROM crm.aa_catalog_tour WHERE source_id = ANY($1::text[])", ["T-965", "T-966"])
 
 
 async def test_voices_are_capped_per_member_and_recorded_on_the_draft(
