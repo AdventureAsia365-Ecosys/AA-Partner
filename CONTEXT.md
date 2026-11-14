@@ -2792,7 +2792,7 @@ Design v3 card CRM-33b (R10, R40, R41; root ADR 0019 b6); decisions in `docs/imp
 call is a CRM gateway call (CRM-33a above: stage profile and kill switch, app profile, rate cap, the agency budget as a
 hard stop, `ai_enabled`, the F3 scrub with the trip's known values, the route, the `crm.llm_call` row); every run is
 behind the plan's `ai_assist` (403) and the AI switch (409) before anything is scrubbed or paid. Limits are settings
-(crm-077, read at each call); the stage's output cap is held by the gateway (`gateway.STAGE_OUTPUT_CAPS`).
+(crm-077, read at each call); the stage's output cap is held by the gateway (`app.llm.stage_caps`).
 
 - **R10 supplier confirmations** (`app/llm/supplier_confirm.py`; `POST /crm/v1/trips/{id}/ai/supplier-confirmation`
   `{agency_supplier_id, message_id | text}`, `ai_use`): only an **own** supplier of category flight, insurance, visa,

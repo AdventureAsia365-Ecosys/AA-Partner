@@ -24,7 +24,7 @@ from app import platform_settings as ps
 from app.booking.client import BookingUnavailable
 from app.booking.contract import Component, Product
 from app.errors import Conflict, Forbidden, Invalid, NotFound, PayloadTooLarge
-from app.llm import agency_ai, ai_drafts, notes_options, structured, supplier_confirm, voices
+from app.llm import agency_ai, ai_drafts, notes_options, stage_caps, structured, supplier_confirm, voices
 from app.llm import gateway as gateway_module
 from app.llm.providers.bedrock import BedrockConverseProvider
 from app.main import create_app
@@ -564,10 +564,10 @@ async def test_a_refused_run_stores_no_draft() -> None:
 
 @pytest.mark.asyncio
 async def test_each_new_stage_has_its_own_output_cap_setting() -> None:
-    assert gateway_module.stage_output_cap("crm_draft_reply") is None
-    assert gateway_module.stage_output_cap("crm_supplier_confirm") == 800
+    assert stage_caps.stage_output_cap("crm_draft_reply") is None
+    assert stage_caps.stage_output_cap("crm_supplier_confirm") == 800
     approved(ps.AI_NOTES_OPTIONS_MAX_TOKENS, 300)
-    assert gateway_module.stage_output_cap("crm_notes_options") == 300
+    assert stage_caps.stage_output_cap("crm_notes_options") == 300
     provider = BedrockConverseProvider("us.amazon.nova-lite-v1:0", max_tokens=lambda: 800, client=object())
     assert provider._request("p", None)["inferenceConfig"]["maxTokens"] == 800
     assert provider._request("p", None, 300)["inferenceConfig"]["maxTokens"] == 300

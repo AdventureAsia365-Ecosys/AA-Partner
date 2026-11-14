@@ -260,13 +260,8 @@ async def run(
     }
 
 
-async def apply(
-    ctx: TenantContext, draft_id: uuid.UUID, items: list[dict[str, Any]], *, feedback_code: str | None = None
-) -> dict[str, Any]:
-    """Write the agent's confirmed updates of a pending supplier confirmation draft, then accept it (one transaction:
-    a refused line rolls every line back)."""
-    if feedback_code is not None and feedback_code not in ai_drafts.FEEDBACK_CODES:
-        raise Invalid("invalid_feedback_code", ", ".join(ai_drafts.FEEDBACK_CODES))
+async def _pending_draft(ctx: TenantContext, draft_id: uuid.UUID) -> tuple[Any, dict[str, Any]]:
+    """The pending supplier confirmation draft and its validation, after the approver checks (404 / 403 / 409)."""
     row = await ctx.conn.fetchrow(ai_drafts.DRAFT_SQL, draft_id)
     if row is None or row["kind"] != KIND:
         raise NotFound("draft_not_found", "no supplier confirmation draft with this id")
@@ -277,36 +272,49 @@ async def apply(
     if row["decision"] != "pending":
         raise Conflict("draft_decided", f"this draft was already {row['decision']}")
     raw = row["validation"]
-    validation = json.loads(raw) if isinstance(raw, str) else dict(raw or {})
-    allowed = set(validation.get("closed_list") or ())
-    supplier = validation.get("agency_supplier_id")
-    if not items:
-        raise Invalid("lines_required", "pick at least one line to update")
+    return row, (json.loads(raw) if isinstance(raw, str) else dict(raw or {}))
+
+
+async def _checked_line(ctx: TenantContext, draft: Any, validation: dict[str, Any], item: dict[str, Any]) -> Any:
+    """The line an apply item names, if it may be written: never an AA line (403, audited), only a line of the run's
+    closed list (422) that is still that supplier's line on the draft's trip (409)."""
+    line_id = str(item["booking_line_id"])
+    if item.get("action") not in ACTIONS:
+        raise Invalid("invalid_action", ", ".join(ACTIONS))
+    line = await ctx.conn.fetchrow(LINE_SQL, uuid.UUID(line_id))
+    if line is not None and line["supplier_kind"] == "aa":
+        ctx.audit("ai_draft_apply", "denied", "booking_line", line_id, reason="aa_line_read_only")
+        raise Forbidden("aa_line_read_only", "Adventure Asia lines come from your AA bookings, never from AI")
+    if line_id not in set(validation.get("closed_list") or ()):
+        raise Invalid("line_not_in_proposal", "this line was not in the AI run's list")
+    same_supplier = line is not None and str(line["agency_supplier_id"]) == validation.get("agency_supplier_id")
+    if not same_supplier or line["trip_id"] != draft["trip_id"]:
+        raise Conflict("line_changed", "this line is no longer one of the supplier's lines on this trip")
+    return line
+
+
+async def apply(
+    ctx: TenantContext, draft_id: uuid.UUID, items: list[dict[str, Any]], *, feedback_code: str | None = None
+) -> dict[str, Any]:
+    """Write the agent's confirmed updates of a pending supplier confirmation draft, then accept it (one transaction:
+    a refused line rolls every line back)."""
+    if feedback_code is not None and feedback_code not in ai_drafts.FEEDBACK_CODES:
+        raise Invalid("invalid_feedback_code", ", ".join(ai_drafts.FEEDBACK_CODES))
+    draft, validation = await _pending_draft(ctx, draft_id)
+    ids = [str(item["booking_line_id"]) for item in items]
+    if not items or len(set(ids)) != len(ids):
+        raise Invalid("lines_required", "pick each line to update once")
     done: list[dict[str, Any]] = []
-    seen: set[str] = set()
     for item in items:
-        line_id = str(item["booking_line_id"])
-        if line_id in seen:
-            raise Invalid("duplicate_line", "each line once")
-        seen.add(line_id)
-        if item.get("action") not in ACTIONS:
-            raise Invalid("invalid_action", ", ".join(ACTIONS))
-        line = await ctx.conn.fetchrow(LINE_SQL, uuid.UUID(line_id))
-        if line is not None and line["supplier_kind"] == "aa":
-            ctx.audit("ai_draft_apply", "denied", "booking_line", line_id, reason="aa_line_read_only")
-            raise Forbidden("aa_line_read_only", "Adventure Asia lines come from your AA bookings, never from AI")
-        if line_id not in allowed:
-            raise Invalid("line_not_in_proposal", "this line was not in the AI run's list")
-        if line is None or line["trip_id"] != row["trip_id"] or str(line["agency_supplier_id"]) != supplier:
-            raise Conflict("line_changed", "this line is no longer one of the supplier's lines on this trip")
+        line = await _checked_line(ctx, draft, validation, item)
         if item["action"] == "confirm":
             await ledger_lines.confirm(ctx, line["booking_line_id"], confirmation_no=item.get("confirmation_no"))
         else:
             await ledger_requests.back_to_planning(ctx, line["booking_line_id"])
-        done.append({"booking_line_id": line_id, "action": item["action"]})
+        done.append({"booking_line_id": str(line["booking_line_id"]), "action": item["action"]})
     out = await ctx.conn.fetchrow(ai_drafts.DECIDE_SQL, draft_id, "accepted", feedback_code)
     if out is None:  # another request decided it in between
         raise Conflict("draft_decided", "this draft was already decided")
     ctx.audit("ai_draft_apply", "allowed", "ai_draft", str(draft_id), reason=feedback_code,
-              object_ids=(str(row["trip_id"]), *(d["booking_line_id"] for d in done)))  # fmt: skip
+              object_ids=(str(draft["trip_id"]), *(d["booking_line_id"] for d in done)))  # fmt: skip
     return {"ai_draft_id": str(draft_id), "decision": "accepted", "applied": done}

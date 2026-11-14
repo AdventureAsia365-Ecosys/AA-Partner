@@ -219,8 +219,14 @@ def decide_conn(
         ScriptedConn()
         .on(
             "FROM crm.ai_draft d JOIN crm.trip t",
-            {"ai_draft_id": DRAFT, "trip_id": TRIP, "kind": kind, "decision": decision, "validation": None,
-             "owner_member_id": owner},  # fmt: skip
+            {
+                "ai_draft_id": DRAFT,
+                "trip_id": TRIP,
+                "kind": kind,
+                "decision": decision,
+                "validation": None,
+                "owner_member_id": owner,
+            },
         )
         .on("UPDATE crm.ai_draft", update)
     )

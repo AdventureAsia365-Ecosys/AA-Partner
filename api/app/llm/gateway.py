@@ -95,7 +95,7 @@ from app.aa_llm import budget as llm_budget
 from app.aa_llm import errors as llm_errors
 from app.aa_llm import ledger
 from app.audit import AuditEvent, current_request_id
-from app.llm import app_profile, budget_limits
+from app.llm import app_profile, budget_limits, stage_caps
 from app.llm.profiles import DbProfileSource, RouteEntry, StageProfile, fixed_profile
 from app.privacy.guardrails import GUARD_OPERATION, GUARD_STAGE, GuardCall, collect_guard_calls
 from app.privacy.placeholder_store import SealedMap, check_scrubber_version, seal_map, store_map
@@ -193,20 +193,6 @@ class CallMeta:
 
     prompt_version: str | None = None
     job_id: uuid.UUID | None = None
-
-
-# AA-965: the output token cap of each stage that has its own (admin-editable settings, read at each call; the
-# gateway holds the cap, never the call site). crm_draft_reply keeps crm.ai.draft_reply_max_tokens on the provider.
-STAGE_OUTPUT_CAPS = {
-    "crm_supplier_confirm": ps.AI_SUPPLIER_CONFIRM_MAX_TOKENS,
-    "crm_notes_options": ps.AI_NOTES_OPTIONS_MAX_TOKENS,
-}
-
-
-def stage_output_cap(stage: str) -> int | None:
-    """The output token cap of ``stage`` when it has its own setting, else None (the provider's own cap)."""
-    key = STAGE_OUTPUT_CAPS.get(stage)
-    return int(ps.get(key)) if key else None
 
 
 def prompt_hash(prompt: str, system: str | None = None) -> str:
@@ -540,12 +526,8 @@ class LlmGateway:
                 break
             who = self._entry_provider(entry)
             begun = self.clock()
-            cap = stage_output_cap(stage)
             try:
-                if cap is not None:  # AA-965: a stage with its own output cap (a setting, read at each call)
-                    done = await who.complete(text, system=system, max_tokens=cap)
-                else:
-                    done = await (who.complete(text, system=system) if system else who.complete(text))
+                done = await stage_caps.complete(who, stage, text, system)  # AA-965: the stage's output cap
             except Exception as exc:  # noqa: BLE001 — recorded by class only
                 billed = getattr(exc, "billed", None)
                 billed = billed if isinstance(billed, Completion) else None
