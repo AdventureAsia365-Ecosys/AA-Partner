@@ -29,6 +29,17 @@
 //                                the agency session key (shared with the Content studio) can never open one
 //                                Any staff value missing = the staff console is off (its pages say so); the agency
 //                                app is unaffected.
+//   WEB_ACADEMY_HOSTS      comma list of AA Academy hosts     AA-1105 (root ADR 0022 decisions 2 and 6): academy.<zone>,
+//                                                              a second alias of the agency distribution. The web serves
+//                                                              ONLY the academy pages there (lib/hosts.ts) and refuses
+//                                                              them on every other host; each answers with its own origin
+//   ACADEMY_COGNITO_DOMAIN https://<WORKFORCE managed login>  AA-1105: the academy signs staff in with the WORKFORCE pool's
+//                                                              academy-web client (never crm-staff, never the partner one)
+//   ACADEMY_COGNITO_CLIENT_ID      the academy-web app client
+//   ACADEMY_COGNITO_CLIENT_SECRET  its secret (key academy_cognito_client_secret of the web secret)
+//   ACADEMY_SESSION_SECRET         >= 32 random characters: seals the academy cookies only (key academy_session_secret),
+//                                  never equal to the agency or the staff key. Any academy value missing (or CIS_API_URL,
+//                                  where the learning API lives) = the academy is off (its pages say so)
 //   WEB_CONTENT_HOME       "true" = the bare host "/" lands on the Content studio (/portal/dashboard), the CRM home
 //                          stays at /home (AA-1036, root ADR 0019 d7: a tenant always lands on Content). Anything else =
 //                          "/" is the CRM home, as before. On since the R3 slice 2 cut-over (AA-CIS-Infra crm_web.tf),
@@ -71,6 +82,17 @@ export interface WebConfig {
   staffAuthConfigured: boolean;
   /** What is missing for the staff console (names only). */
   staffProblems: string[];
+  /** AA-1105: the AA Academy hosts (WEB_ACADEMY_HOSTS), never also a partner or client host. */
+  academyHosts: string[];
+  /** AA-1105: the academy's WORKFORCE sign-in (academy-web client) and its own cookie key. */
+  academyCognitoDomain: string;
+  academyCognitoClientId: string;
+  academyCognitoClientSecret: string;
+  academySessionSecret: string;
+  /** Every academy value is present and valid (and the CIS API origin is): the academy can sign in. */
+  academyAuthConfigured: boolean;
+  /** What is missing for the academy (names only). */
+  academyProblems: string[];
 }
 
 const ENVIRONMENTS: readonly Environment[] = ["dev", "stg", "prod", "test", "local"];
@@ -123,9 +145,11 @@ export function loadConfig(env: Env = process.env): WebConfig {
   const sessionSecret = text(env, "WEB_SESSION_SECRET");
   if (sessionSecret.length < MIN_SECRET) problems.push("WEB_SESSION_SECRET");
 
-  const partnerHosts = hosts(text(env, "WEB_PARTNER_HOSTS"));
+  // AA-1105: an academy host is never also an agency or a client host (host isolation, root ADR 0022 decision 6).
+  const academyHosts = hosts(text(env, "WEB_ACADEMY_HOSTS"));
+  const partnerHosts = hosts(text(env, "WEB_PARTNER_HOSTS")).filter((h) => !academyHosts.includes(h));
   if (partnerHosts.length === 0 && publicOrigin) partnerHosts.push(new URL(publicOrigin).host);
-  const clientHosts = hosts(text(env, "WEB_CLIENT_HOSTS")).filter((h) => !partnerHosts.includes(h));
+  const clientHosts = hosts(text(env, "WEB_CLIENT_HOSTS")).filter((h) => !partnerHosts.includes(h) && !academyHosts.includes(h));
   const contentStudioUrl = origin(text(env, "CONTENT_STUDIO_URL"), local) ?? "";
   const cisApiUrl = origin(text(env, "CIS_API_URL"), local) ?? "";
 
@@ -145,6 +169,27 @@ export function loadConfig(env: Env = process.env): WebConfig {
   if (staffSessionSecret.length < MIN_SECRET || staffSessionSecret === sessionSecret) staffProblems.push("STAFF_SESSION_SECRET");
   if (!publicOrigin) staffProblems.push("WEB_PUBLIC_ORIGIN");
   if (!crmApiOrigin) staffProblems.push("CRM_API_ORIGIN");
+
+  // AA-1105: the AA Academy. Its own client and its own cookie key; never the agency's or the staff console's values.
+  const academyProblems: string[] = [];
+  if (academyHosts.length === 0) academyProblems.push("WEB_ACADEMY_HOSTS");
+  const academyCognitoDomain = origin(text(env, "ACADEMY_COGNITO_DOMAIN"), false) ?? "";
+  if (!academyCognitoDomain) academyProblems.push("ACADEMY_COGNITO_DOMAIN");
+  const academyCognitoClientId = text(env, "ACADEMY_COGNITO_CLIENT_ID");
+  if (
+    !/^[A-Za-z0-9]{1,128}$/.test(academyCognitoClientId) ||
+    academyCognitoClientId === cognitoClientId ||
+    academyCognitoClientId === staffCognitoClientId
+  ) {
+    academyProblems.push("ACADEMY_COGNITO_CLIENT_ID");
+  }
+  const academyCognitoClientSecret = text(env, "ACADEMY_COGNITO_CLIENT_SECRET");
+  if (!academyCognitoClientSecret) academyProblems.push("ACADEMY_COGNITO_CLIENT_SECRET");
+  const academySessionSecret = text(env, "ACADEMY_SESSION_SECRET");
+  if (academySessionSecret.length < MIN_SECRET || academySessionSecret === sessionSecret || academySessionSecret === staffSessionSecret) {
+    academyProblems.push("ACADEMY_SESSION_SECRET");
+  }
+  if (!cisApiUrl) academyProblems.push("CIS_API_URL");
   return {
     environment,
     publicOrigin,
@@ -169,6 +214,13 @@ export function loadConfig(env: Env = process.env): WebConfig {
     staffSessionSecret,
     staffAuthConfigured: staffProblems.length === 0,
     staffProblems,
+    academyHosts,
+    academyCognitoDomain,
+    academyCognitoClientId,
+    academyCognitoClientSecret,
+    academySessionSecret,
+    academyAuthConfigured: academyProblems.length === 0,
+    academyProblems,
   };
 }
 
@@ -181,7 +233,9 @@ export function loadConfig(env: Env = process.env): WebConfig {
  */
 export function forHost(cfg: WebConfig, hostHeader: string | null | undefined): WebConfig {
   const host = (hostHeader ?? "").trim().toLowerCase();
-  if (!host || !cfg.publicOrigin.startsWith("https://") || !cfg.partnerHosts.includes(host)) return cfg;
+  // AA-1105: an academy host answers with its own origin too (the academy-web callback is on academy.<zone>).
+  const known = cfg.partnerHosts.includes(host) || (cfg.academyHosts ?? []).includes(host);
+  if (!host || !cfg.publicOrigin.startsWith("https://") || !known) return cfg;
   const origin = `https://${host}`;
   return origin === cfg.publicOrigin ? cfg : { ...cfg, publicOrigin: origin };
 }

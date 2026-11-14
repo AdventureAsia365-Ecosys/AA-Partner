@@ -28,6 +28,15 @@
 //                                               never used (AA-1025)
 //                              "/"              with WEB_CONTENT_HOME on: 307 to /portal/dashboard (a tenant lands on
 //                                               Content, root ADR 0019 d7); the CRM home is /home
+//   academy host             AA-1105 (root ADR 0022 decision 6), decided by the HOST before anything else (lib/hosts.ts):
+//                            "/" -> 307 /academy; only /academy/*, /verify/<code>, /prefs/locale and static files are
+//                            served, every other path (agency, studio, staff console, client, /crm/*) is 404. Inside:
+//                            /academy/auth/*, /academy/signed-out and /verify/* public, /academy/bff/* and
+//                            /academy/captions/* through (the handlers answer 401 JSON), any other /academy page needs
+//                            a valid ACADEMY access token (lib/academySession.ts), otherwise ->
+//                            /academy/auth/refresh?next=... On the partner and client hosts /academy and /verify are 404
+//                            (local development serves them on localhost). No other session opens an academy page and
+//                            the academy session opens nothing else (own cookies on its own host, own seal key).
 //
 // Headers the app reads (x-aa-path, x-aa-host-kind) are always set here after any client-sent copy is dropped, so a
 // browser cannot forge them.
@@ -35,8 +44,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { config as webConfig, forHost, type WebConfig } from "./lib/config";
 import {
+  ACADEMY_PREFIX,
+  academyPathAllowed,
   classifyHost,
   clientOnlyPath,
+  isAcademyPath,
   clientPathAllowed,
   isApiKeySignIn,
   isPublicPartnerPath,
@@ -61,6 +73,14 @@ import {
   type CookieSpec as StudioCookie,
 } from "./lib/studio/tenantSession";
 import { isPublicStaffPath, isStaffPath, readStaffSession, STAFF_AUTH_PREFIX, STAFF_BFF_PREFIX, staffAccessValid } from "./lib/staffSession";
+import {
+  ACADEMY_AUTH_PREFIX,
+  ACADEMY_SIGNED_OUT,
+  academyAccessValid,
+  isAcademyHandlerPath,
+  isPublicAcademyPath,
+  readAcademySession,
+} from "./lib/academySession";
 
 const INTERNAL_HEADERS = ["x-aa-path", "x-aa-host-kind"];
 
@@ -115,12 +135,15 @@ export function gate(request: NextRequest): NextResponse {
   const cfg = forHost(webConfig(), request.headers.get("host"));
   const kind = classifyHost(request.headers.get("host"), cfg);
   if (kind === "unknown") return notFound();
+  // AA-1105: the academy host serves the academy only (see the header).
+  if (kind === "academy") return academyGate(request, cfg);
   const ancestors = formKey(pathname) ? "'self'" : undefined;
   if (kind === "client") return clientPathAllowed(pathname) ? pass(request, kind, cfg.cognitoDomain, ancestors) : notFound();
 
-  // Partner host. Client pages (/c/*, the trip page /trip/*) live only on the client host (local development serves
-  // both on localhost).
+  // Partner host. Client pages (/c/*, the trip page /trip/*) live only on the client host, the academy pages only on
+  // the academy host (local development serves all of them on localhost).
   const localDev = cfg.environment === "local" || cfg.environment === "test";
+  if (isAcademyPath(pathname)) return localDev ? academyGate(request, cfg) : notFound();
   if (clientOnlyPath(pathname) && !localDev) return notFound();
   if (ancestors) return pass(request, kind, cfg.cognitoDomain, ancestors);
   if (isStaffPath(pathname)) return staffGate(request, cfg);
@@ -158,6 +181,40 @@ function staffGate(request: NextRequest, cfg: ReturnType<typeof forHost>): NextR
     return off;
   }
   const target = new URL(`${STAFF_AUTH_PREFIX}/refresh`, cfg.publicOrigin || request.nextUrl.origin);
+  target.searchParams.set("next", `${pathname}${search}`);
+  const res = NextResponse.redirect(target, 307);
+  res.headers.set("Cache-Control", "no-store");
+  return res;
+}
+
+/**
+ * AA-1105: the academy host's gate (see the header). The CSP's form-action names the WORKFORCE managed login (the
+ * academy sign-out redirects to its logout page), never the agency's; the verify page sends no Referer (its code is in
+ * the path).
+ */
+function academyGate(request: NextRequest, cfg: WebConfig): NextResponse {
+  const { pathname, search } = request.nextUrl;
+  const origin = cfg.publicOrigin || request.nextUrl.origin;
+  if (pathname === "/") {
+    const res = NextResponse.redirect(new URL(ACADEMY_PREFIX, origin), 307);
+    res.headers.set("Cache-Control", "no-store");
+    return res;
+  }
+  if (!academyPathAllowed(pathname)) return notFound();
+  const passAcademy = () => {
+    const res = pass(request, "academy");
+    res.headers.set("Content-Security-Policy", contentSecurityPolicy(cfg.academyCognitoDomain));
+    if (pathname.startsWith("/verify/")) res.headers.set("Referrer-Policy", "no-referrer");
+    return res;
+  };
+  if (!isAcademyPath(pathname) || isPublicAcademyPath(pathname) || isAcademyHandlerPath(pathname)) return passAcademy();
+  if (!cfg.academyAuthConfigured) {
+    const off = NextResponse.redirect(new URL(`${ACADEMY_SIGNED_OUT}?reason=unavailable`, origin), 307);
+    off.headers.set("Cache-Control", "no-store");
+    return off;
+  }
+  if (academyAccessValid(readAcademySession(cfg, request.cookies))) return passAcademy();
+  const target = new URL(`${ACADEMY_AUTH_PREFIX}/refresh`, origin);
   target.searchParams.set("next", `${pathname}${search}`);
   const res = NextResponse.redirect(target, 307);
   res.headers.set("Cache-Control", "no-store");
