@@ -74,6 +74,7 @@ from app.jobs.kinds import (
     STAGE_DATE_RULE,
     STUDIO_ACTIVATION,
     TASK_DIGEST,
+    TENANT_ERASE,
     TOUR_RETIRED_FANOUT,
     TP_LEAD_PULL,
     WORKFLOW_RUN,
@@ -183,6 +184,9 @@ def build_handlers(
     partner_account_cleanup_dry_run: bool | Callable[[], bool] = True,
     entitlement_feed: FeedConfig | None = None,
     tp_leads: LeadPullConfig | None = None,
+    tenant_erasure: FeedConfig | None = None,
+    tenant_erase_apply_enabled: bool | Callable[[], bool] = False,
+    environment: str = "test",
 ) -> dict[str, Handler]:
     """Every kind the worker runs. ``keys``: the field-encryption provider the intake kind needs (AA-936); without
     it ``crm_intake_process`` jobs are retried until the provider is configured. ``audit_archive``: the two audit
@@ -203,7 +207,9 @@ def build_handlers(
     partner-account clean-up, which uses ``directory``.
     AA-1028: ``entitlement_feed`` (CIS_API_URL + the M2M token, the same as the membership feed; None = the pull logs
     not_configured). AA-1038: ``tp_leads`` (TRIPPLANNER_API_URL + the M2M token: the TripPlanner lead pull; None =
-    not_configured)."""
+    not_configured). AA-1093 stage 2: ``tenant_erasure`` (CIS_API_URL + the M2M token, scope cis.tenant/erasure; None
+    = not_configured), ``tenant_erase_apply_enabled`` (``TENANT_ERASE_APPLY_ENABLED``, the Terraform kill switch of
+    the CRM erase apply) and ``environment`` (outside prod only a synthetic tenant is applied)."""
     from app.audit_export import export as audit_export
     from app.audit_export import retention as audit_retention
     from app.booking.sync import BookingSync
@@ -217,7 +223,7 @@ def build_handlers(
     from app.imports import service as client_imports
     from app.intake.process import build_handler as build_intake_handler
     from app.lifecycle import job as lifecycle_job
-    from app.lifecycle import offboarding
+    from app.lifecycle import offboarding, tenant_erase
     from app.lifecycle import pilot as pilot_backup
     from app.mail import health as mail_health
     from app.mail import history_import
@@ -272,6 +278,13 @@ def build_handlers(
         TP_LEAD_PULL: LeadPull(tp_leads, keys),
         PDF_RENDER: pdf_job.build_handler(keys, documents),
         TOUR_RETIRED_FANOUT: tour_retired.build_handler(keys),
+        TENANT_ERASE: tenant_erase.TenantErase(
+            tenant_erasure,
+            keys=keys,
+            store=documents,
+            apply_enabled=tenant_erase_apply_enabled,
+            environment=environment,
+        ),
     }
 
 
@@ -324,6 +337,7 @@ def build_hooks(
     from app.fx.fetch import DailyFxSchedule
     from app.lifecycle.job import DailyLifecycleSchedule
     from app.lifecycle.pilot import DailyPilotBackupSchedule
+    from app.lifecycle.tenant_erase import TenantEraseSchedule
     from app.mail.health import DailyMailHealthSchedule
     from app.mail.ingest import MailIngestScan
     from app.members.accounts import DailyPartnerAccountSchedule
@@ -353,6 +367,7 @@ def build_hooks(
         EntitlementPullSchedule(clock),  # AA-1028: the CIS account feed, every 2 minutes
         DailyPilotBackupSchedule(retention_utc_hour, clock),  # AA-969 d16: the pilot agency's nightly export
         LeadPullSchedule(clock),  # AA-1038: TripPlanner leads, every minute
+        TenantEraseSchedule(clock),  # AA-1093 stage 2: the CIS tenant erasure saga, every 2 minutes
     )
 
 
@@ -384,6 +399,7 @@ SCHEDULED_KINDS: frozenset[str] = frozenset(
         ENTITLEMENT_PULL,  # AA-1028: every 2-minute slot, due now
         PILOT_BACKUP,  # AA-969 d16: daily, due now
         TP_LEAD_PULL,  # AA-1038: every minute slot, due now
+        TENANT_ERASE,  # AA-1093 stage 2: every 2-minute slot, due now
     }
 )
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.
