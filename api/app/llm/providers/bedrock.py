@@ -190,20 +190,21 @@ class BedrockConverseProvider:
         return int(cap()) if callable(cap) else int(cap)
 
     # ── the call ────────────────────────────────────────────────────────────────────────────────
-    def _request(self, prompt: str, system: str | None) -> dict[str, Any]:
+    def _request(self, prompt: str, system: str | None, max_tokens: int | None = None) -> dict[str, Any]:
+        cap = int(max_tokens) if max_tokens is not None else self.output_cap()  # AA-965: a stage's own cap
         request: dict[str, Any] = {
             "modelId": self.model,
             "messages": [{"role": "user", "content": [{"text": prompt}]}],
-            "inferenceConfig": {"maxTokens": self.output_cap(), "temperature": DEFAULT_TEMPERATURE},
+            "inferenceConfig": {"maxTokens": cap, "temperature": DEFAULT_TEMPERATURE},
         }
         if system:
             request["system"] = [{"text": system}]
         return request
 
-    async def complete(self, prompt: str, *, system: str | None = None) -> Completion:
+    async def complete(self, prompt: str, *, system: str | None = None, max_tokens: int | None = None) -> Completion:
         try:
             client = await asyncio.to_thread(self._runtime)
-            response = await asyncio.to_thread(client.converse, **self._request(prompt, system))
+            response = await asyncio.to_thread(client.converse, **self._request(prompt, system, max_tokens))
         except Exception as exc:  # noqa: BLE001 — class only, never the message
             raise ProviderCallError(_error_class(exc), llm_error_class=llm_errors.classify(exc)) from None
         return self.parse(response)

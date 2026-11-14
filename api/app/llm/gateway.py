@@ -95,7 +95,7 @@ from app.aa_llm import budget as llm_budget
 from app.aa_llm import errors as llm_errors
 from app.aa_llm import ledger
 from app.audit import AuditEvent, current_request_id
-from app.llm import app_profile, budget_limits
+from app.llm import app_profile, budget_limits, stage_caps
 from app.llm.profiles import DbProfileSource, RouteEntry, StageProfile, fixed_profile
 from app.privacy.guardrails import GUARD_OPERATION, GUARD_STAGE, GuardCall, collect_guard_calls
 from app.privacy.placeholder_store import SealedMap, check_scrubber_version, seal_map, store_map
@@ -257,7 +257,7 @@ class StubProvider:
     def for_route(self, entry: RouteEntry) -> StubProvider:
         return StubProvider(entry.model, entry.family, entry.position)
 
-    async def complete(self, prompt: str, *, system: str | None = None) -> Completion:
+    async def complete(self, prompt: str, *, system: str | None = None, max_tokens: int | None = None) -> Completion:
         if STUB_FAIL_FIRST in prompt and self.position == 0:
             raise StubThrottled()
         words = len(prompt.split())
@@ -527,7 +527,7 @@ class LlmGateway:
             who = self._entry_provider(entry)
             begun = self.clock()
             try:
-                done = await (who.complete(text, system=system) if system else who.complete(text))
+                done = await stage_caps.complete(who, stage, text, system)  # AA-965: the stage's output cap
             except Exception as exc:  # noqa: BLE001 — recorded by class only
                 billed = getattr(exc, "billed", None)
                 billed = billed if isinstance(billed, Completion) else None

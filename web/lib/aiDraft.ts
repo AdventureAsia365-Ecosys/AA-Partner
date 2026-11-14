@@ -30,6 +30,8 @@ export interface DraftResult {
   budget_alert: 75 | 90 | 100 | null;
   truncated: boolean;
   approval_required: true;
+  /** AA-965 R41: the voice the draft was written in (null without one). */
+  voice_profile_id?: string | null;
   drafted_at: string;
   /** AA-1040: the machine-readable mark of the model's text (null when there is no text). */
   ai?: { ai_generated: true; generator: string; generated_at: string } | null;
@@ -97,4 +99,12 @@ export function draftInputError(text: string, instruction: string): string | nul
   if (text.length > MAX_TEXT) return "aiDraft.error.text_long";
   if (instruction.length > MAX_INSTRUCTION) return "aiDraft.error.instruction_long";
   return null;
+}
+
+/** The draft request body: the trimmed texts, the instruction and the voice (AA-965 R41) only when given. */
+export function draftBody(kind: DraftKind, text: string, instruction: string, voice: string): Record<string, string> {
+  const body: Record<string, string> = { kind, text: text.trim() };
+  if (instruction.trim()) body.instruction = instruction.trim();
+  if (voice) body.voice_profile_id = voice;
+  return body;
 }

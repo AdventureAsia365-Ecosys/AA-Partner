@@ -302,3 +302,8 @@ export function roomsBody(rooms: Room[]): { ok: true; rooms: Room[] } | { ok: fa
 export function roomsSummary(rooms: Room[], words: Record<RoomType, string>): string {
   return rooms.map((r) => `${words[r.type]} (${r.adults}A${r.children ? ` ${r.children}C` : ""})`).join(", ");
 }
+
+/** The day a block of the builder sits on (AA-965: the AI ideas tab runs for that day; the catalogue tab reads its date). */
+export function dayOfBlock(view: Pick<BuilderView, "days">, blockId: string): BuilderDay | undefined {
+  return view.days.find((d) => d.blocks.some((b) => b.option_block_id === blockId));
+}

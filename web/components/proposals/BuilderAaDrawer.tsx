@@ -7,14 +7,16 @@
 // AA-1030: owner and agent get a link to the agency's AA prices (opens in a new tab, the draft stays as it is).
 // AA-1069: a third source, "From catalogue": a service of the agency's own catalogue, priced for the party (a copy).
 // AA-1086: a whole AA tour fills the empty day titles and places from the tour's days (the hint says so; editable).
+// AA-965 (R40): a fourth source, "AI ideas": AA options for the block's day from the trip's notes (closed list only).
 import Link from "next/link";
 import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { BuilderCatalogueTab } from "@/components/catalogue/BuilderCatalogueTab";
+import { BuilderAiIdeasTab } from "@/components/proposals/BuilderAiIdeasTab";
 import { type AaProduct, type CatalogTour } from "@/lib/aa";
 import { AA_TARIFF_PATH } from "@/lib/aaTariff";
 import { bffSend } from "@/lib/bffClient";
-import { builderErrorKey, moneyInput, TIERS, type BuilderView, type Tier } from "@/lib/builder";
+import { builderErrorKey, dayOfBlock, moneyInput, TIERS, type BuilderView, type Tier } from "@/lib/builder";
 import { fmt, plural, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { formatMoney } from "@/lib/ledger";
 
@@ -63,8 +65,7 @@ export function BuilderAaDrawer({
 }) {
   const hydrated = useHydrated();
   const tr = (key: string) => t(lang, key as MessageKey);
-  const [tab, setTab] = useState<"aa" | "agency" | "catalogue">("aa");
-  const dayDate = view.days.find((d) => d.blocks.some((b) => b.option_block_id === blockId))?.date ?? null;
+  const [tab, setTab] = useState<"aa" | "agency" | "catalogue" | "ai">("aa");
   const [query, setQuery] = useState("");
   const [tours, setTours] = useState<CatalogTour[] | null>(null);
   const [tour, setTour] = useState<CatalogTour | null>(null);
@@ -177,7 +178,7 @@ export function BuilderAaDrawer({
     // not a dialog (aa-kit/no-raw-dialog); the two sources are toggle buttons (aria-pressed), not a half-built tab list.
     <div role="group" aria-label={tr("builder.add")} data-testid="builder-drawer" style={{ display: "grid", gap: 8, padding: 12, borderRadius: 8, border: `1px solid ${K.line2}`, background: K.bg }}>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {(["aa", "agency", "catalogue"] as const).map((x) => (
+        {(["aa", "agency", "catalogue", "ai"] as const).map((x) => (
           <Button key={x} size="sm" variant={tab === x ? "primary" : "ghost"} aria-pressed={tab === x} onClick={() => setTab(x)}>
             {tr(`builder.drawer.${x}`)}
           </Button>
@@ -287,9 +288,7 @@ export function BuilderAaDrawer({
           </div>
         </div>
       )}
-      {tab === "catalogue" && (
-        <BuilderCatalogueTab view={view} blockId={blockId} dayDate={dayDate} canMargin={canMoney} lang={lang} locale={locale} write={write} onClose={onClose} />
-      )}
+      <BuilderMoreTab tab={tab} view={view} blockId={blockId} canMoney={canMoney} lang={lang} locale={locale} write={write} onClose={onClose} />
       {tab === "agency" && (
         <div style={{ display: "grid", gap: 8 }} data-testid="builder-agency">
           <label style={label}>
@@ -343,4 +342,30 @@ export function BuilderAaDrawer({
       )}
     </div>
   );
+}
+
+/** The drawer's catalogue (AA-1069) and AI ideas (AA-965) tabs: each needs the block's day. */
+function BuilderMoreTab({
+  tab,
+  view,
+  blockId,
+  canMoney,
+  lang,
+  locale,
+  write,
+  onClose,
+}: {
+  tab: string;
+  view: BuilderView;
+  blockId: string;
+  canMoney: boolean;
+  lang: Lang;
+  locale: string;
+  write: (method: "POST", path: string, body: Record<string, unknown>) => Promise<boolean>;
+  onClose: () => void;
+}) {
+  if (tab === "ai") return <BuilderAiIdeasTab view={view} blockId={blockId} lang={lang} write={write} onAdded={onClose} />;
+  if (tab !== "catalogue") return null;
+  const dayDate = dayOfBlock(view, blockId)?.date ?? null;
+  return <BuilderCatalogueTab view={view} blockId={blockId} dayDate={dayDate} canMargin={canMoney} lang={lang} locale={locale} write={write} onClose={onClose} />;
 }

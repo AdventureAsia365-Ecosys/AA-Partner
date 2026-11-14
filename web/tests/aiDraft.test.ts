@@ -28,6 +28,7 @@ const { AiDraftPanel } = await import("@/components/pipeline/AiDraftPanel");
 
 const TRIP = "00000000-0000-4000-8000-0000000000d1";
 const DRAFT = "00000000-0000-4000-8000-0000000000f1";
+const VOICE = "00000000-0000-4000-8000-0000000000a9";
 
 const SETTINGS: AiSettings = {
   ai_enabled: true,
@@ -86,12 +87,16 @@ function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
+// AA-965 R41: the drawer reads the agency's voices when it opens; these tests answer it apart (no voice by default).
+let voicesAnswer: unknown = { voices: [], per_member_max: 4, mine: 0, descriptors: {} };
+
 function stubFetch(answer: (call: Call) => Response): Call[] {
   const calls: Call[] = [];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
       const call = { method: init?.method ?? "GET", url, body: init?.body ? JSON.parse(String(init.body)) : undefined };
+      if (call.method === "GET" && url.endsWith("/bff/ai/voices")) return json(200, voicesAnswer);
       calls.push(call);
       return answer(call);
     }),
@@ -272,6 +277,32 @@ describe("the draft drawer", () => {
     await openAndWrite(c);
     expect(q(c, "ai-draft-fallback")!.textContent).toBe(MESSAGES.en["aiDraft.fallback.budget"]);
     expect(q(c, "ai-draft-result")).toBeNull();
+  });
+
+  it("offers the agency's voices and sends the chosen one with the draft", async () => {
+    voicesAnswer = {
+      per_member_max: 4, mine: 1, descriptors: {},
+      voices: [{ voice_profile_id: VOICE, member_id: "m", mine: true, can_edit: true, name: "Calm and formal",
+                 locale: "en", channel: "email", descriptors: {}, created_at: "", updated_at: "" }],
+    };
+    const calls = stubFetch(() => json(200, result()));
+    const c = await mount(SETTINGS);
+    await click(q(c, "ai-draft-open"));
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const picker = Array.from(q(c, "ai-draft-form")!.querySelectorAll("select")).find((el) =>
+      Array.from(el.options).some((o) => o.value === VOICE),
+    ) as HTMLSelectElement;
+    expect(picker.options[1].textContent).toBe("Calm and formal (EN, email)");
+    await act(async () => {
+      picker.value = VOICE;
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await typeInto(q(c, "ai-draft-drawer")!.querySelector("textarea")!, "Could we start later?");
+    await submit(c);
+    expect(calls[0].body).toEqual({ kind: "reply", text: "Could we start later?", voice_profile_id: VOICE });
+    voicesAnswer = { voices: [], per_member_max: 4, mine: 0, descriptors: {} };
   });
 
   it("words a 403 for the plan and never calls the API without the client's message", async () => {
