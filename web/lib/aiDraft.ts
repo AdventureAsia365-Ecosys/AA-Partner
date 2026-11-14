@@ -30,6 +30,8 @@ export interface DraftResult {
   budget_alert: 75 | 90 | 100 | null;
   truncated: boolean;
   approval_required: true;
+  /** AA-965 R41: the voice the draft was written in (null without one). */
+  voice_profile_id?: string | null;
   drafted_at: string;
   /** AA-1040: the machine-readable mark of the model's text (null when there is no text). */
   ai?: { ai_generated: true; generator: string; generated_at: string } | null;

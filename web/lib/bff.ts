@@ -171,6 +171,15 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: new RegExp(`^trips/${UUID}/ai/draft$`), tenant: true, card: "AA-964", timeoutMs: 45_000 },
   // AA-1027 F3: the member accepts or discards a pending AI draft (with an optional feedback code); nothing is sent.
   { method: "POST", pattern: new RegExp(`^ai/drafts/${UUID}/(accept|discard)$`), tenant: true, card: "AA-1027" },
+  // AA-965 (CRM-33b): AI reads a supplier confirmation (R10) and the agent applies it; AI ideas for a proposal day
+  // (R40, Booking's products are read first, so a longer timeout); voice profiles of the reply draft (R41).
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/ai/supplier-confirmation$`), tenant: true, card: "AA-965", timeoutMs: 45_000 },
+  { method: "POST", pattern: new RegExp(`^ai/drafts/${UUID}/apply$`), tenant: true, card: "AA-965" },
+  { method: "POST", pattern: new RegExp(`^proposal-days/${UUID}/ai/options$`), tenant: true, card: "AA-965", timeoutMs: 50_000 },
+  { method: "GET", pattern: /^ai\/voices$/, tenant: true, card: "AA-965" },
+  { method: "POST", pattern: /^ai\/voices$/, tenant: true, card: "AA-965" },
+  { method: "PATCH", pattern: new RegExp(`^ai/voices/${UUID}$`), tenant: true, card: "AA-965" },
+  { method: "DELETE", pattern: new RegExp(`^ai/voices/${UUID}$`), tenant: true, card: "AA-965" },
   { method: "GET", pattern: /^settings\/payments$/, tenant: true, card: "AA-944" },
   { method: "PUT", pattern: /^settings\/payments$/, tenant: true, card: "AA-944" },
   { method: "GET", pattern: /^fx\/overrides$/, tenant: true, card: "AA-944" },

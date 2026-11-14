@@ -6,8 +6,9 @@
 // draft is copied for the member to paste into a message, check and send. The action is disabled, with the reason,
 // when the agency's plan has no AI assistant (the API answers 403 feature_not_allowed) or AI is switched off.
 // Calls go through the BFF allow-list (lib/bff.ts): POST trips/{id}/ai/draft, POST ai/drafts/{id}/accept|discard.
+// AA-965 (R41): an optional voice of the agency (GET ai/voices) shapes the draft's tone.
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AiNotice, Badge, Button, Drawer, Field, Input, K, Select, SegmentedControl, Textarea, useHydrated } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
 import { testModeNote, type AiSettings } from "@/lib/ai";
@@ -26,6 +27,7 @@ import {
   type DraftResult,
   type FeedbackCode,
 } from "@/lib/aiDraft";
+import { voiceOptions, type VoicesView } from "@/lib/aiExtras";
 import { bffSend } from "@/lib/bffClient";
 import { t, type Lang, type MessageKey } from "@/lib/i18n";
 
@@ -58,6 +60,20 @@ export function AiDraftPanel({
   const [draft, setDraft] = useState<DraftResult | null>(null);
   const [feedback, setFeedback] = useState<FeedbackCode | "">("");
   const [done, setDone] = useState<Done | null>(null);
+  // AA-965 R41: the agency's voices, read when the drawer first opens (a failed read just offers no voice).
+  const [voices, setVoices] = useState<VoicesView | null>(null);
+  const [voice, setVoice] = useState("");
+
+  useEffect(() => {
+    if (!open || voices) return;
+    let live = true;
+    void bffSend<VoicesView>("GET", "ai/voices").then((res) => {
+      if (live && res.ok) setVoices(res.data);
+    });
+    return () => {
+      live = false;
+    };
+  }, [open, voices]);
 
   function reset() {
     setDraft(null);
@@ -75,7 +91,12 @@ export function AiDraftPanel({
     }
     setBusy(true);
     reset();
-    const body = { kind, text: text.trim(), ...(instruction.trim() ? { instruction: instruction.trim() } : {}) };
+    const body = {
+      kind,
+      text: text.trim(),
+      ...(instruction.trim() ? { instruction: instruction.trim() } : {}),
+      ...(voice ? { voice_profile_id: voice } : {}),
+    };
     const res = await bffSend<DraftResult>("POST", `trips/${tripId}/ai/draft`, body, { renew: true });
     setBusy(false);
     if (!res.ok) {
@@ -173,6 +194,15 @@ export function AiDraftPanel({
             <Field label={tr("aiDraft.instruction")} hint={tr("aiDraft.instructionHelp")}>
               <Input maxLength={MAX_INSTRUCTION} value={instruction} onChange={(e) => setInstruction(e.target.value)} />
             </Field>
+            {voiceOptions(voices).length > 0 && (
+              <Field label={tr("aiDraft.voice")}>
+                <Select
+                  value={voice}
+                  onChange={(e) => setVoice(e.target.value)}
+                  options={[{ value: "", label: tr("aiDraft.voice.none") }, ...voiceOptions(voices)]}
+                />
+              </Field>
+            )}
             <div>
               <Button type="submit" variant="primary" disabled={busy} testId="ai-draft-write">
                 {busy && !draft ? tr("aiDraft.writing") : draft ? tr("aiDraft.another") : tr("aiDraft.write")}
