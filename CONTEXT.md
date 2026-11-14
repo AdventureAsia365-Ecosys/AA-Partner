@@ -2979,7 +2979,7 @@ or an env var alone. The CRM keeps its own registry in `crm` (root ADR 0008a: no
   later (422 `effective_from_in_past`); an approval a later value in force would hide is 409 `superseded_by_later`. An
   agency's history diffs its first own value against the platform value in force then. The staff agency overview
   shows the AI budget the gateway enforces, the agency's AI ceiling and its form quota with their source
-  (`tenancy.as_policy_reader` steps out of `crm_support_reader` for those registry rows only). The owner sets the
+  (`reads._policy_reader` steps out of `crm_support_reader` for those registry rows only). The owner sets the
   refund owner-approval threshold on Settings > Payments (`refund_owner_threshold_base`, base currency); an agent's
   `above_threshold` names `limit` / `limit_currency`. Settings > Forms reads the hourly quota from `GET /intake-forms`
   (`submissions_per_hour`, `submissions_per_hour_own`). A new-agency default reaches new agencies only: provisioning

@@ -77,3 +77,8 @@ export function testModeNote(settings: AiSettings | null): TestModeNote {
 export function notOnPlan(settings: AiSettings): boolean {
   return settings.ai_assist_allowed === false;
 }
+
+/** AA-1096 S280: the per-minute line of Settings > AI; 0 turns the limit off (crm.rate.ai_per_minute), never "up to 0". */
+export function rateLimitLine(n: number): { key: "ai.limit" | "ai.limitOff"; n: number } {
+  return { key: n > 0 ? "ai.limit" : "ai.limitOff", n };
+}

@@ -614,8 +614,8 @@ async def _decide(
         await check_range(conn, d, proposal["value"], proposal["tenant_id"])
         scope = None if proposal["tenant_id"] is None else uuid.UUID(proposal["tenant_id"])
         effective = dt.datetime.fromisoformat(proposal["effective_from"]) if proposal["effective_from"] else None
-        if effective is not None and await conn.fetchval(LATER_IN_FORCE_SQL, d.key, scope, uuid.UUID(proposal["id"]),
-                                                         effective):  # fmt: skip
+        args = (d.key, scope, uuid.UUID(proposal["id"]), effective)
+        if effective is not None and await conn.fetchval(LATER_IN_FORCE_SQL, *args):
             raise _refused(
                 409,
                 "superseded_by_later",

@@ -163,12 +163,34 @@ function FormCard({
   note?: Note;
   send: (body: Record<string, unknown>) => Promise<boolean>;
 }) {
-  const [copied, setCopied] = useState<string | null>(null);
-  const [origins, setOrigins] = useState(f.allowed_origins.join("\n"));
-  const [privacy, setPrivacy] = useState(f.privacy_notice_url ?? "");
-  const [owner, setOwner] = useState(f.default_owner_member_id ?? "");
-  const owners = team.filter((m) => m.status === "active" || m.member_id === f.default_owner_member_id);
+  const active = f.status === "active";
+  return (
+    <Panel testId="forms-item">
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <strong style={{ fontSize: 14, color: K.ink }}>{f.label}</strong>
+        <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <Badge tone={active ? "success" : "neutral"}>{t(lang, active ? "forms.active" : "forms.disabled")}</Badge>
+          {isOwner && (
+            <Button size="sm" variant="ghost" onClick={() => void send({ status: active ? "disabled" : "active" })}>
+              {t(lang, active ? "forms.disable" : "forms.enable")}
+            </Button>
+          )}
+        </span>
+      </div>
+      {url && <FormLinks url={url} label={f.label} lang={lang} />}
+      <FormOrigins form={f} isOwner={isOwner} lang={lang} send={send} />
+      <FormDetails form={f} isOwner={isOwner} lang={lang} team={team} send={send} />
+      {note && (
+        <div style={{ marginTop: 8 }}>
+          <NoteLine note={note} />
+        </div>
+      )}
+    </Panel>
+  );
+}
 
+function FormLinks({ url, label, lang }: { url: string; label: string; lang: Lang }) {
+  const [copied, setCopied] = useState<string | null>(null);
   async function copy(id: string, text: string) {
     try {
       await navigator.clipboard.writeText(text);
@@ -178,53 +200,42 @@ function FormCard({
       setCopied(null);
     }
   }
-
+  const snippet = embedSnippet(url, label);
   return (
-    <Panel testId="forms-item">
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <strong style={{ fontSize: 14, color: K.ink }}>{f.label}</strong>
-        <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <Badge tone={f.status === "active" ? "success" : "neutral"}>{t(lang, f.status === "active" ? "forms.active" : "forms.disabled")}</Badge>
-          {isOwner && (
-            <Button size="sm" variant="ghost" onClick={() => void send({ status: f.status === "active" ? "disabled" : "active" })}>
-              {t(lang, f.status === "active" ? "forms.disable" : "forms.enable")}
-            </Button>
-          )}
+    <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
+      <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
+        {t(lang, "forms.link")}
+        <span style={{ display: "flex", gap: 6 }}>
+          <input readOnly value={url} style={field} data-testid="forms-link" />
+          <Button size="sm" variant="secondary" onClick={() => void copy("url", url)}>
+            {t(lang, copied === "url" ? "forms.copied" : "forms.copy")}
+          </Button>
         </span>
-      </div>
-      {url && (
-        <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
-          <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
-            {t(lang, "forms.link")}
-            <span style={{ display: "flex", gap: 6 }}>
-              <input readOnly value={url} style={field} data-testid="forms-link" />
-              <Button size="sm" variant="secondary" onClick={() => void copy("url", url)}>
-                {copied === "url" ? t(lang, "forms.copied") : t(lang, "forms.copy")}
-              </Button>
-            </span>
-          </label>
-          <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
-            {t(lang, "forms.embed")}
-            <span style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
-              <textarea readOnly rows={3} value={embedSnippet(url, f.label)} style={{ ...field, fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }} />
-              <Button size="sm" variant="secondary" onClick={() => void copy("embed", embedSnippet(url, f.label))}>
-                {copied === "embed" ? t(lang, "forms.copied") : t(lang, "forms.copy")}
-              </Button>
-            </span>
-          </label>
-        </div>
-      )}
+      </label>
+      <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
+        {t(lang, "forms.embed")}
+        <span style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
+          <textarea readOnly rows={3} value={snippet} style={{ ...field, fontFamily: "'JetBrains Mono', monospace", fontSize: 12 }} />
+          <Button size="sm" variant="secondary" onClick={() => void copy("embed", snippet)}>
+            {t(lang, copied === "embed" ? "forms.copied" : "forms.copy")}
+          </Button>
+        </span>
+      </label>
+    </div>
+  );
+}
+
+type FormPartProps = { form: FormRow; isOwner: boolean; lang: Lang; send: (body: Record<string, unknown>) => Promise<boolean> };
+
+function FormOrigins({ form: f, isOwner, lang, send }: FormPartProps) {
+  const [origins, setOrigins] = useState(f.allowed_origins.join("\n"));
+  const helpId = `forms-origins-help-${f.intake_form_id}`;
+  return (
+    <>
       <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted, marginTop: 10 }}>
         {t(lang, "forms.origins")}
-        <textarea
-          rows={2}
-          readOnly={!isOwner}
-          value={origins}
-          onChange={(e) => setOrigins(e.target.value)}
-          style={field}
-          aria-describedby={`forms-origins-help-${f.intake_form_id}`}
-        />
-        <span id={`forms-origins-help-${f.intake_form_id}`}>{t(lang, "forms.originsHelp")}</span>
+        <textarea rows={2} readOnly={!isOwner} value={origins} onChange={(e) => setOrigins(e.target.value)} style={field} aria-describedby={helpId} />
+        <span id={helpId}>{t(lang, "forms.originsHelp")}</span>
       </label>
       {isOwner && (
         <div style={{ marginTop: 8 }}>
@@ -233,58 +244,55 @@ function FormCard({
           </Button>
         </div>
       )}
-      <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+    </>
+  );
+}
+
+/** The form's privacy link (empty: the agency's own, from Connections) and, for the owner, who gets its new inquiries. */
+function FormDetails({ form: f, isOwner, lang, team, send }: FormPartProps & { team: TeamMember[] }) {
+  const [privacy, setPrivacy] = useState(f.privacy_notice_url ?? "");
+  const [owner, setOwner] = useState(f.default_owner_member_id ?? "");
+  const owners = isOwner ? team.filter((m) => m.status === "active" || m.member_id === f.default_owner_member_id) : [];
+  const helpId = `forms-privacy-help-${f.intake_form_id}`;
+  const body = () => ({ privacy_notice_url: privacy.trim() || null, ...(owners.length > 0 ? { default_owner_member_id: owner || null } : {}) });
+  return (
+    <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
+      <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
+        {t(lang, "forms.privacy")}
+        <input
+          value={privacy}
+          readOnly={!isOwner}
+          onChange={(e) => setPrivacy(e.target.value)}
+          maxLength={500}
+          inputMode="url"
+          placeholder="https://"
+          style={field}
+          aria-describedby={helpId}
+          data-testid="forms-privacy"
+        />
+        <span id={helpId}>{t(lang, "forms.privacyHelp")}</span>
+      </label>
+      {owners.length > 0 && (
         <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
-          {t(lang, "forms.privacy")}
-          <input
-            value={privacy}
-            readOnly={!isOwner}
-            onChange={(e) => setPrivacy(e.target.value)}
-            maxLength={500}
-            inputMode="url"
-            placeholder="https://"
-            style={field}
-            aria-describedby={`forms-privacy-help-${f.intake_form_id}`}
-            data-testid="forms-privacy"
-          />
-          <span id={`forms-privacy-help-${f.intake_form_id}`}>{t(lang, "forms.privacyHelp")}</span>
+          {t(lang, "forms.owner")}
+          <select value={owner} onChange={(e) => setOwner(e.target.value)} style={field} data-testid="forms-owner">
+            <option value="">{t(lang, "forms.ownerNone")}</option>
+            {owners.map((m) => (
+              <option key={m.member_id} value={m.member_id}>
+                {memberLabel(m)}
+              </option>
+            ))}
+          </select>
         </label>
-        {isOwner && owners.length > 0 && (
-          <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
-            {t(lang, "forms.owner")}
-            <select value={owner} onChange={(e) => setOwner(e.target.value)} style={field} data-testid="forms-owner">
-              <option value="">{t(lang, "forms.ownerNone")}</option>
-              {owners.map((m) => (
-                <option key={m.member_id} value={m.member_id}>
-                  {memberLabel(m)}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
-        {isOwner && (
-          <div>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() =>
-                void send({
-                  privacy_notice_url: privacy.trim() || null,
-                  ...(owners.length > 0 ? { default_owner_member_id: owner || null } : {}),
-                })
-              }
-            >
-              {t(lang, "forms.saveDetails")}
-            </Button>
-          </div>
-        )}
-      </div>
-      {note && (
-        <div style={{ marginTop: 8 }}>
-          <NoteLine note={note} />
+      )}
+      {isOwner && (
+        <div>
+          <Button size="sm" variant="secondary" onClick={() => void send(body())}>
+            {t(lang, "forms.saveDetails")}
+          </Button>
         </div>
       )}
-    </Panel>
+    </div>
   );
 }
 

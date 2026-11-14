@@ -488,12 +488,10 @@ def test_partner_account_tx_is_used_only_by_the_account_cleanup() -> None:
 
 
 def test_staff_contexts_are_used_only_by_the_support_modules() -> None:
-    """AA-971: staff_tx only in the session module, support_tx and as_login_role only in the read module (AA-1096
-    S280: as_policy_reader too, for the agency's settings registry rows)."""
+    """AA-971: staff_tx only in the session module, support_tx and as_login_role only in the read module."""
     assert _users_of("staff_tx", STAFF_SESSION_MODULES) == []
     assert _users_of("support_tx", SUPPORT_READ_MODULES) == []
     assert _users_of("as_login_role", SUPPORT_READ_MODULES) == []
-    assert _users_of("as_policy_reader", SUPPORT_READ_MODULES) == []
 
 
 def test_ingest_tx_is_used_only_by_the_mail_ingest_job() -> None:

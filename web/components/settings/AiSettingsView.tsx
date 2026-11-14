@@ -9,7 +9,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { AiNotice, Badge, Button, Checkbox, Field, Input, K, useHydrated } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
-import { aiErrorKey, budgetError, meterTone, meterWidth, notOnPlan, testModeNote, usd, type AiSettings } from "@/lib/ai";
+import { aiErrorKey, budgetError, meterTone, meterWidth, notOnPlan, rateLimitLine, testModeNote, usd, type AiSettings } from "@/lib/ai";
 import { bffSend } from "@/lib/bffClient";
 import type { DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
@@ -30,6 +30,7 @@ export function AiSettingsView({ settings, lang, locale }: { settings: AiSetting
   const noPlan = notOnPlan(settings);
   // AA-1096 S280: the ceiling is AA's limit for this agency (platform setting or the agency's own), not a plan limit
   const ceiling = usd(settings.budget_max_usd, locale);
+  const rateLimit = rateLimitLine(settings.rate_limit_per_minute);
 
   async function save(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -109,8 +110,7 @@ export function AiSettingsView({ settings, lang, locale }: { settings: AiSetting
             })}
           </span>
           <span style={{ fontSize: 12.5, color: K.muted }} data-testid="ai-rate-limit">
-            {/* 0 turns the per-minute limit off (crm.rate.ai_per_minute), it never blocks AI */}
-            {settings.rate_limit_per_minute > 0 ? fmt(tr("ai.limit"), { n: settings.rate_limit_per_minute }) : tr("ai.limitOff")}
+            {fmt(tr(rateLimit.key), { n: rateLimit.n })}
           </span>
         </div>
       </Panel>

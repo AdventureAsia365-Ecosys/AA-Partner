@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from decimal import Decimal
 from typing import Any
 
@@ -26,7 +28,7 @@ from app import platform_settings as ps
 from app.auth.route_guard import Caller
 from app.errors import Invalid, NotFound
 from app.llm.budget_limits import agency_budget, budget_ceiling
-from app.tenancy import SupportContext, as_login_role, as_policy_reader, support_tx
+from app.tenancy import SUPPORT_ROLE, SupportContext, as_login_role, support_tx
 from app.vault import KeyProvider, Vault
 
 MAX_PAGE = 100
@@ -158,9 +160,22 @@ def _settings(row: asyncpg.Record, policy: dict[str, Any] | None = None) -> dict
     return out
 
 
+@asynccontextmanager
+async def _policy_reader(ctx: SupportContext) -> AsyncIterator[asyncpg.Connection]:
+    """Step out of ``crm_support_reader`` for one block (AA-1096 S280): the agency's own rows of the settings registry
+    (``crm.setting_value``, crm-064), which the reader is not granted. Those rows are values AA staff set for the
+    agency (an AI ceiling, a form quota), not the agency's data, so no identity consent applies. A savepoint, as
+    :func:`app.tenancy.as_login_role`; the role is back to the reader afterwards (a failure rolls the savepoint back,
+    and the role with it). Used only by :func:`_policy`, for :mod:`app.platform_settings` reads only."""
+    async with ctx.conn.transaction():
+        await ctx.conn.execute("SET LOCAL ROLE NONE")
+        yield ctx.conn
+        await ctx.conn.execute(f"SET LOCAL ROLE {SUPPORT_ROLE}")
+
+
 async def _policy(ctx: SupportContext, row: asyncpg.Record | None) -> dict[str, Any]:
-    """The registry values the agency is held to, read outside the support reader (:func:`as_policy_reader`)."""
-    async with as_policy_reader(ctx):
+    """The registry values the agency is held to, read outside the support reader (:func:`_policy_reader`)."""
+    async with _policy_reader(ctx):
         ceiling = await budget_ceiling(ctx)
         enforced = await agency_budget(ctx, row)
         quota = await ps.tenant_get(ctx.conn, ps.RATE_INTAKE_FORM, ctx.tenant_id)

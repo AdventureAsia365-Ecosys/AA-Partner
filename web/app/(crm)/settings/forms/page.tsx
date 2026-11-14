@@ -15,17 +15,27 @@ import { serverContext } from "@/lib/serverContext";
 
 export const dynamic = "force-dynamic";
 
+type Session = Awaited<ReturnType<typeof serverContext>>["session"];
+
+/** The page's reads: the forms with the hourly quota (every role), and for the owner the pipeline settings (null when
+ * the read failed: the panel says so) and the members a form's new inquiries may go to (AA-1096 S280). */
+async function reads(cfg: Parameters<typeof crmCall>[0], session: Session, isOwner: boolean) {
+  if (!session) return { res: null, settings: null, team: [] };
+  const owner = <T,>(path: string) => (isOwner ? crmCall<T>(cfg, session, "GET", path) : Promise.resolve(null));
+  const [res, settings, team] = await Promise.all([
+    crmCall<{ forms: FormRow[] } & FormQuota>(cfg, session, "GET", "intake-forms"),
+    owner<PipelineSettings>("settings/pipeline"),
+    owner<TeamPage>("team"),
+  ]);
+  return { res, settings: settings?.ok ? settings.data : null, team: team?.ok ? team.data.members : [] };
+}
+
 export default async function FormsPage() {
   const ctx = await crmContext();
   if (ctx.apiDown) return null;
   const { session } = await serverContext();
   const isOwner = ctx.role === "owner";
-  const [res, settings, team] = await Promise.all([
-    session ? crmCall<{ forms: FormRow[] } & FormQuota>(ctx.cfg, session, "GET", "intake-forms") : null,
-    session && isOwner ? crmCall<PipelineSettings>(ctx.cfg, session, "GET", "settings/pipeline") : null,
-    // AA-1096 S280: the members a form's new inquiries may go to (owner only; without it the picker is hidden)
-    session && isOwner ? crmCall<TeamPage>(ctx.cfg, session, "GET", "team") : null,
-  ]);
+  const { res, settings, team } = await reads(ctx.cfg, session, isOwner);
   return (
     <div data-testid="crm-settings-forms" style={{ display: "grid", gap: 14, maxWidth: 900 }}>
       <Link href="/settings" style={{ fontSize: 13 }}>
@@ -41,10 +51,10 @@ export default async function FormsPage() {
           isOwner={isOwner}
           lang={ctx.lang}
           quota={res.data}
-          team={team && team.ok ? team.data.members : []}
+          team={team}
         />
       )}
-      <PipelineSettingsPanel settings={settings && settings.ok ? settings.data : null} isOwner={isOwner} lang={ctx.lang} />
+      <PipelineSettingsPanel settings={settings} isOwner={isOwner} lang={ctx.lang} />
     </div>
   );
 }
