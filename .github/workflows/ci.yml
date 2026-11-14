@@ -7,6 +7,8 @@ name: CI
 #   aggregate of the "Integration shard i/N" matrix jobs (AA-1032), which are not required themselves.
 # Non-required: "Vendored CIS copies" (byte copies of AA-CIS-App files: the job table template + comparator, ADR 0003a,
 # the multi-issuer verifier, ADR 0006 §8 rule 9, and the web's BFF helpers, AA-935).
+# "Settings Lint" (AA-1096): the settings-lint guard (no hard-coded threshold, limit or cap in app/), non-required until
+# the ruleset adds it.
 # Non-required (AA-993 M4b): "Migration preflight" classifies a PR's new crm-NNN files (expand = auto-applied, else
 # a person applies them) and refuses what would leave Deploy Dev waiting on a manual apply (pull_request, merge_group).
 # UI kit core (AA-994 S2a, root ADR 0016): web/app/_kit/core is checked inside Web Build (integrity + provenance against
@@ -202,6 +204,43 @@ jobs:
           ENVIRONMENT: test
           COVERAGE_CORE: sysmon
         run: pytest tests/unit -v -n 4 --dist loadfile --tb=short --cov=app --cov-report=term-missing --cov-fail-under=90
+
+  # AA-1096 (S279 thresholds audit, section 5.4): "Settings Lint", the settings-lint guard as a check of its own, named
+  # the same in AA-Booking and AA-TripPlanner-Web, so branch protection can require it by name. Tech lead rule S279:
+  # every threshold, limit or cap is an admin-editable setting (the CRM registry, crm-064, edited on the CIS admin page
+  # Platform › Settings, CRM tab), never a code literal or an env var alone. tests/unit/test_aa1096_settings_lint.py
+  # fails on a new policy-looking numeric constant or numeric env read anywhere in app/ (mark it '# technical-constant:
+  # <reason>' or make it a setting; the baseline only shrinks) and on a registry key with no reader. The file also runs
+  # inside "Unit Tests"; this job only gives the rule its own check name. Gated like Unit Tests (skipped on a docs-only
+  # pull request, which counts as passed for a required check). No DB.
+  settings-lint:
+    name: Settings Lint
+    needs: lint
+    if: ${{ !cancelled() && needs.lint.outputs.tests != 'false' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      # S273 (workflow_lint WL4): restore only, like Unit Tests; cache-warm.yml saves this key on main.
+      - name: Restore pip cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ runner.arch }}-py3.12-${{ hashFiles('api/requirements*.txt') }}
+          restore-keys: pip-${{ runner.os }}-${{ runner.arch }}-py3.12-
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: settings-lint (hard-coded thresholds, dead settings)
+        env:
+          ENVIRONMENT: test
+        run: pytest tests/unit/test_aa1096_settings_lint.py -v --tb=short -p no:cacheprovider
 
   # Applies api/migrations/*.sql in order to a real PostgreSQL 15 (the RDS major) as AA-CIS-Infra DB Migrate does:
   # logged in as aa_cis_admin (NOT superuser, the RDS master shape), each file as crm_owner (SET ROLE), after a role

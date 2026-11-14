@@ -3,12 +3,15 @@ docs/audits/2026-11-13-S279-session/thresholds-audit/ section 5.4; tech lead S27
 value is a setting, never a code literal or an env var alone). The CRM copy of AA-CIS-App
 tests/unit/test_s279_settings_lint.py.
 
-1. **No new policy constant in a governed module.** In the modules of :data:`GOVERNED` (payments, intake, lifecycle,
-   rate limits, the AI gateway, proposals pricing, the retention jobs, the partner-account clean-up), a module-level
+1. **No new policy constant in a governed module.** In every module of ``app/`` (:data:`GOVERNED`; S280 widened it
+   from the L4 list of payments, intake, lifecycle, rate limits, the AI gateway, proposals pricing, the retention jobs
+   and the partner-account clean-up to the whole package, minus the vendored CIS byte copies in :data:`EXCLUDED`,
+   which AA-CIS-App lints and ``test_vendored_copies.py`` compares byte for byte), a module-level
    UPPER_CASE constant whose name looks like policy (``*_MAX``, ``*_MIN``, ``*_CAP``, ``*_LIMIT``, ``*_DAYS``,
    ``*_HOURS``, ``*_PCT``, ``*_THRESHOLD``, ``*_USD``, ``*_ATTEMPTS``, ``*_RETRIES``, ...) bound to a number literal
    fails, unless its line carries ``# technical-constant: <reason>`` or it is in the baseline of the constants that
-   were there on 13/11/2026 (``snapshots/aa1096_settings_lint_baseline.json``, a list that only shrinks). A numeric
+   were there when their module came under the rule (``snapshots/aa1096_settings_lint_baseline.json``: the L4 modules
+   on 13/11/2026, the rest of ``app/`` on 14/11/2026; a list that only shrinks). A numeric
    ``os.environ`` / ``getenv`` read under a policy-looking name fails the same way. Fix: add a setting (a crm migration
    seed row + ``app.platform_settings``), or mark a true engineering constant.
 2. **No dead settings.** Every compiled key with ``enforced`` true is read by code (its ``app.platform_settings``
@@ -17,6 +20,7 @@ tests/unit/test_s279_settings_lint.py.
    removed from the file.
 
 No DB. Regenerate the baseline only to remove entries: ``python -m tests.unit.test_aa1096_settings_lint``.
+CI: the job "Settings Lint" (.github/workflows/ci.yml) runs this file as a check of its own; "Unit Tests" runs it too.
 """
 
 from __future__ import annotations
@@ -32,23 +36,10 @@ from app import platform_settings as ps
 API = Path(__file__).resolve().parents[2]
 BASELINE = Path(__file__).resolve().parent / "snapshots" / "aa1096_settings_lint_baseline.json"
 
-GOVERNED = (
-    "app/payments",
-    "app/intake",
-    "app/lifecycle",
-    "app/ratelimit.py",
-    "app/llm/gateway.py",
-    "app/llm/agency_ai.py",
-    "app/proposals/retail.py",
-    "app/proposals/pricing.py",
-    "app/proposals/discount.py",
-    "app/cancel_policy",
-    "app/jobs/handlers.py",
-    "app/audit_export/retention.py",
-    "app/members/accounts.py",
-    "app/platform_settings/__init__.py",
-    "app/platform_settings/service.py",
-)
+GOVERNED = ("app",)
+# The vendored AA-CIS-App byte copies (aa_llm, ADR 0009 d13; the identity verifier, ADR 0006 §8 rule 9; the settings
+# reader, api/settings_reader.lock.json): their owner lints them, and a marker added here would break the byte copy.
+EXCLUDED = ("app/aa_llm/", "app/auth/identity_verifier.py", "app/platform_settings/reader.py")
 POLICY_NAME = re.compile(
     r"(^|_)(MAX|MIN|CAP|LIMIT|LIMITS|DAYS|HOURS|PCT|PERCENT|THRESHOLD|THRESHOLDS|USD|ATTEMPTS|RETRIES|QUOTA|BUDGET|"
     r"FLOOR|CEILING|TTL)(_|$)"
@@ -62,7 +53,7 @@ def _files() -> list[Path]:
     for rel in GOVERNED:
         p = API / rel
         out.extend([p] if p.suffix == ".py" else sorted(p.rglob("*.py")))
-    return [p for p in out if "__pycache__" not in p.parts]
+    return [p for p in out if "__pycache__" not in p.parts and not p.relative_to(API).as_posix().startswith(EXCLUDED)]
 
 
 def _is_number(node: ast.AST | None) -> bool:
@@ -160,8 +151,8 @@ if __name__ == "__main__":  # rewrite the baseline to the current findings (only
     BASELINE.write_text(
         json.dumps(
             {
-                "_doc": "AA-1096 L4 settings-lint baseline: policy-looking constants of the governed CRM modules on "
-                "13/11/2026 that are not settings yet. Only shrinks.",
+                "_doc": "AA-1096 settings-lint baseline: policy-looking constants of app/ that are not settings yet "
+                "(the L4 modules on 13/11/2026, the rest of app/ on 14/11/2026). Only shrinks.",
                 "constants": current,
             },
             indent=1,
