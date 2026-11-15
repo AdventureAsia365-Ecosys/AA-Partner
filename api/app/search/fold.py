@@ -30,10 +30,10 @@ import unicodedata
 _FROM = "đĐøØłŁ"
 _TO = "ddooll"
 _PY_FOLD = str.maketrans({**{a: b for a, b in zip(_FROM, _TO, strict=True)}, "ß": "ss", "ẞ": "ss"})
-# Words are split on white space and ASCII punctuation (the database's [[:punct:]] is ASCII in the C locale; any other
-# character stays inside its word on both sides).
+# Words are split on white space and punctuation (the database's [[:space:][:punct:]] under its UTF-8 ctype; the
+# Python mirror splits on anything that is not a letter or a digit).
 _WORD_SPLIT_SQL = "[[:space:][:punct:]]+"
-_WORD_SPLIT = re.compile(r"[\s!-/:-@\[-`{-~]+")
+_WORD_SPLIT = re.compile(r"[\W_]+")
 
 
 def fold_sql(expr: str) -> str:

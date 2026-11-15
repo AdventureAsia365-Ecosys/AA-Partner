@@ -49,7 +49,7 @@ def test_e_accents_and_case_fold_the_same_way(a: str, b: str) -> None:
 
 
 def test_words_split_on_spaces_and_punctuation() -> None:
-    assert fold.words("Đà Lạt – honeymoon, 2027!") == ["da", "lat", "–", "honeymoon", "2027"]
+    assert fold.words("Đà Lạt – honeymoon, 2027!") == ["da", "lat", "honeymoon", "2027"]
     assert fold.words("  ") == []
 
 
