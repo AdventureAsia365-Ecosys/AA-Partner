@@ -1219,8 +1219,7 @@ CASCADE_ERASED = {
     "supplier_bill_line": {"supplier_bill", "booking_line"},
     "aa_invoice_cache": {"agency_supplier"},
     "departure_cost": {"agency_supplier"},
-    # AA-1069 (crm-052): a catalogue service leaves with the agency's settings row (the agency erase) and with its
-    # supplier (a supplier purge); a tier with its service.
+    # AA-1069 (crm-052): a catalogue service leaves with the settings row or its supplier; a tier with its service.
     "agency_service": {"tenant_settings", "agency_supplier"},
     "agency_service_tier": {"agency_service"},
     # AA-1070 (crm-054, an expand file): the departure state leaves with the agency's feed row (the agency erase), a
@@ -1243,12 +1242,10 @@ CASCADE_ERASED = {
     "sales_partner_link": {"sales_partner", "intake_form"},
     "sales_partner_otp": {"sales_partner", "sales_partner_link"},
     "partner_commission": {"trip", "sales_partner"},
-    # AA-1072 (crm-057): a "Book now" attempt leaves with the agency's settings row, a gateway payment session with its
-    # invoice.
+    # AA-1072 (crm-057): a "Book now" attempt leaves with the settings row, a gateway payment session with its invoice.
     "public_booking_attempt": {"tenant_settings"},
     "payment_session": {"invoice"},
-    # AA-1070 crm-35 (crm-059, an expand file): a library line leaves with the agency's settings row, a proposal's
-    # inclusion line with its proposal (the trip and agency erase, the trash purge).
+    # AA-1070 crm-35 (crm-059): a library line leaves with the settings row, an inclusion line with its proposal.
     "inclusion_item": {"tenant_settings"},
     "proposal_inclusion": {"proposal"},
     # AA-1070 item crm-13 (crm-060): an "AA cancelled" case leaves with its trip.
@@ -1256,6 +1253,9 @@ CASCADE_ERASED = {
     # AA-1093 part 1 (crm-063, an expand file): a retired-tour flag leaves with its trip.
     "tour_retired_flag": {"trip"},
     "setting_value": {"tenant_settings"},  # AA-1096 L4 (crm-064): an agency's own values leave with its settings row
+    "campaign": {"tenant_settings"},  # AA-968 crm-073: a campaign and the suppression list go with the settings row,
+    "campaign_recipient": {"campaign", "traveler"},  # a recipient with its campaign or its client (erase, trash purge)
+    "campaign_suppression": {"tenant_settings"},
 }
 
 
