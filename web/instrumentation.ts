@@ -1,9 +1,9 @@
 // web/instrumentation.ts
 // AA-979 P2b — Sentry on the server, moved from the Content studio app with the studio (AA-1036, R3 slice 1, root ADR
-// 0019 d6): it now covers the whole agency app. On only when SENTRY_DSN is set (the studio task maps the secret
-// crm/<env>/portal-sentry-dsn with AA-CIS-Infra crm_portal_sentry_enabled; the agency app's task gets it at the
-// cut-over, R3 slice 2); no DSN = nothing is sent. environment = ENVIRONMENT, release = the image's git SHA; no PII
-// (lib/sentryScrub.ts), no tracing.
+// 0019 d6): it now covers the whole agency app. On only when SENTRY_DSN is set (AA-1111: the aa-crm-dev-web task maps
+// key sentry_dsn of the crm/<env>/web secret behind AA-CIS-Infra crm_web_sentry_enabled; Sentry project
+// aa-partner-web); no DSN = nothing is sent. environment = ENVIRONMENT, release = the image's git SHA; no PII
+// (lib/sentryScrub.ts), no tracing. The browser DSN is the build-time variable WEB_PUBLIC_SENTRY_DSN.
 import * as Sentry from "@sentry/nextjs";
 import { scrubEvent } from "./lib/sentryScrub";
 
