@@ -1,6 +1,22 @@
 {
  "about": "AA-1096 L4 follow-up (the CIS 416 shape): the operator's guide of every CRM setting, shown by CIS Platform > Settings (CRM tab) through crm.ops.v1 /settings. One entry per key of compiled_defaults.json: {en|vi: {what, raise, lower, when, example}}. Hand-edited source (crm.setting_definition has no guide column); tests/unit/test_aa1096_settings_guides.py keeps it complete. The example names the default, never the value in force.",
  "guides": {
+  "crm.release.preview": {
+   "en": {
+    "what": "Whether one agency is on preview: its app shows the features still in preview and the preview entries of Help > What's new. Every other agency sees only the released features. A preview never covers privacy or price rules; a CI lint refuses one that does.",
+    "raise": "Turning it on lets the agency try new screens before every agency gets them, and lets AA hear about problems early. The agency may meet rough edges.",
+    "lower": "Turning it off hides the preview features and their What's new entries again; the agency keeps every released feature and all its data.",
+    "when": "Turn it on for an agency that agreed to try features early (for example the pilot agency, after the feature's own review); turn it off when the agency asks or a preview causes trouble.",
+    "example": "With the default of off, no agency sees a preview feature until an administrator switches it on for that agency."
+   },
+   "vi": {
+    "what": "Một đại lý có đang ở chế độ xem trước hay không: ứng dụng của đại lý đó hiện các tính năng còn đang xem trước và các mục xem trước trong Trợ giúp > Tính năng mới. Mọi đại lý khác chỉ thấy tính năng đã phát hành. Chế độ xem trước không bao giờ áp cho quy tắc quyền riêng tư hay giá; một lint trong CI chặn trường hợp đó.",
+    "raise": "Bật lên thì đại lý dùng thử màn hình mới trước khi mọi đại lý cùng có, và AA nghe phản hồi sớm. Đại lý có thể gặp chỗ chưa hoàn thiện.",
+    "lower": "Tắt đi thì các tính năng xem trước và mục Tính năng mới của chúng lại ẩn; đại lý vẫn giữ mọi tính năng đã phát hành và toàn bộ dữ liệu.",
+    "when": "Bật cho đại lý đã đồng ý dùng thử sớm (ví dụ đại lý pilot, sau khi tính năng qua review riêng); tắt khi đại lý yêu cầu hoặc tính năng xem trước gây sự cố.",
+    "example": "Với mặc định là tắt, không đại lý nào thấy tính năng xem trước cho tới khi quản trị viên bật cho đại lý đó."
+   }
+  },
   "crm.agency_defaults.auto_archive_months": {
    "en": {
     "what": "How many months a client can go without any activity before the daily lifecycle run archives it: the window a new agency starts with. A change applies to agencies created after it (and to the few older agencies that have no settings yet); an existing agency keeps the window it started with until its owner changes it on Settings > Data and privacy.",

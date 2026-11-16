@@ -10,6 +10,10 @@ export const TERMS_PATH = "/legal/partner-terms";
 /** The studio's draft privacy notice (app/(studio)/legal/privacy). */
 export const PRIVACY_PATH = "/legal/privacy";
 
+/** AA-970: the public data page and sub-processor page, rendered from the root DPA Annex 3 (lib/legal/annexMarkdown.ts). */
+export const DATA_PATH = "/legal/data";
+export const SUBPROCESSORS_PATH = "/legal/subprocessors";
+
 /** The old paths of the separate studio app and where they go now (308, next.config.ts). */
 export const LEGACY_LEGAL_REDIRECTS: readonly { source: string; destination: string }[] = [
   { source: "/terms", destination: TERMS_PATH },

@@ -43,6 +43,7 @@ import { searchEn, searchVi } from "./i18nSearch";
 import { tagsEn, tagsVi } from "./i18nTags";
 import { campaignsEn, campaignsVi } from "./i18nCampaigns";
 import { settingsUxEn, settingsUxVi } from "./i18nSettingsUx";
+import { helpEn, helpVi } from "./i18nHelp";
 
 export type Lang = "en" | "vi";
 export const LOCALE_COOKIE = "aa_crm_locale";
@@ -99,6 +100,7 @@ const en = {
   ...tagsEn, // AA-960: tags, system tags, bulk tagging, Settings > Tags, coverage, ready to travel again (lib/i18nTags.ts)
   ...campaignsEn, // AA-968: Marketing > Campaigns (lib/i18nCampaigns.ts)
   ...settingsUxEn, // AA-1096 S280: per-form fields and quota, refund limit, markup / price-check notes (lib/i18nSettingsUx.ts)
+  ...helpEn, // AA-970 (CRM-37b): What's new, preview panel, help topics, public data pages (lib/i18nHelp.ts)
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Home",
@@ -2839,6 +2841,7 @@ const vi: Record<MessageKey, string> = {
   ...tagsVi,
   ...campaignsVi, // AA-968
   ...settingsUxVi,
+  ...helpVi,
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Trang chủ",

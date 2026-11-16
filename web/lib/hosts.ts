@@ -55,6 +55,9 @@ export const PUBLIC_PARTNER_PATHS = [
   // gate, as in the studio app) and the brand logo they show (public/assets/).
   "/legal/partner-terms",
   "/legal/privacy",
+  // AA-970: the public data and sub-processor pages (rendered from the root DPA Annex 3), shareable with clients.
+  "/legal/data",
+  "/legal/subprocessors",
   "/assets/",
   // AA-1008 (root ADR 0016 decision 9): the kit gallery of the per-PR visual run (no session there). It renders only on a
   // server started with KIT_GALLERY=1; a deployed build answers 404, so this opens nothing on Dev or production.

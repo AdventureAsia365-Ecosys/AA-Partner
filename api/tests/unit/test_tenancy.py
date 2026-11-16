@@ -117,6 +117,7 @@ def test_me_route_goes_through_tenant_tx(entitled: bool) -> None:
         "crm_entitled": entitled,
         "ai_paused": False,  # no crm.llm_app_profile row: AI on
         "permissions": {"aa_tariff_view": True},  # AA-1030: the owner sees the AA prices page
+        "preview": False,  # AA-970: no agency value of crm.release.preview, the compiled default (off)
     }
     assert conn.sql("projected_at IS NOT NULL AND plan = 'free'") == [()]
 
@@ -360,3 +361,31 @@ async def test_as_eraser_refuses_a_reader_context() -> None:
     with pytest.raises(ValueError):
         async with as_eraser(ctx):
             pass
+
+
+@pytest.mark.parametrize(("stored", "preview"), [(None, False), ("true", True), ("false", False)])
+def test_me_says_whether_the_agency_is_on_preview(stored: str | None, preview: bool) -> None:
+    """AA-970 (R42): /me answers ``preview`` from the agency's own approved value of crm.release.preview (crm-072),
+    read inside the agency's context; no row = the platform value, off by default."""
+    from app import platform_settings as ps
+
+    ps.forget_tenant(TENANT)
+    pools = LocalPools()
+    settings = pools.settings()
+    conn = _conn(member={"member_id": MEMBER, "role": "agent"})
+    conn.on("SELECT display_name, default_locale", {"display_name": "Invented Lotus Travel", "default_locale": "en-AU"})
+    conn.on("FROM crm.tenant_entitlement", True)
+    rows = [] if stored is None else [{"key": ps.RELEASE_PREVIEW, "value_text": stored, "version": 2}]
+    conn.on("FROM crm.setting_value v", rows)
+    app = create_app(settings, FakeDatabase(conn, settings), pools.verifier(settings))
+    headers = {"Authorization": f"Bearer {pools.partner_web()}", "X-AA-Tenant-Id": str(TENANT)}
+    try:
+        with TestClient(app) as c:
+            r = c.get("/crm/v1/me", headers=headers)
+    finally:
+        ps.forget_tenant(TENANT)
+    assert r.status_code == 200 and r.json()["preview"] is preview
+    # Read through the request's own connection, for this agency only (the RLS context of tenant_tx). The fake pool
+    # shares this connection, so a platform snapshot refresh (LIKE 'crm.%', no agency) may sit beside it, depending on
+    # which test refreshed the reader last: match the agency read alone.
+    assert conn.sql("WHERE v.tenant_id = $1 AND v.status = 'approved'") == [(TENANT,)]

@@ -38,6 +38,9 @@ export const PAGES: VisualPage[] = [
   { slug: "health", route: "/health", path: "/health", auth: "public", frame: false },
   { slug: "legal-partner-terms", route: "/legal/partner-terms", path: "/legal/partner-terms", auth: "public" },
   { slug: "legal-privacy", route: "/legal/privacy", path: "/legal/privacy", auth: "public" },
+  // AA-970: the public data and sub-processor pages, rendered from the root DPA Annex 3.
+  { slug: "legal-data", route: "/legal/data", path: "/legal/data", auth: "public" },
+  { slug: "legal-subprocessors", route: "/legal/subprocessors", path: "/legal/subprocessors", auth: "public" },
   { slug: "staff-signed-out", route: "/staff/signed-out", path: "/staff/signed-out", auth: "public", frame: false },
   { slug: "kit-gallery", route: "/kit-gallery", path: "/kit-gallery", auth: "public", gallery: true },
   { slug: "selftest-document", route: "/kit-gallery", path: "/kit-gallery?plant=overflow", auth: "public", gallery: true, selftest: "document" },

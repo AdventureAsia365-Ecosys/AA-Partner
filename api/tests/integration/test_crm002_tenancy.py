@@ -58,6 +58,9 @@ EXTRA_POLICIES = {
     ("sales_partner_link", "sales_partner_link_token_lookup"): ("r", {APP_ROLE}),
     #   AA-1072 (crm-057): the gateway webhook lookup of app.tenancy.payment_session_tx() (app.payment_txn_ref).
     ("payment_session", "payment_session_ref_lookup"): ("r", {APP_ROLE}),
+    #   AA-968 (crm-073): the campaign unsubscribe lookup of app.tenancy.campaign_unsubscribe_tx()
+    #   (keyed on app.campaign_unsubscribe_hash).
+    ("campaign_recipient", "campaign_recipient_unsubscribe_lookup"): ("r", {APP_ROLE}),
 }
 # Extra policies that must be RESTRICTIVE (ANDed with tenant_isolation); every other extra policy is permissive.
 RESTRICTIVE_POLICIES = {

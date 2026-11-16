@@ -12,7 +12,10 @@ switcher; it refuses nothing. AA-1036 (R3): ``ai_paused`` is true while AA has s
 app (``crm.llm_app_profile.ai_enabled`` false, :func:`app.llm.app_profile.for_call`: no row, a missing table or an
 unreadable row = AI on), so the agency app shows one banner instead of a failure per draft. The staff reason
 (``disabled_reason``) is never sent. AA-1030: ``permissions`` carries the matrix answers the web hides links by
-(``aa_tariff_view``: the AA prices page); the API still refuses on its own.
+(``aa_tariff_view``: the AA prices page); the API still refuses on its own. AA-970 (R42): ``preview`` is the
+agency's own value of the settings key ``crm.release.preview`` (crm-072, off by default; an AA administrator switches
+one agency on at Platform > Settings): the web shows its preview features and the preview entries of What's new only
+when it is true. It never gates privacy or price logic (``api/scripts/preview_flag_lint.py``).
 Margin-bearing fields arrive with later cards behind the per-role serializer allow-list (design v3 §4.6).
 
 ``GET /crm/v1/memberships`` is the one route without ``X-AA-Tenant-Id``: it lists the agencies the caller belongs to
@@ -27,6 +30,7 @@ from typing import Annotated, Any
 from fastapi import Depends, Header, HTTPException, Request
 
 from app import entitlements
+from app import platform_settings as ps
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
@@ -68,6 +72,8 @@ async def me(
             "ai_paused": not (await app_profile.for_call(ctx.conn)).ai_enabled,
             # AA-1030: what the web shows or hides by the permission matrix (one source for both sides).
             "permissions": {"aa_tariff_view": may(ctx.member_role, Action.AA_TARIFF_VIEW)},
+            # AA-970: the agency is on preview (its own crm.release.preview value; a failed read = the platform value).
+            "preview": bool(await ps.tenant_get(ctx.conn, ps.RELEASE_PREVIEW, ctx.tenant_id)),
         }
 
 
