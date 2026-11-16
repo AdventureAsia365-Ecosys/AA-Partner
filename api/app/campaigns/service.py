@@ -378,6 +378,18 @@ async def preview(ctx: TenantContext, vault: Vault, campaign_id: uuid.UUID, link
     }
 
 
+async def _sending_mailbox(ctx: TenantContext, mailbox: uuid.UUID | None) -> uuid.UUID:
+    """The campaign's mailbox, if the caller may schedule it: one of the agency's own (409 ``mailbox_required``), and
+    the agency mailbox or the caller's own (409 ``invalid_mailbox``: the editor's check alone is not enough, a
+    colleague could schedule a draft written on someone's personal mailbox)."""
+    box = await ctx.conn.fetchrow(MAILBOX_SQL, mailbox) if mailbox is not None else None
+    if box is None or mailbox is None:
+        raise Conflict("mailbox_required", "connect and pick one of the agency's own mailboxes")
+    if not _may_send_from(ctx, box):
+        raise Conflict("invalid_mailbox", "pick the agency mailbox or your own")
+    return mailbox
+
+
 async def schedule(
     ctx: TenantContext,
     vault: Vault,
@@ -398,14 +410,7 @@ async def schedule(
         raise Conflict("campaign_not_editable", "only a draft or a held campaign is scheduled")
     if not links.client_origin:
         raise Conflict("campaigns_not_configured", "campaign links cannot be made here yet")
-    mailbox = row["channel_account_id"]
-    box = await ctx.conn.fetchrow(MAILBOX_SQL, mailbox) if mailbox is not None else None
-    if box is None:
-        raise Conflict("mailbox_required", "connect and pick one of the agency's own mailboxes")
-    if not _may_send_from(ctx, box):
-        # BYO: whoever schedules sends from the agency mailbox or their own, never another member's (the editor's
-        # check alone is not enough: a colleague could schedule a draft written on someone's personal mailbox).
-        raise Conflict("invalid_mailbox", "pick the agency mailbox or your own")
+    mailbox = await _sending_mailbox(ctx, row["channel_account_id"])
     codes, found, limit, cap, _done = await _prepare(ctx, vault, row, links)
     if codes:
         raise Invalid("content_gate", "the campaign cannot go out as written", codes=codes)
