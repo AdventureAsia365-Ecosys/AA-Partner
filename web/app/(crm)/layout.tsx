@@ -25,7 +25,7 @@ import type { Recovery } from "@/lib/team";
 import { CrmShell } from "@/app/_kit/local/CrmShell";
 import { plannerHref } from "@/lib/apps";
 import { AiPausedBanner } from "@/components/ai/AiPausedBanner";
-import { parseConfig } from "@/lib/search";
+import { shellSearch } from "@/lib/searchServer";
 
 export const dynamic = "force-dynamic";
 
@@ -62,11 +62,7 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
   const studioHref = contentStudioHref(ctx.cfg.contentStudioUrl, ctx.cfg.publicOrigin);
   const studio = studioHref && session ? await studioAccess(ctx.cfg.cisApiUrl, session) : "unknown";
   const contentHref = studioLink(studioHref, studio);
-  const searchRead = session ? await crmCall<unknown>(ctx.cfg, session, "GET", "search/config") : null;
-  const searchConfig = parseConfig(searchRead && searchRead.ok ? searchRead.data : null);
-  const search = searchConfig.enabled
-    ? { config: searchConfig, contentEnabled: studio === "yes", tenantId: ctx.me.tenant_id, lang: ctx.lang }
-    : null;
+  const search = await shellSearch(ctx.cfg, session, { tenantId: ctx.me.tenant_id, lang: ctx.lang, studio });
   return (
     <CrmShell
       dict={dictionary(ctx.lang)}

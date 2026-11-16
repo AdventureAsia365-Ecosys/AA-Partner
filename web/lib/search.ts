@@ -68,33 +68,33 @@ export function parseConfig(data: unknown): SearchConfig {
   };
 }
 
+/** The page of the kinds whose results all open one list page (the record is found there). */
+const LIST_PAGES: Partial<Record<SearchKind, string>> = {
+  supplier: "/suppliers",
+  service: "/services",
+  message_template: "/settings/templates",
+  workflow: "/automations",
+  inclusion: "/settings/inclusions",
+  whatsapp_template: "/settings/channels",
+};
+
+function tagHref(item: SearchItem): string {
+  const code = item.meta.code;
+  return item.meta.applies_to === "client" && typeof code === "string" ? directoryHref({ tag: code }) : "/settings/tags";
+}
+
+function bookingHref(item: SearchItem): string {
+  const trip = item.meta.trip_id;
+  return typeof trip === "string" ? `/pipeline/${encodeURIComponent(trip)}` : "/pipeline";
+}
+
 /** Where one result opens (an agency page; never a URL that carries the term). */
 export function hrefFor(kind: SearchKind, item: SearchItem): string {
-  const id = encodeURIComponent(item.id);
-  switch (kind) {
-    case "client":
-      return `/clients/${id}`;
-    case "trip":
-      return `/pipeline/${id}`;
-    case "booking":
-      return typeof item.meta.trip_id === "string" ? `/pipeline/${encodeURIComponent(item.meta.trip_id)}` : "/pipeline";
-    case "supplier":
-      return "/suppliers";
-    case "service":
-      return "/services";
-    case "message_template":
-      return "/settings/templates";
-    case "workflow":
-      return "/automations";
-    case "inclusion":
-      return "/settings/inclusions";
-    case "tag":
-      return item.meta.applies_to === "client" && typeof item.meta.code === "string"
-        ? directoryHref({ tag: item.meta.code })
-        : "/settings/tags";
-    case "whatsapp_template":
-      return "/settings/channels";
-  }
+  if (kind === "client") return `/clients/${encodeURIComponent(item.id)}`;
+  if (kind === "trip") return `/pipeline/${encodeURIComponent(item.id)}`;
+  if (kind === "booking") return bookingHref(item);
+  if (kind === "tag") return tagHref(item);
+  return LIST_PAGES[kind] ?? "/home";
 }
 
 /**
