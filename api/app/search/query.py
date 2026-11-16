@@ -66,8 +66,20 @@ def classify(raw: str, *, max_chars: int, min_text_chars: int) -> Term:
         raise Invalid("invalid_query", "type something to search", field="q")
     if len(text) > max_chars:
         raise Invalid("query_too_long", f"at most {max_chars} characters", field="q")
-    has_space = " " in text
-    if "@" in text and not has_space:
+    contact = _contact(text)
+    if contact is not None:
+        return contact
+    floor = max(1, min_text_chars)
+    if len(text) < floor:
+        return Term(text, "too_short")
+    if len(fold(text).strip()) < floor:
+        raise Invalid("query_too_short", f"type at least {floor} letters or digits", field="q")
+    return _text(text)
+
+
+def _contact(text: str) -> Term | None:
+    """An e-mail (``@``, no white space) or an international phone (``+``): whole and valid, else 422. None: text."""
+    if "@" in text and " " not in text:
         if any(w in text for w in _WILDCARDS):
             raise Invalid("partial_search_refused", "search a whole e-mail address (no wildcards)", field="q")
         try:
@@ -83,11 +95,11 @@ def classify(raw: str, *, max_chars: int, min_text_chars: int) -> Term:
                 "partial_contact_search", "search a whole international phone number (+ and country code)", field="q"
             ) from None
         return Term(text, "phone")
-    floor = max(1, min_text_chars)
-    if len(text) < floor:
-        return Term(text, "too_short")
-    if len(fold(text).strip()) < floor:
-        raise Invalid("query_too_short", f"type at least {floor} letters or digits", field="q")
+    return None
+
+
+def _text(text: str) -> Term:
+    """A text term: its name tokens, or no client search at all (a wildcard, an ``@`` in a spaced term)."""
     notice: Notice | None = None
     if any(w in text for w in _WILDCARDS):
         notice = "partial_search_refused"
