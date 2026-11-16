@@ -60,6 +60,7 @@ a { color: inherit; }
 }
 [data-crm="search"] { display: flex; flex: 1; min-width: 0; max-width: 440px; white-space: nowrap; overflow: hidden; }
 [data-crm="search"] span { overflow: hidden; text-overflow: ellipsis; }
+[data-crm="search-icon"] { display: none; } /* AA-963: the phone's search entry (the box is hidden there) */
 
 @media (max-width: 899px) {
   [data-crm="menu-button"] { display: inline-flex; }
@@ -69,6 +70,7 @@ a { color: inherit; }
 }
 @media (max-width: 599px) {
   [data-crm="search"] { display: none; }
+  [data-crm="search-icon"] { display: inline-flex; }
   [data-crm="hide-phone"] { display: none; }
 }
 
