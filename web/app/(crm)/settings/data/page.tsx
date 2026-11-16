@@ -4,6 +4,7 @@
 // portability exports and the data-request log (owner); AA-971: AA support access (every role sees it, the owner
 // allows or ends it). Every role
 // sees the rules; the owner sees and changes the rest (the API decides; other roles get the rules only).
+// AA-970: links to the public pages "How we handle your data" and "Sub-processors" (rendered from the root DPA Annex 3).
 import Link from "next/link";
 import { ErrorState } from "@/app/_kit";
 import { PageTitle } from "@/components/PageTitle";
@@ -13,6 +14,7 @@ import { SupportAccessView } from "@/components/settings/SupportAccessView";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { t } from "@/lib/i18n";
+import { DATA_PATH, SUBPROCESSORS_PATH } from "@/lib/studio/legal";
 import type { LifecycleView, TrashItem } from "@/lib/lifecycle";
 import type { ExportsView, RequestsView } from "@/lib/portability";
 import { serverContext } from "@/lib/serverContext";
@@ -46,6 +48,11 @@ export default async function DataSettingsPage() {
         ← {t(ctx.lang, "settings.title")}
       </Link>
       <PageTitle title={t(ctx.lang, "data.title")} subtitle={t(ctx.lang, "data.subtitle")} />
+      <p data-testid="data-public-pages" style={{ margin: 0, fontSize: 13, display: "flex", flexWrap: "wrap", gap: 12 }}>
+        <span>{t(ctx.lang, "data.publicPages")}</span>
+        <a href={DATA_PATH}>{t(ctx.lang, "help.data.page")}</a>
+        <a href={SUBPROCESSORS_PATH}>{t(ctx.lang, "help.data.subprocessors")}</a>
+      </p>
       {!view || !view.ok ? (
         <ErrorState message={t(ctx.lang, "data.error")} />
       ) : (

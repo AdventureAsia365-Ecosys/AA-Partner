@@ -36,6 +36,8 @@ export interface Me {
   ai_paused?: boolean;
   /** AA-1030: the permission matrix's answers the web hides links by (absent on an older API). */
   permissions?: { aa_tariff_view?: boolean };
+  /** AA-970 (R42): the agency is on preview (crm.release.preview); absent on an older API = not on preview. */
+  preview?: boolean;
 }
 
 export async function crmCall<T>(

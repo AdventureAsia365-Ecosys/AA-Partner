@@ -42,6 +42,7 @@ import { inclusionsEn, inclusionsVi } from "./i18nInclusions";
 import { searchEn, searchVi } from "./i18nSearch";
 import { tagsEn, tagsVi } from "./i18nTags";
 import { settingsUxEn, settingsUxVi } from "./i18nSettingsUx";
+import { helpEn, helpVi } from "./i18nHelp";
 
 export type Lang = "en" | "vi";
 export const LOCALE_COOKIE = "aa_crm_locale";
@@ -97,6 +98,7 @@ const en = {
   ...inclusionsEn, // AA-1070 crm-35: Settings > Proposal lines, the builder picker, the client lists (lib/i18nInclusions.ts)
   ...tagsEn, // AA-960: tags, system tags, bulk tagging, Settings > Tags, coverage, ready to travel again (lib/i18nTags.ts)
   ...settingsUxEn, // AA-1096 S280: per-form fields and quota, refund limit, markup / price-check notes (lib/i18nSettingsUx.ts)
+  ...helpEn, // AA-970 (CRM-37b): What's new, preview panel, help topics, public data pages (lib/i18nHelp.ts)
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Home",
@@ -2836,6 +2838,7 @@ const vi: Record<MessageKey, string> = {
   ...searchVi,
   ...tagsVi,
   ...settingsUxVi,
+  ...helpVi,
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Trang chủ",
