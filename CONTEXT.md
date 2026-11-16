@@ -401,6 +401,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-067` | `api/migrations/067_crm_tenant_erasure_studio_invitations.sql` | AA-1093 stage 2 (**contract**: a SECURITY DEFINER function with REVOKE / GRANT and a post-check, MIG-4): `crm.erase_studio_invitations(cis_tenant, dry_run)` counts or deletes one CIS tenant's `crm.studio_invitation` rows (keyed by `cis_tenant_id`, out of `crm.erase_subject`'s reach); actor `job:crm_tenant_erase` only (CRM56), EXECUTE `crm_eraser` only; crm_app still has no DELETE on the table. |
 | `crm-069` | `api/migrations/069_crm_ai_voice_profiles_supplier_options.sql` | AA-965 CRM-33b (**contract**, MIG-4; crm-066..068 are other cards' of the S281 wave): `crm.voice_profile` (base template, R41: a member's writing voice for the reply draft: name, locale en / vi, channel email / whatsapp, `descriptors` = fixed codes only (formality, warmth, length, emoji, greeting, sign_off; at most 1000 bytes); never trashed, hard delete; cascades from `tenant_settings` and its member); `crm.ai_draft` kinds + `supplier_confirmation` / `notes_to_options`, `voice_profile_id` (no key, history), `validation` (the code's check of the answer: ids, codes, short references; object <= 16 KB; a voice only on a message draft); AI stages `crm_supplier_confirm` / `crm_notes_options` (writer) copied from the `crm_draft_reply` profile and route at apply time |
 | `crm-070` | `api/migrations/070_crm_ai_crm33b_settings.sql` | AA-965 CRM-33b (**contract**: config rows; ships in the code PR like crm-068, the settings lint binds seed, readers and compiled defaults): eight `crm.setting_definition` rows, area ai: `crm.ai.supplier_confirm_max_tokens` (800), `_max_chars` (12000), `_max_lines` (20), `crm.ai.notes_options_max_tokens` (600), `_max_chars` (8000), `_max_candidates` (80), `_max_suggestions` (5), `crm.ai.voice_profiles_per_member_max` (4) |
+| `crm-071` | `api/migrations/071_crm_search_settings.sql` | AA-963 CRM-32 (**contract**: config rows; ships in the code PR like crm-068 / crm-070): four `crm.setting_definition` rows, area search: `crm.search.enabled` (bool, **platform+tenant**, default off: an administrator switches one agency on after the independent review), `crm.search.results_per_kind` (5), `crm.search.query_max_chars` (120), `crm.search.min_text_chars` (2) |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -2869,6 +2870,34 @@ behind the plan's `ai_assist` (403) and the AI switch (409) before anything is s
 - AI boundary (next section): R10 reads a supplier's booking status for the agency and every change is reviewed by a
   member before it is written; no feature here advises a client on insurance, visas or refunds. Every result shows the
   staff `AiNotice`.
+
+## CRM-32 global search + library (AA-963)
+
+Design v3 §2.3 A-00 (search, Ctrl/Cmd+K), §4.2 (blind indexes: "search (R35, exact only)"), card CRM-32. Notes:
+`docs/implementation-notes/AA-963.md`.
+
+- **Off per agency** until the independent review: setting `crm.search.enabled` (crm-071, platform+tenant, default
+  off; CIS Platform > Settings, CRM tab, one agency at a time, never the pilot before the review). Off:
+  `POST /crm/v1/search` answers 403 `search_not_enabled` (audited `denied`) and the shell's box stays a hint.
+- **Routes** (`app/routers/search.py`, every role): `GET /search/config` (switch, the member's kinds, the three
+  bounds; reads no record) and `POST /search` with the term in the body (never a URL or a log; the BFF has no GET).
+- **Match rules by field class** (`app/search/`): F1 identity (client e-mail, phone, name) only through the blind
+  indexes (`traveler.email_bidx`, `phone_bidx`, `name_token_bidx`: a whole e-mail, a whole international phone,
+  whole name tokens confirmed after decrypting the display name; one `list_view` audit event per search, reason
+  `global_search`); a partial e-mail or `+` phone answers 422 `partial_contact_search`, a wildcard 422
+  `partial_search_refused`; plaintext `pii:travel` (`trip.title`) whole words only; fields without personal data
+  (supplier / service names, template titles, workflow names, inclusion lines, tag names) substring; references
+  (`booking_line.confirmation_no`, `bk_booking_id`, `bk_hold_id`, `trip.group_code`) exact, case-insensitive.
+  Accent-insensitive everywhere text is compared: one SQL fold on both sides (`app.search.fold`, NFKD, marks
+  removed, đ -> d; "Đà Lạt" = "Da Lat"). No index is added; `tests/integration/test_aa963_search_db.py` proves the
+  schema has no plaintext index of personal data (pg_depend over every index of `crm`, with a probe schema).
+- **Entitlements** (`app.search.kinds`): each kind names the role-matrix action of the page it opens and, where one
+  applies, a feature key (`whatsapp_sms` for the WhatsApp templates); a kind the member may not see is not queried.
+- **Web**: the shell's box (and a phone icon) opens `components/search/SearchPalette.tsx` (kit Modal, ⌘K / Ctrl K);
+  Content pieces (CIS) are searched in the browser from the studio BFF the person already uses
+  (`lib/searchContent.ts`), only when CIS lists the agency among their studios and the studio token is this agency's.
+  `/library` (R9) is the picker of the live libraries (message templates, automations, proposal lines) plus the
+  studio's Content pieces for a person with studio access.
 
 ## AI boundary for high-risk advice (AA-820)
 

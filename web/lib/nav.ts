@@ -61,7 +61,7 @@ export const SECTIONS: readonly Section[] = [
   { key: "marketing", path: "/marketing", group: "grow", label: "nav.marketing", icon: "megaphone", roles: NO_ASSISTANT, empty: { title: "section.marketing.title", body: "section.marketing.body" } }, // AA-968
   { key: "suppliers", path: "/suppliers", group: "grow", label: "nav.suppliers", icon: "truck", roles: ALL, empty: { title: "section.suppliers.title", body: "section.suppliers.body" } }, // AA-944
   { key: "services", path: "/services", group: "grow", label: "nav.services", icon: "plane", roles: ALL }, // AA-1069
-  { key: "library", path: "/library", group: "grow", label: "nav.library", icon: "book", roles: ALL, empty: { title: "section.library.title", body: "section.library.body" } }, // AA-963
+  { key: "library", path: "/library", group: "grow", label: "nav.library", icon: "book", roles: ALL }, // AA-963: app/(crm)/library
   { key: "automations", path: "/automations", group: "grow", label: "nav.automations", icon: "zap", roles: ALL }, // AA-959
   { key: "settings", path: "/settings", group: "settings", label: "nav.settings", icon: "settings", roles: ALL }, // AA-935
   { key: "help", path: "/help", group: "settings", label: "nav.help", icon: "help", roles: ALL, empty: { title: "section.help.title", body: "section.help.body" } }, // AA-970
