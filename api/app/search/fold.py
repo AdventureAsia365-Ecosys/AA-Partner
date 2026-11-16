@@ -50,8 +50,10 @@ def words_sql(expr: str) -> str:
 
 
 def contains_sql(column: str, param: str) -> str:
-    """``column`` contains ``param`` once both are folded (fields without personal data only)."""
-    return f"strpos({fold_sql(column)}, {fold_sql(param)}) > 0"
+    """``column`` contains ``param`` once both are folded (fields without personal data only). A param that folds to
+    nothing (lone combining marks) never matches: ``strpos(x, '')`` is 1, so without the guard it would match every
+    row (:func:`app.search.query.classify` refuses such a term first; this is the SQL's own fail-safe)."""
+    return f"(strpos({fold_sql(column)}, {fold_sql(param)}) > 0 AND btrim({fold_sql(param)}) <> '')"
 
 
 def all_words_sql(column: str, param: str) -> str:

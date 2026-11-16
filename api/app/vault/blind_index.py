@@ -3,8 +3,15 @@
 - **Key** per tenant and column: ``K_idx = HKDF-SHA256(DEK_vault_root, salt = tenant_id bytes, info = "bidx:" ‖
   table.column)``. Equal values in two tenants give different indexes; two columns never share a key.
 - **Value**: ``HMAC-SHA256(K_idx, normalise(value))`` truncated (CipherSweet style): 16 bytes for email and phone, 8 for
-  the full normalised name, 4 per name token (deliberately lossy: a token match is a candidate, confirmed after
-  decrypting).
+  the full normalised name, 4 per name token (a token match is a candidate, confirmed after decrypting).
+- **What a token index does not hide** (AA-963 review, accepted risk): 4 bytes are NOT lossy at agency scale. A few
+  hundred clients carry about a thousand distinct tokens, so the chance of any collision among them is about 1e-4 and
+  the index is in practice one-to-one per agency. Whoever can read the rows without the KMS-wrapped key (``crm_app``,
+  ``crm_owner``, the master DB Migrate uses, a holder of an RDS snapshot) can count equal token hashes: which clients
+  share a surname or a given name, and, with the skewed frequency of Vietnamese surnames, the likely surname behind
+  the most frequent hashes. The key, the names themselves and any other agency's tokens stay hidden. The risk is
+  accepted for now (:data:`TOKEN_BYTES` unchanged: shortening it changes every stored index); the design's threat
+  model records it as a follow-up (``docs/implementation-notes/AA-963-review-fixes.md``).
 - **Normalisation**: email trim + lowercase; phone E.164 (libphonenumber, ``phonenumberslite``); name NFKD, combining
   marks removed, ``đ``/``Đ`` -> ``d``, casefolded, tokens split on anything that is not a letter or a digit.
 
@@ -98,7 +105,8 @@ def name_index(key: bytes, value: str) -> bytes:
 
 
 def name_token_indexes(key: bytes, value: str) -> list[bytes]:
-    """One 4-byte index per distinct token, in first-seen order, at most :data:`MAX_TOKENS`."""
+    """One 4-byte index per distinct token, in first-seen order, at most :data:`MAX_TOKENS` (equal tokens give equal
+    indexes inside one agency: see the module docstring on frequency)."""
     out: list[bytes] = []
     for token in name_tokens(value):
         digest = mac(key, token, TOKEN_BYTES)
