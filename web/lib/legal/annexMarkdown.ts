@@ -51,61 +51,90 @@ export function anchor(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "section";
 }
 
+type LineKind = "heading" | "blank" | "table" | "item" | "continuation" | "text";
+
+/** What one line is, given whether a list is open (a two-space indented line continues its last item). */
+function lineKind(line: string, inList: boolean): LineKind {
+  if (line.startsWith("### ")) return "heading";
+  if (!line.trim()) return "blank";
+  if (line.trimStart().startsWith("|")) return "table";
+  if (line.startsWith("- ")) return "item";
+  if (inList && /^\s{2,}\S/.test(line)) return "continuation";
+  return "text";
+}
+
+function rowCards(table: string[][]): RowCard[] {
+  const [head, ...rows] = table;
+  return rows.map((r) => ({
+    title: inline(r[0] ?? ""),
+    fields: head.slice(1).map((label, i) => ({ label, value: inline(r[i + 1] ?? "") })),
+  }));
+}
+
+/** The open paragraph, list and table while the block is read; flush() turns them into blocks. */
+class AnnexParser {
+  sections: LegalSectionDoc[] = [];
+  private current: LegalSectionDoc | null = null;
+  private para: string[] = [];
+  private list: string[] | null = null;
+  private table: string[][] | null = null;
+
+  private blocks(): Block[] {
+    if (!this.current) {
+      this.current = { id: "summary", title: "", blocks: [] };
+      this.sections.push(this.current);
+    }
+    return this.current.blocks;
+  }
+
+  flush(): void {
+    if (this.para.length) this.blocks().push({ p: inline(this.para.join(" ")) });
+    if (this.list) this.blocks().push({ ul: this.list.map((item) => inline(item)) });
+    if (this.table && this.table.length > 1) this.blocks().push({ rows: rowCards(this.table) });
+    this.para = [];
+    this.list = null;
+    this.table = null;
+  }
+
+  line(raw: string): void {
+    const line = raw.replace(/\s+$/, "");
+    const kind = lineKind(line, this.list !== null);
+    if (kind === "heading" || kind === "blank") return this.boundary(kind, line);
+    if (kind === "table") return this.tableRow(line);
+    if (kind === "item") return this.item(line);
+    if (kind === "continuation") {
+      this.list![this.list!.length - 1] += ` ${line.trim()}`;
+      return;
+    }
+    if (this.list || this.table) this.flush();
+    this.para.push(line.trim());
+  }
+
+  private boundary(kind: "heading" | "blank", line: string): void {
+    this.flush();
+    if (kind === "blank") return;
+    const title = line.slice(4).trim();
+    this.current = { id: anchor(title), title, blocks: [] };
+    this.sections.push(this.current);
+  }
+
+  private tableRow(line: string): void {
+    if (this.para.length || this.list) this.flush();
+    if (!isRule(line)) (this.table ??= []).push(cells(line));
+  }
+
+  private item(line: string): void {
+    if (this.para.length || this.table) this.flush();
+    (this.list ??= []).push(line.slice(2).trim());
+  }
+}
+
 /** Parse the annex block into sections (pure; tests feed it invented text). */
 export function parseAnnexMarkdown(markdown: string): LegalSectionDoc[] {
-  const sections: LegalSectionDoc[] = [];
-  let current: LegalSectionDoc | null = null;
-  let para: string[] = [];
-  let list: string[] | null = null;
-  let table: string[][] | null = null;
-
-  const blocks = (): Block[] => {
-    if (!current) {
-      current = { id: "summary", title: "", blocks: [] };
-      sections.push(current);
-    }
-    return current.blocks;
-  };
-  const flush = () => {
-    if (para.length) blocks().push({ p: inline(para.join(" ")) });
-    if (list) blocks().push({ ul: list.map((item) => inline(item)) });
-    if (table && table.length > 1) {
-      const [head, ...rows] = table;
-      const cards: RowCard[] = rows.map((r) => ({
-        title: inline(r[0] ?? ""),
-        fields: head.slice(1).map((label, i) => ({ label, value: inline(r[i + 1] ?? "") })),
-      }));
-      blocks().push({ rows: cards });
-    }
-    para = [];
-    list = null;
-    table = null;
-  };
-
-  for (const raw of markdown.split("\n")) {
-    const line = raw.replace(/\s+$/, "");
-    if (line.startsWith("### ")) {
-      flush();
-      const title = line.slice(4).trim();
-      current = { id: anchor(title), title, blocks: [] };
-      sections.push(current);
-    } else if (!line.trim()) {
-      flush();
-    } else if (line.trimStart().startsWith("|")) {
-      if (para.length || list) flush();
-      if (!isRule(line)) (table ??= []).push(cells(line));
-    } else if (line.startsWith("- ")) {
-      if (para.length || table) flush();
-      (list ??= []).push(line.slice(2).trim());
-    } else if (list && /^\s{2,}\S/.test(line)) {
-      list[list.length - 1] += ` ${line.trim()}`;
-    } else {
-      if (list || table) flush();
-      para.push(line.trim());
-    }
-  }
-  flush();
-  return sections;
+  const parser = new AnnexParser();
+  for (const raw of markdown.split("\n")) parser.line(raw);
+  parser.flush();
+  return parser.sections;
 }
 
 /** The committed copy of the annex summary, parsed. */
