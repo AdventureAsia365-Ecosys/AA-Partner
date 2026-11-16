@@ -21,6 +21,7 @@ type DashT = Translator<typeof DASHBOARD_MESSAGES.en>;
 import GettingStarted from "./GettingStarted";
 import UsageSparkline, { type DailyPoint } from "./UsageSparkline";
 import { DashboardSkeleton } from "./Skeleton";
+import { fmtMoney, monthMoney, type BillingPlanPrice, type BillingQuote } from "@/lib/studio/billingMoney";
 
 interface BillingData {
   tenant_name: string | null; plan_tier: string | null; tours_quota_monthly: number | null;
@@ -31,6 +32,10 @@ interface BillingData {
   billing_month: string;
   overage_usd: number; overage_rate_usd_per_tour: number; tours_overage?: number;
   rate_limit_rpm?: number | null;
+  // AA-1116 (contract 1.9): the agency's currency, the plans priced in it and the monthly quote (lib/studio/billingMoney)
+  billing_currency?: string | null;
+  plans?: BillingPlanPrice[];
+  quote?: BillingQuote | null;
   daily?: DailyPoint[];
   activity: { id: string; status: string; edit_source: string; tour_name: string; country: string | null; created_at: string }[];
 }
@@ -79,7 +84,8 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
   const apiUsed    = b?.api_calls_used ?? 0;
   const apiTotal   = b?.api_calls_quota_monthly ?? null;
   const apiPct     = b?.quota_calls_pct ?? 0;
-  const price      = b?.price_usd_monthly ?? 0;
+  // AA-1116: the plan fee and the amount due in the agency's billing currency (VND agencies in VND), never a bare "$"
+  const { planFee, due } = monthMoney(b);
   const planName   = b?.plan_tier ?? "";
   const planLabel  = noPlan || !planName ? t("noPlan") : planName.charAt(0).toUpperCase() + planName.slice(1);
   const fmtTotal   = (v: number | null) => (v == null ? "—" : n(v));
@@ -130,7 +136,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
               {planLabel}
             </div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginTop: 8, color: alpha(K.sideTitle, 65) }}>
-              <span style={{ fontSize: 22, fontWeight: 600, color: K.onSolid, letterSpacing: "-0.01em" }}>${n(price)}</span>
+              <span style={{ fontSize: 22, fontWeight: 600, color: K.onSolid, letterSpacing: "-0.01em" }}>{planFee}</span>
               <span style={{ fontSize: 12 }}>{t("perMonth")}</span>
             </div>
           </div>
@@ -179,7 +185,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             <div>
               <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.12em", color: K.muted, marginBottom: 6, fontWeight: 600 }}>{t("amountDue")}</div>
               <div style={{ fontFamily: sans, fontVariantNumeric: "tabular-nums", fontSize: 36, fontWeight: 600, color: K.ink, letterSpacing: "-0.02em", lineHeight: 1 }}>
-                ${(price + overage).toLocaleString(lang === "vi" ? "vi-VN" : "en-US", { maximumFractionDigits: 2 })}
+                {due}
               </div>
             </div>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600, color: overage > 0 ? K.amber : K.success, background: overage > 0 ? K.amberSoft : K.successSoft, padding: "3px 8px", borderRadius: 5 }}>
@@ -188,9 +194,9 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             </span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginTop: 18 }}>
-            <SpendTile label={t("planFee")} value={`$${n(price)}`} sub={t("planFeeSub", planLabel)} />
+            <SpendTile label={t("planFee")} value={planFee} sub={t("planFeeSub", planLabel)} />
             <SpendTile label={t("rewritesThisMonth")} value={`${n(toursUsed)} / ${fmtTotal(toursTotal)}`}
-              sub={overage > 0 ? t("overage", n(overage)) : t("noOverage")} warn={overage > 0} />
+              sub={overage > 0 ? t("overage", fmtMoney(overage, "USD")) : t("noOverage")} warn={overage > 0} />
           </div>
         </Card>
 

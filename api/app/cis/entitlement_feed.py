@@ -31,7 +31,8 @@ The projection (:func:`projection`, one :func:`app.tenancy.entitlement_feed_tx` 
   plan name, ADR 0019 invariant 6);
 - ``allowed_features``: the CRM codes whose ``crm.<code>`` key is entitled (a disabled or missing key is not allowed;
   the owner still switches an allowed feature on in Settings);
-- ``member_limit``: the ``crm.seats`` limit (1-500), kept as it is when CIS gives none;
+- ``member_limit``: the ``crm.seats`` limit, at most ``crm.members.max_limit`` (500, AA-1116 crm-075), kept as it is
+  when CIS gives none; a new row with no seats from CIS gets ``crm.members.default_limit`` (3);
 - ``tp_crm_leads`` (crm-047, AA-1038): both ``tp.hosted`` and ``crm.core`` are entitled, the two keys CIS 390 resolves
   a TripPlanner tenant's ``lead_channel`` crm from; ``crm_tp_lead_pull`` calls TripPlanner only for these agencies;
 - ``projected_at`` = now; an unchanged projection writes nothing;
@@ -81,6 +82,7 @@ from app.entitlements import FEATURES
 from app.jobs import queue
 from app.jobs.kinds import ENTITLEMENT_PULL
 from app.jobs.queue import Job
+from app.members import team
 from app.tenancy import SystemContext, entitlement_feed_tx
 
 log = logging.getLogger(__name__)
@@ -104,7 +106,6 @@ SEATS_KEY = "crm.seats"
 # AA-1038 (crm-047): TripPlanner sends a tenant's leads to its CRM when both keys are entitled (CIS 390
 # lead_channel crm).
 TP_CRM_LEAD_KEYS = ("tp.hosted", "crm.core")
-MEMBER_LIMIT_MAX = 500
 HELD = frozenset({"active", "locked"})
 
 ENTITLEMENT_SQL = (
@@ -124,7 +125,6 @@ SET_PILOT_SQL = "UPDATE crm.tenant SET is_pilot = $2 WHERE tenant_id = $1"
 SET_REAL_SQL = "UPDATE crm.tenant SET is_synthetic = false WHERE tenant_id = $1 AND is_synthetic"
 SET_LOCK_SQL = "UPDATE crm.tenant SET status = 'locked', lock_source = 'cis_tenant' WHERE tenant_id = $1"
 UNLOCK_SQL = "UPDATE crm.tenant SET status = 'active' WHERE tenant_id = $1"
-DEFAULT_MEMBER_LIMIT = 10
 
 
 class AccountError(ValueError):
@@ -246,7 +246,7 @@ def projection(account: dict[str, Any]) -> Projection:
     ents = account["entitlements"]
     features = tuple(code for code in FEATURES if f"crm.{code}" in ents)
     seats = ents.get(SEATS_KEY)
-    member_limit = None if seats is None else max(1, min(int(seats), MEMBER_LIMIT_MAX))
+    member_limit = None if seats is None else max(1, min(int(seats), team.max_member_limit()))
     return Projection(
         plan,
         member_limit,
@@ -321,7 +321,7 @@ async def _apply_in(ctx: SystemContext, wanted: Projection, counts: RunCounts) -
     row = await ctx.conn.fetchrow(ENTITLEMENT_SQL)
     member_limit = wanted.member_limit
     if member_limit is None:
-        member_limit = int(row["member_limit"]) if row is not None else DEFAULT_MEMBER_LIMIT
+        member_limit = int(row["member_limit"]) if row is not None else team.default_member_limit()
     features = sorted(wanted.features)
     awaiting = row is not None and row["projected_at"] is None and not wanted.crm_subscribed
     if awaiting:

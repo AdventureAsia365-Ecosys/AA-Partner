@@ -68,6 +68,9 @@ AI_VOICES_PER_MEMBER_MAX = "crm.ai.voice_profiles_per_member_max"
 # AA-968 (crm-074): the campaigns (card CRM-36): the mailbox daily send limit and the clients per campaign.
 CAMPAIGN_MAILBOX_DAILY_LIMIT = "crm.campaign.mailbox_daily_limit"
 CAMPAIGN_MAX_RECIPIENTS = "crm.campaign.max_recipients"
+# AA-1116 (crm-075): the member limit of an agency CIS gives no seats, and the ceiling of the projected crm.seats.
+MEMBERS_DEFAULT_LIMIT = "crm.members.default_limit"
+MEMBERS_MAX_LIMIT = "crm.members.max_limit"
 # AA-963 (crm-071): the global search (R35): the per-agency switch (off until the independent review) and its bounds.
 SEARCH_ENABLED = "crm.search.enabled"
 SEARCH_RESULTS_PER_KIND = "crm.search.results_per_kind"

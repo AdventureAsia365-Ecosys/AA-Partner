@@ -817,7 +817,10 @@ original CIS commit). P2a moves the code only:
   `require_tenant_login` on dispatch and on call; the Fargate deploy calls it with the sign-in required (AA-993 V3).
   A local run sets `PORTAL_TARGET` empty and signs in with the same partner-pool values (AA-1036: no API-key path).
 - **Account pages (AA-761)**: Billing = plan card, rewrite meter (used / quota and reset date from CIS `GET /v1/quota`,
-  overage so far from `GET /v1/billing`) and an invoices empty state (CIS stores no invoices yet); Activity = kit
+  overage so far from `GET /v1/billing`) and an invoices empty state (CIS stores no invoices yet). AA-1116 (option B,
+  contract 1.9): the plan prices, the amount due (the CIS `quote.monthly_total`) and the Dashboard spend tiles are shown
+  in the agency's `billing_currency` (`web/lib/studio/billingMoney.ts`: VND whole with ₫, USD with $, never a literal
+  "$"); the rewrite overage stays USD (a VND agency sees it apart); Activity = kit
   DataTable with server paging over CIS `GET /v1/account/activity` (type and UTC-date filters) and a CSV export of the
   whole filtered set (`GET /v1/account/activity/export`); Integrations = each channel's health and test (Publish only
   shows a summary that links here; the API key card went with the tenant API keys, AA-1036). Pure helpers in `portal/lib/account.ts`, tested by `npm test` (node --test, in Portal Build).
@@ -3305,7 +3308,10 @@ entitlements). `crm_entitlement_pull` (`app/cis/entitlement_feed.py`) makes `crm
   `crm_entitlement_feed_stuck part=reconcile`. Scope `cis.tenant/read`, the CRM's M2M client (`M2M_CLIENT`).
 - The projection (`entitlement_feed_tx`, actor `platform:feed-tenant-account`, audit `aa_ops`): `plan` = the CIS crm
   subscription's plan while live (core / pro), else free (display only); `allowed_features` = the codes whose
-  `crm.<code>` key is entitled; `member_limit` = `crm.seats` (kept when CIS gives none); `projected_at` = now;
+  `crm.<code>` key is entitled; `member_limit` = `crm.seats`, at most the setting `crm.members.max_limit` (500), kept
+  when CIS gives none, `crm.members.default_limit` (3) for a new row without seats (AA-1116, crm-075: both
+  maker-checker settings on CIS Platform › Settings, CRM tab; the column has no default since crm-075, every writer
+  names it, the L1 console too); `projected_at` = now;
   `tp_crm_leads` (crm-047, AA-1038) = both `tp.hosted` and `crm.core` entitled (CIS 390 routes the tenant's TripPlanner
   leads to the CRM then; `crm_tp_lead_pull` lists TripPlanner only for these agencies). An unchanged projection writes
   nothing. `in_service` false locks an active agency with `lock_source = cis_tenant`

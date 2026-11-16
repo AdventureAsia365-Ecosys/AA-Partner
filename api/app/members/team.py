@@ -30,6 +30,7 @@ from typing import Any
 
 import asyncpg
 
+from app import platform_settings as ps
 from app.errors import Conflict, Invalid, NotFound
 from app.members.directory import PartnerDirectory
 from app.members.mail import Mailer, invitation_message
@@ -40,7 +41,24 @@ from app.vault import Vault
 log = logging.getLogger(__name__)
 
 MEMBER_ROLES = ("owner", "agent", "assistant")
-DEFAULT_PLAN = {"plan": "free", "member_limit": 10, "allowed_features": []}
+
+
+def default_member_limit() -> int:
+    """AA-1116 (crm-075): the member limit of an agency with no seats from CIS (``crm.members.default_limit``), never
+    above the ceiling ``crm.members.max_limit``; read at the time of use (admin-edited, no deploy)."""
+    return max(1, min(int(ps.get(ps.MEMBERS_DEFAULT_LIMIT)), max_member_limit()))
+
+
+def max_member_limit() -> int:
+    """AA-1116 (crm-075): the most members one agency may have (``crm.members.max_limit``)."""
+    return max(1, int(ps.get(ps.MEMBERS_MAX_LIMIT)))
+
+
+def default_plan() -> dict[str, Any]:
+    """The plan of an agency without an entitlement row: free, the default member limit, no feature."""
+    return {"plan": "free", "member_limit": default_member_limit(), "allowed_features": []}
+
+
 MAX_INVITATIONS_LISTED = 100
 _EMAIL = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,189}\.[^@\s.]{2,}$")
 
@@ -164,7 +182,7 @@ async def plan_of(ctx: AnyContext) -> dict[str, Any]:
     """The agency's plan and seats used, in any context (the owner's plan page, the L1 first-owner invite)."""
     row = await ctx.conn.fetchrow(PLAN_SQL)
     current = (
-        dict(DEFAULT_PLAN)
+        default_plan()
         if row is None
         else {
             "plan": row["plan"],

@@ -109,10 +109,10 @@ def base_conn(status: str | None = "active") -> ScriptedConn:
         ("INSERT INTO crm.studio_invitation", {"studio_invitation_id": JOB, "expires_at": NOW + dt.timedelta(days=7)}),
         ("SELECT display_name FROM crm.tenant", "Lữ hành Sen Vàng"),
         (
-            "INSERT INTO crm.tenant_entitlement (allowed_features)",
+            "INSERT INTO crm.tenant_entitlement (allowed_features, member_limit)",
             {"plan": "free", "member_limit": 10, "allowed_features": ["ai_assist"], "insights_opt_out": False},
         ),  # fmt: skip
-        ("INSERT INTO crm.tenant_entitlement (insights_opt_out)", True),
+        ("INSERT INTO crm.tenant_entitlement (insights_opt_out, member_limit)", True),
         ("status IN ('requested', 'export_ready', 'erasing', 'failed')", None),
         ("crm.legal_hold_blocks", False),
         ("INSERT INTO crm.erasure_request (scope, subject_id, purpose)", REQ),

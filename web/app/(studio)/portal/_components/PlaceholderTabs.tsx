@@ -25,6 +25,7 @@ import { BILLING_MESSAGES, SETTINGS_MESSAGES } from "./account.messages";
 import { fmtBillingMonth } from "@/lib/studio/format";
 import { usePortalShell, type ShellBilling } from "./PortalShellContext";
 import { fmtDay, fmtUsd, usageMeter, type Quota } from "@/lib/studio/account";
+import { currentPlanPrice, dueSoFar, fmtMoney, planPrice, type BillingPlanPrice } from "@/lib/studio/billingMoney";
 import { signedInText } from "@/lib/studio/crmIdentity";
 import { useCrmIdentity } from "@/lib/studio/useCrmIdentity";
 
@@ -77,7 +78,8 @@ function ContactModal({ heading, body, subject, onClose }: {
 }
 
 // ─── Billing ──────────────────────────────────────────────────────────────────
-type Plan = { plan_name: string; tours_quota_monthly: number; api_calls_quota_monthly: number; price_usd_monthly: number | null; rate_limit_rpm: number | null };
+// AA-1116: `currency` + `price_monthly` are the plan's price in the agency's billing currency (null = "Custom").
+type Plan = BillingPlanPrice & { tours_quota_monthly: number; api_calls_quota_monthly: number; price_usd_monthly: number | null; rate_limit_rpm: number | null };
 
 function fmtQuota(n: number | null | undefined, lang: UiLang, unlimited: string): string {
   return n == null ? "—" : n >= 999999 ? unlimited : n.toLocaleString(lang === "vi" ? "vi-VN" : "en-US");
@@ -119,7 +121,10 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
   // AA-798 — no "starter" fallback: a tenant without a plan sees "No plan attached", not a made-up one.
   const noPlan     = b?.plan_attached === false;
   const plan       = noPlan ? "" : String(b?.plan_tier ?? "");
-  const price      = Number(b?.price_usd_monthly ?? 0);
+  // AA-1116: the plan price and the amount due in the agency's billing currency (lib/studio/billingMoney)
+  const current    = currentPlanPrice(b);
+  const price      = current.amount ?? 0;
+  const due        = dueSoFar(b);
   const toursTotal = b?.tours_quota_monthly == null ? null : Number(b.tours_quota_monthly);
   const apiUsed    = Number(b?.api_calls_used ?? 0);
   const apiTotal   = b?.api_calls_quota_monthly == null ? null : Number(b.api_calls_quota_monthly);
@@ -149,10 +154,10 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
             <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.14em", color: alpha(K.sideTitle, 50), marginBottom: 8 }}>{t("currentPlan")}</div>
             <div style={{ fontSize: 32, fontWeight: 600, color: K.onSolid, letterSpacing: "-0.02em" }}>{noPlan ? t("noPlan") : titleCase(plan || "—")}</div>
             <div style={{ fontSize: 14, color: alpha(K.sideTitle, 65), marginTop: 4 }}>
-              {noPlan ? t("setUpPlan") : price > 0 ? t("perMonth", num(price)) : t("customPricing")}
+              {noPlan ? t("setUpPlan") : price > 0 ? t("perMonth", fmtMoney(price, current.currency)) : t("customPricing")}
             </div>
           </div>
-          <Button variant="primary" onClick={() => setContactPlan(plans.find(p => p.plan_name !== plan && (p.price_usd_monthly ?? Infinity) > price)?.plan_name ?? "enterprise")}>
+          <Button variant="primary" onClick={() => setContactPlan(plans.find(p => p.plan_name !== plan && (planPrice(p).amount ?? Infinity) > price)?.plan_name ?? "enterprise")}>
             {t("changePlan")}
           </Button>
         </div>
@@ -176,7 +181,7 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 16 }}>
           {[
             { l: t("apiCalls"), v: `${num(apiUsed)} / ${q(apiTotal)}`, sub: t("pctUsed", pct(apiUsed, apiTotal).toFixed(0)) },
-            { l: t("dueSoFar"), v: noPlan ? "—" : `$${(price + overage).toLocaleString(lang === "vi" ? "vi-VN" : "en-US", { maximumFractionDigits: 2 })}`, sub: noPlan ? t("noPlan") : overage > 0 ? t("includesOverage", num(overage)) : t("noOverage") },
+            { l: t("dueSoFar"), v: noPlan ? "—" : fmtMoney(due.amount, due.currency), sub: noPlan ? t("noPlan") : overage > 0 ? t(due.overageApart ? "plusOverage" : "includesOverage", fmtMoney(overage, "USD")) : t("noOverage") },
           ].map(({ l, v, sub }) => (
             <div key={l} style={{ padding: "14px 16px", background: K.bg, borderRadius: 8, border: `1px solid ${K.line}` }}>
               <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted, fontWeight: 600, marginBottom: 6 }}>{l}</div>
@@ -216,7 +221,7 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
                 <div key={p.plan_name} style={{ padding: 14, borderRadius: 10, border: `${active ? 2 : 1}px solid ${active ? K.accent : K.line}`, background: active ? K.accentTint : K.bg, display: "flex", flexDirection: "column" }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: active ? K.amber : K.ink, marginBottom: 4 }}>{titleCase(p.plan_name)}</div>
                   <div style={{ fontSize: 20, fontWeight: 600, color: K.ink, marginBottom: 10, fontVariantNumeric: "tabular-nums" }}>
-                    {p.price_usd_monthly != null ? <>${num(p.price_usd_monthly)}<span style={{ fontSize: 11, color: K.muted, fontWeight: 400 }}>{t("perMo")}</span></> : t("custom")}
+                    {planPrice(p).amount != null ? <>{fmtMoney(planPrice(p).amount, planPrice(p).currency)}<span style={{ fontSize: 11, color: K.muted, fontWeight: 400 }}>{t("perMo")}</span></> : t("custom")}
                   </div>
                   {[t("planRewrites", q(p.tours_quota_monthly)), t("planApi", q(p.api_calls_quota_monthly)), p.rate_limit_rpm ? t("rpm", num(p.rate_limit_rpm)) : t("customRate")].map(feat => (
                     <div key={feat} style={{ fontSize: 11.5, color: K.muted, marginBottom: 4, display: "flex", gap: 6, alignItems: "center" }}>

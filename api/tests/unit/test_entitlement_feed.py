@@ -339,7 +339,7 @@ async def test_apply_waits_for_cis_before_the_first_projection(caplog: pytest.Lo
     # no row at all: nothing to keep, the free projection is written
     conn = pool(statuses={A: "active"})
     assert await feed.apply(conn, A, no_crm, counts) == "applied"  # type: ignore[arg-type]
-    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("free", 10, [], False)]
+    assert conn.sql("INSERT INTO crm.tenant_entitlement") == [("free", 3, [], False)]  # AA-1116: the default setting
 
 
 @pytest.mark.asyncio

@@ -447,7 +447,7 @@ async def test_entitlements_opt_out_and_reads_are_on_record(app_pool: asyncpg.Po
     tenant_id, [(owner, _)] = await _agency(app_pool, "owner")
     assert await console.agency_entitlements(app_pool, tenant_id, staff_sub=STAFF) == {
         "plan": "free",
-        "seats_allowed": 10,
+        "seats_allowed": 3,  # AA-1116: crm.members.default_limit
         "features_allowed": [],
         "insights_opt_out": False,
         "managed_by": "ops",
@@ -475,7 +475,7 @@ async def test_entitlements_opt_out_and_reads_are_on_record(app_pool: asyncpg.Po
             await ctx.conn.execute("UPDATE crm.tenant_entitlement SET insights_opt_out = false")
     assert exc.value.sqlstate == "CRM04"
     usage = await console.agency_usage(app_pool, tenant_id, staff_sub=STAFF)
-    assert usage["seats_allowed"] == 10 and usage["ai_cost_usd_month"] == "0.0000"
+    assert usage["seats_allowed"] == 3 and usage["ai_cost_usd_month"] == "0.0000"
     assert usage["ai_budget_usd_month"] == "2.0000" and usage["inbound_mail_30d"] == 0
     # Keyset cursor just below this agency: the list is in tenant id order and the shared test DB holds more agencies
     # than one page, so a first page of 200 need not contain a random new id (S251: red on main).

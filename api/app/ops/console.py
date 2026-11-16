@@ -127,13 +127,13 @@ SELECT plan, member_limit, allowed_features, insights_opt_out, projected_at
 # AA-1028 (crm.ops.v1 1.11): the L1 write only while the row is managed_by ops (never projected from CIS). The WHERE
 # on the conflict arm makes the check and the write one statement: no row back = crm_entitlement_pull projected it.
 ALLOW_FEATURES_SQL = """
-INSERT INTO crm.tenant_entitlement (allowed_features) VALUES ($1::text[])
+INSERT INTO crm.tenant_entitlement (allowed_features, member_limit) VALUES ($1::text[], $2)
 ON CONFLICT (tenant_id) DO UPDATE SET allowed_features = EXCLUDED.allowed_features
  WHERE crm.tenant_entitlement.projected_at IS NULL
 RETURNING plan, member_limit, allowed_features, insights_opt_out, projected_at
 """
 OPT_OUT_SQL = """
-INSERT INTO crm.tenant_entitlement (insights_opt_out) VALUES ($1)
+INSERT INTO crm.tenant_entitlement (insights_opt_out, member_limit) VALUES ($1, $2)
 ON CONFLICT (tenant_id) DO UPDATE SET insights_opt_out = EXCLUDED.insights_opt_out
 RETURNING insights_opt_out
 """
@@ -263,8 +263,8 @@ async def agency_usage(pool: asyncpg.Pool, tenant_id: uuid.UUID, *, staff_sub: s
 def _entitlements(row: asyncpg.Record | dict[str, Any] | None) -> dict[str, Any]:
     if row is None:
         return {
-            "plan": team.DEFAULT_PLAN["plan"],
-            "seats_allowed": team.DEFAULT_PLAN["member_limit"],
+            "plan": "free",
+            "seats_allowed": team.default_member_limit(),
             "features_allowed": [],
             "insights_opt_out": False,
             "managed_by": "ops",
@@ -536,7 +536,7 @@ async def allow_features(
     if len(set(features)) != len(features) or not set(features) <= set(FEATURES):
         raise Invalid("invalid_feature", f"unique codes from {', '.join(FEATURES)}")
     async with platform_tx(pool, tenant_id, actor=platform_actor(staff_sub), statuses=LOCKABLE) as ctx:
-        row = await ctx.conn.fetchrow(ALLOW_FEATURES_SQL, sorted(features))
+        row = await ctx.conn.fetchrow(ALLOW_FEATURES_SQL, sorted(features), team.default_member_limit())
         if row is None:  # the conflict arm's WHERE refused: crm_entitlement_pull projected the row from CIS
             ctx.audit(
                 "entitlements_allow", "denied", "tenant_entitlement", str(tenant_id), fields=("allowed_features",),
@@ -558,7 +558,7 @@ async def set_insights_opt_out(
 ) -> dict[str, Any]:
     """Q2 3.12: the agency is in AA insights by default; AA sets the opt-out on the owner's written request."""
     async with platform_tx(pool, tenant_id, actor=platform_actor(staff_sub), statuses=LOCKABLE) as ctx:
-        value = await ctx.conn.fetchval(OPT_OUT_SQL, bool(opt_out))
+        value = await ctx.conn.fetchval(OPT_OUT_SQL, bool(opt_out), team.default_member_limit())
         ctx.audit(
             "insights_opt_out", "allowed", "tenant_entitlement", str(tenant_id), fields=("insights_opt_out",),
             reason="opt_out" if opt_out else "opt_in", object_ids=ticket_ids(owner_request_ref),

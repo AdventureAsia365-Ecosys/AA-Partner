@@ -326,9 +326,15 @@ async def test_entitlements_are_written_by_the_platform_only(app_pool: asyncpg.P
             await conn.execute("INSERT INTO crm.tenant_entitlement (plan) VALUES ('pro')")
     assert _code(exc) == "CRM04"
     async with ctx(app_pool, tenant, "platform:l1:staff-1") as conn:
-        await conn.execute("INSERT INTO crm.tenant_entitlement (allowed_features) VALUES (ARRAY['ai_assist'])")
+        # AA-1116 (crm-075): the column has no default any more, every writer names the member limit
+        with pytest.raises(asyncpg.NotNullViolationError):
+            async with conn.transaction():
+                await conn.execute("INSERT INTO crm.tenant_entitlement (allowed_features) VALUES (ARRAY['ai_assist'])")
+        await conn.execute(
+            "INSERT INTO crm.tenant_entitlement (allowed_features, member_limit) VALUES (ARRAY['ai_assist'], 3)"
+        )
         row = await conn.fetchrow("SELECT plan, member_limit, allowed_features FROM crm.tenant_entitlement")
-    assert (row["plan"], row["member_limit"], row["allowed_features"]) == ("free", 10, ["ai_assist"])
+    assert (row["plan"], row["member_limit"], row["allowed_features"]) == ("free", 3, ["ai_assist"])
     with pytest.raises(asyncpg.CheckViolationError):
         async with ctx(app_pool, tenant, "platform:l1:staff-1") as conn:
             await conn.execute("UPDATE crm.tenant_entitlement SET allowed_features = ARRAY['unlimited_everything']")
