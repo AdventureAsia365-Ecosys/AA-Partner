@@ -65,6 +65,7 @@ export const PAGES: VisualPage[] = [
   crm("marketing", "/marketing"), // AA-960: Ready to travel again
   crm("reports", "/reports"),
   crm("automations", "/automations"),
+  crm("library", "/library"), // AA-963: the library picker (R9)
   crm("onboarding", "/onboarding"),
   crm("help", "/help"),
   crm("legal-terms", "/legal/terms"),

@@ -14,6 +14,9 @@
 // its backdrop and Esc, the <main>, the footer slot; scroll "document": the page scrolls and the sidebar stays in
 // view); this file is the CRM configuration of it: the sidebar, the topbar and the footer. Buttons are kit
 // IconButtons and colours are K tokens (aa-kit lint, no suppressions).
+// AA-963 (CRM-32, R35): with search on for the agency (`search`, GET /crm/v1/search/config) the search box opens the
+// global search palette (components/search/SearchPalette.tsx; ⌘K / Ctrl K through the ShellFrame palette slot), and
+// a search icon replaces the box on a phone. Off: the box stays a hint ("not switched on yet").
 
 import {
   BookOpen,
@@ -47,13 +50,15 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { IconButton, K, NavGroup, ShellFrame, ToastProvider, useNavGroups, useThemeChoice, type ThemeChoice } from "@/app/_kit";
+import { IconButton, K, ListButton, NavGroup, ShellFrame, ToastProvider, useNavGroups, useThemeChoice, type ThemeChoice } from "@/app/_kit";
 import type { DateLocale } from "@/lib/dates";
 import { CRM_TERMS_PATH } from "@/lib/legal";
 import type { MessageKey } from "@/lib/i18n";
 import { GROUP_LABEL, GROUP_ORDER, visibleSections, type IconName, type Role, type Section } from "@/lib/nav";
 import { BellMenu } from "@/components/BellMenu";
 import { LocaleSwitch } from "@/components/LocaleSwitch";
+import { SearchPalette } from "@/components/search/SearchPalette";
+import type { SearchConfig } from "@/lib/search";
 
 type Dict = Record<MessageKey, string>;
 
@@ -90,7 +95,17 @@ export interface ShellProps {
   locale: DateLocale;
   /** Dev / test: every agency is synthetic (ADR 0010 decision 3), so the agency card says so. */
   syntheticBadge: boolean;
+  /** AA-963: the global search when it is on for the agency (else null: the box is a hint only). */
+  search?: ShellSearch | null;
   children: React.ReactNode;
+}
+
+export interface ShellSearch {
+  config: SearchConfig;
+  /** CIS lists this agency among the person's studios: the palette also searches their Content pieces. */
+  contentEnabled: boolean;
+  tenantId: string;
+  lang: "en" | "vi";
 }
 
 function isActive(section: Section, pathname: string): boolean {
@@ -237,7 +252,42 @@ function CrmSidebar({
   );
 }
 
-export function CrmShell({ children, locale, ...props }: ShellProps) {
+function SearchBox({ dict, onOpen }: { dict: Dict; onOpen: (() => void) | null }) {
+  const style = {
+    alignItems: "center",
+    gap: 8,
+    padding: "7px 12px",
+    borderRadius: 8,
+    border: `1px solid ${K.line}`,
+    background: K.bg,
+    color: K.muted2,
+    fontSize: 13,
+  } as const;
+  if (!onOpen) {
+    return (
+      <div data-crm="search" title={dict["shell.searchSoon"]} style={style}>
+        <Search size={15} aria-hidden />
+        <span>{dict["shell.search"]}</span>
+      </div>
+    );
+  }
+  return (
+    <>
+      <ListButton data-crm="search" testId="crm-search-open" onClick={onOpen} aria-label={dict["search.aria"]} style={{ ...style, fontWeight: 400 }}>
+        <Search size={15} aria-hidden />
+        <span style={{ flex: 1, textAlign: "left" }}>{dict["shell.search"]}</span>
+        <kbd style={{ fontSize: 11, color: K.muted, border: `1px solid ${K.line}`, borderRadius: 6, padding: "1px 6px" }}>Ctrl K</kbd>
+      </ListButton>
+      <span data-crm="search-icon">
+        <IconButton label={dict["search.open"]} onClick={onOpen}>
+          <Search size={18} />
+        </IconButton>
+      </span>
+    </>
+  );
+}
+
+export function CrmShell({ children, locale, search, ...props }: ShellProps) {
   const pathname = usePathname() ?? "/";
   const { dict } = props;
   return (
@@ -250,6 +300,21 @@ export function CrmShell({ children, locale, ...props }: ShellProps) {
         frameProps={{ "data-crm": "frame" }}
         mainProps={{ "data-crm": "main" }}
         sidebar={(c) => <CrmSidebar {...props} pathname={pathname} onClose={c.closeDrawer} />}
+        palette={
+          search
+            ? (c) => (
+                <SearchPalette
+                  open={c.paletteOpen}
+                  onClose={c.closePalette}
+                  dict={dict}
+                  config={search.config}
+                  contentEnabled={search.contentEnabled}
+                  tenantId={search.tenantId}
+                  lang={search.lang}
+                />
+              )
+            : undefined
+        }
         topbar={(c) => (
           <header data-crm="topbar">
             <span data-crm="menu-button">
@@ -262,23 +327,7 @@ export function CrmShell({ children, locale, ...props }: ShellProps) {
                 <Menu size={18} />
               </IconButton>
             </span>
-            <div
-              data-crm="search"
-              title={dict["shell.searchSoon"]}
-              style={{
-                alignItems: "center",
-                gap: 8,
-                padding: "7px 12px",
-                borderRadius: 8,
-                border: `1px solid ${K.line}`,
-                background: K.bg,
-                color: K.muted2,
-                fontSize: 13,
-              }}
-            >
-              <Search size={15} aria-hidden />
-              <span>{dict["shell.search"]}</span>
-            </div>
+            <SearchBox dict={dict} onOpen={search ? c.openPalette : null} />
             <span style={{ flex: 1 }} />
             <div data-crm="hide-phone">
               <LocaleSwitch locale={locale} label={dict["shell.language"]} next={pathname} compact />

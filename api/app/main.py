@@ -101,6 +101,7 @@ from app.routers import (
     proposals,
     public,
     reports,
+    search,
     staff,
     staff_ops,
     support_access,
@@ -383,6 +384,7 @@ def create_app(
     app.include_router(workflows.router)
     app.include_router(tags.router)  # AA-960: tags, system tags, ready to travel again
     app.include_router(campaigns.router)  # AA-968: campaigns (R14), sent from the agency's own mailbox
+    app.include_router(search.router)  # AA-963: global search (R35), off per agency until reviewed
     return app
 
 

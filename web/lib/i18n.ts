@@ -39,6 +39,7 @@ import { tripSourceEn, tripSourceVi } from "./i18nTripSource";
 import { partnersEn, partnersVi } from "./i18nPartners";
 import { bookNowEn, bookNowVi } from "./i18nBookNow";
 import { inclusionsEn, inclusionsVi } from "./i18nInclusions";
+import { searchEn, searchVi } from "./i18nSearch";
 import { tagsEn, tagsVi } from "./i18nTags";
 import { campaignsEn, campaignsVi } from "./i18nCampaigns";
 import { settingsUxEn, settingsUxVi } from "./i18nSettingsUx";
@@ -93,6 +94,7 @@ const en = {
   ...tripSourceEn, // AA-1089: the AA tour and departure the trip came from, on the trip header (lib/i18nTripSource.ts)
   ...partnersEn, // AA-1071: Partners, partner commissions, the trip's partner, the partner's own pages (lib/i18nPartners.ts)
   ...bookNowEn, // AA-1072: Book now on the tour page, Pay online, Settings > online payment and booking
+  ...searchEn, // AA-963: the global search and the Library page (lib/i18nSearch.ts)
   ...inclusionsEn, // AA-1070 crm-35: Settings > Proposal lines, the builder picker, the client lists (lib/i18nInclusions.ts)
   ...tagsEn, // AA-960: tags, system tags, bulk tagging, Settings > Tags, coverage, ready to travel again (lib/i18nTags.ts)
   ...campaignsEn, // AA-968: Marketing > Campaigns (lib/i18nCampaigns.ts)
@@ -125,7 +127,7 @@ const en = {
   "shell.switchAgency": "Switch agency",
   "shell.signOut": "Sign out",
   "shell.search": "Search clients, trips, bookings",
-  "shell.searchSoon": "Search arrives with the first client records",
+  "shell.searchSoon": "Search is not switched on for this agency yet",
   "shell.theme": "Theme",
   "shell.language": "Language and dates",
   "shell.dateExample": "dates like",
@@ -309,8 +311,6 @@ const en = {
   "section.marketing.body": "Ready-to-travel-again lists, special dates and campaigns to past clients.",
   "section.suppliers.title": "Suppliers",
   "section.suppliers.body": "Adventure Asia is built in. Add the hotels, guides and transport you book yourself.",
-  "section.library.title": "Library is empty",
-  "section.library.body": "Itinerary items, task lists, message templates, forms and travel packs.",
   "section.automations.title": "No automations yet",
   "section.automations.body": "Rules that send, remind and assign for you.",
   "section.help.title": "Help & what's new",
@@ -2835,6 +2835,7 @@ const vi: Record<MessageKey, string> = {
   ...partnersVi,
   ...bookNowVi,
   ...inclusionsVi,
+  ...searchVi,
   ...tagsVi,
   ...campaignsVi, // AA-968
   ...settingsUxVi,
@@ -2866,7 +2867,7 @@ const vi: Record<MessageKey, string> = {
   "shell.switchAgency": "Đổi đại lý",
   "shell.signOut": "Đăng xuất",
   "shell.search": "Tìm khách hàng, chuyến đi, đặt chỗ",
-  "shell.searchSoon": "Tìm kiếm có khi có hồ sơ khách hàng đầu tiên",
+  "shell.searchSoon": "Đại lý này chưa được bật tìm kiếm",
   "shell.theme": "Giao diện",
   "shell.language": "Ngôn ngữ và ngày tháng",
   "shell.dateExample": "ngày dạng",
@@ -3050,8 +3051,6 @@ const vi: Record<MessageKey, string> = {
   "section.marketing.body": "Danh sách khách sẵn sàng đi tiếp, ngày đặc biệt và chiến dịch cho khách cũ.",
   "section.suppliers.title": "Nhà cung cấp",
   "section.suppliers.body": "Adventure Asia có sẵn. Thêm khách sạn, hướng dẫn viên và xe bạn tự đặt.",
-  "section.library.title": "Thư viện trống",
-  "section.library.body": "Hạng mục lịch trình, danh sách việc, mẫu tin nhắn, biểu mẫu và gói thông tin chuyến đi.",
   "section.automations.title": "Chưa có tự động hoá",
   "section.automations.body": "Quy tắc tự gửi, tự nhắc và tự giao việc thay bạn.",
   "section.help.title": "Trợ giúp và tính năng mới",

@@ -448,6 +448,10 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: new RegExp(`^trips/${UUID}/partner-commission/sync$`), tenant: true, card: "AA-1071" },
   { method: "GET", pattern: /^partner-commissions$/, tenant: true, card: "AA-1071" },
   { method: "POST", pattern: new RegExp(`^partner-commissions/${UUID}/(approve|unapprove|pay|cancel)$`), tenant: true, card: "AA-1071" },
+  // AA-963 (CRM-32, R35): the global search. The config (switch, kinds, bounds) and one search; the term travels in
+  // the POST body only, never in a URL (the API has no GET search).
+  { method: "GET", pattern: /^search\/config$/, tenant: true, card: "AA-963" },
+  { method: "POST", pattern: /^search$/, tenant: true, card: "AA-963" },
 ];
 
 /** Calls only the web server makes (lib/crmApi.ts crmCall), never reachable through /bff from the browser. */
