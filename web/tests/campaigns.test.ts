@@ -252,6 +252,13 @@ describe("the public unsubscribe page", () => {
     ]);
   });
 
+  it("never passes the token on as a Referer", async () => {
+    const config = (await import("../next.config")).default;
+    const rules = await config.headers!();
+    const rule = rules.find((r) => r.source === "/c/u/:token*");
+    expect(rule?.headers).toEqual([{ key: "Referrer-Policy", value: "no-referrer" }]);
+  });
+
   it("says a dead link is not valid", async () => {
     vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ detail: "link_not_found" }), { status: 404 }));
     const c = await mount(createElement(UnsubscribePage, { token: TOKEN, dict: unsubscribeMessages("vi") }));

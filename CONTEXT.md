@@ -401,6 +401,8 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-067` | `api/migrations/067_crm_tenant_erasure_studio_invitations.sql` | AA-1093 stage 2 (**contract**: a SECURITY DEFINER function with REVOKE / GRANT and a post-check, MIG-4): `crm.erase_studio_invitations(cis_tenant, dry_run)` counts or deletes one CIS tenant's `crm.studio_invitation` rows (keyed by `cis_tenant_id`, out of `crm.erase_subject`'s reach); actor `job:crm_tenant_erase` only (CRM56), EXECUTE `crm_eraser` only; crm_app still has no DELETE on the table. |
 | `crm-069` | `api/migrations/069_crm_ai_voice_profiles_supplier_options.sql` | AA-965 CRM-33b (**contract**, MIG-4; crm-066..068 are other cards' of the S281 wave): `crm.voice_profile` (base template, R41: a member's writing voice for the reply draft: name, locale en / vi, channel email / whatsapp, `descriptors` = fixed codes only (formality, warmth, length, emoji, greeting, sign_off; at most 1000 bytes); never trashed, hard delete; cascades from `tenant_settings` and its member); `crm.ai_draft` kinds + `supplier_confirmation` / `notes_to_options`, `voice_profile_id` (no key, history), `validation` (the code's check of the answer: ids, codes, short references; object <= 16 KB; a voice only on a message draft); AI stages `crm_supplier_confirm` / `crm_notes_options` (writer) copied from the `crm_draft_reply` profile and route at apply time |
 | `crm-070` | `api/migrations/070_crm_ai_crm33b_settings.sql` | AA-965 CRM-33b (**contract**: config rows; ships in the code PR like crm-068, the settings lint binds seed, readers and compiled defaults): eight `crm.setting_definition` rows, area ai: `crm.ai.supplier_confirm_max_tokens` (800), `_max_chars` (12000), `_max_lines` (20), `crm.ai.notes_options_max_tokens` (600), `_max_chars` (8000), `_max_candidates` (80), `_max_suggestions` (5), `crm.ai.voice_profiles_per_member_max` (4) |
+| `crm-073` | `api/migrations/073_crm_campaigns.sql` | AA-968 CRM-36 campaigns (**expand**: three new tables; migration-only PR first, crm-071 / crm-072 are other lanes' of the S282 wave): `crm.campaign` (base template; name, locale, subject / text under the mail DEK, the agency's own sending mailbox `channel_account_id`, the d21 AA subject `aa_tour_ids` / `aa_content_id` / `brand_only`, `audience_tags`, `state` draft -> scheduled -> sending -> sent, held (`hold_code`) -> scheduled, cancelled (a `state` column: no `status_transition` rows), `gate_codes`, schedule times, the `daily_limit` used, plan counts; cascades from `tenant_settings`), `crm.campaign_recipient` (one client of one campaign: `send_on`, planned -> queued (message + dispatch ids, the SHA-256 of the one-click unsubscribe token, the sealed List-Unsubscribe URL) or skipped with a code; SELECT-only lookup `campaign_recipient_unsubscribe_lookup` on `app.campaign_unsubscribe_hash`; cascades from the campaign and the client), `crm.campaign_suppression` (the agency's do-not-mail list by e-mail blind index, reason unsubscribed / bounced / complained; names no client, so it outlives a client erase; cascades from `tenant_settings`); no `erase_subject` change |
+| `crm-074` | `api/migrations/074_crm_campaign_settings.sql` | AA-968 CRM-36 (**contract**: config rows; ships in the code PR like crm-068 / crm-070, the settings lint binds seed, readers and compiled defaults): `crm.campaign.mailbox_daily_limit` (400 a day, platform+tenant, 1..10000) and `crm.campaign.max_recipients` (2000, platform+tenant, 1..50000), area `campaigns`, maker-checker |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -462,6 +464,7 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 | `crm_tp_lead_pull` | every minute slot, due-now hook (`app.tripplanner.leads.LeadPullSchedule`, key `crm_tp_lead_pull:slot:<n>`) | AA-1038 R5 slice 3 (root ADR 0019 d11, contract `lead.submitted.v1`): per agency (`registry.agencies`), entered first (a `system_tx` that reads `crm.tenant_entitlement.tp_crm_leads`, crm-047: a locked / offboarding agency is skipped BEFORE the list call, so TripPlanner's per-tenant beacon goes stale and it refuses that tenant's crm leads; an agency whose CIS account does not entitle both `tp.hosted` and `crm.core`, projected by `crm_entitlement_pull`, is skipped with no HTTP call, `skipped_not_routed`), then `GET <TRIPPLANNER_API_URL>/trip/m2m/v1/tenants/{agency}/leads` with the M2M client (scope `tripplanner.leads/deliver`); each lead in one `system_tx` of that agency: another tenant's lead is refused (never stored, never acknowledged), the traveller's name / e-mail / phone are checked with the contract's one Traveller rule (`traveller_errors`, shared vectors `docs/contracts/rules/`), the answers are mapped onto the Stage 1 inquiry and validated like the hosted form (an optional answer that does not validate is dropped), stored through `store_submission` (idempotent on `tp-lead:<lead_id>`, the `crm_intake_process` job in the same transaction) under the agency's system form "Trip planner" (lead source `tripplanner`, disabled for the public, created on the first lead), then acknowledged (`stored` / `rejected` + reason) so TripPlanner redacts its copy; a rejected lead raises the ops alert `tp_lead_rejected`. TripPlanner's 404 `tenant_not_on_crm` / `unknown_tenant` is a counted skip (`skipped_not_on_crm`), not an error; any other TripPlanner or token failure is counted and the run ends successfully (next slot). One summary log line per run (`tp_lead_pull_summary`: agencies, pulled, skips, errors). `not_configured` without `TRIPPLANNER_API_URL` / `M2M_CLIENT`. Counts only. Not deploy-gate or DB Migrate exempt |
 | `crm_pdf_render` | event: one per member's PDF request (`POST /trips/{id}/pdfs`, key per trip, kind, subject and minute) | AA-1070: builds the booking confirmation / invoice / proposal / voucher PDF of a trip (`app.documents.pdf_job`, our own PDF writer) in one `system_tx` (actor `job:crm_pdf_render`) and stores it as a sealed `crm.document` (uploader `system`); the subject gone or the agency locked = finished with a `reason_code`; without the key provider or the documents bucket `not_configured` (never a queued-ahead retry). Ids only. Not deploy-gate exempt |
 | `crm_tour_retired_fanout` | event: one per AA tour transition the catalog sync stored (key per tour, transition and `state_changed_at`) | AA-1093 part 1: for every agency in its own `system_tx` (actor `job:crm_tour_retired_fanout`): `retired` raises `crm.tour_retired_flag` rows for each live trip's AA options of draft / published / sent versions and live AA lines on the tour, plus one task `aa_tour_discontinued` per trip (the trip owner, else the agency owner; never a write on a line, option or proposal); `reinstated` clears the open flags and adds one internal note to a trip whose open task stays; a row whose tour moved on finishes `stale`. Ids and counts only. Not deploy-gate exempt |
+| `crm_campaign_tick` | hourly, due-now hook (`app.campaigns.send.HourlyCampaignTick`, key per UTC hour) | AA-968 (CRM-36): per agency in its own `system_tx` (actor `job:crm_campaign_tick`), each live campaign in a savepoint: the gates again (the `campaigns` feature, the client host configured, the campaign's own mailbox, the d21 content gate: a tour no longer served holds it `aa_tour_retired`, another code `content_gate`), then the planned clients due by today up to the mailbox's room today (the daily limit minus the campaign mails it queued today), each checked again (archived, no e-mail, no marketing yes, suppressed: skipped with the code) or queued as one message + one `crm_dispatch` row (purpose marketing, origin system); `sent` when no planned client is left. Ids and counts only. Not deploy-gate exempt |
 | `crm_tenant_erase` | every 2-minute slot, due-now hook (`app.lifecycle.tenant_erase.TenantEraseSchedule`, key per slot) | AA-1093 stage 2 (decision D2): pulls `tenant.erasure.v1` into `crm.tenant_erasure_saga` (cursor in `crm.tenant_erasure_feed_state`), then for each request whose crm step is active makes the report it owes (DRY RUN, apply, verify), records it in `crm.tenant_erasure_report` in the transaction that did the work and posts it to CIS (re-posted with the same id after a network error). The apply erases the agency in one `lifecycle_tx` (actor `job:crm_tenant_erase`); kill switch `TENANT_ERASE_APPLY_ENABLED` (Terraform, default off). Counts only. Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
@@ -1518,8 +1521,51 @@ list explains its reasons"). Migration crm-061 (expand); code in `app/tags/` and
 - **Web**: `components/tags/TagBar.tsx` (trip page and client page: agency tags, system tags with reasons, add / new
   tag), `BulkTagButton.tsx` (pipeline column header, clients directory: Preview then Apply), `TagsSettings.tsx`
   (`/settings/tags`), `CoveragePanel.tsx` (`/automations`, under the pipeline board; cards get a "Missing automation"
-  badge), `/marketing` (Ready to travel again; campaigns arrive with CRM-36), the automation editor's tag trigger and
+  badge), `/marketing` (Ready to travel again; the campaigns of CRM-36, AA-968), the automation editor's tag trigger and
   tags condition. Words in `lib/i18nTags.ts` (system tags by code `tag.sys.<code>`, reasons `tag.reason.<code>`).
+
+## CRM-36 campaigns (AA-968)
+
+Design v3 §6.3 CRM-36 (R14 consent campaigns, A-15 Marketing, C-11 preferences / unsubscribe; card R "contacts
+without consent are excluded; an unsubscribed contact re-imported stays suppressed", card E "a list over the mailbox
+daily limit is spread over days"), as changed by the S279 review (root ADR 0019 d21 content gate; the CRM fan-out of a
+retired AA tour, AA-1093 part 1, instead of the d20 event). Migrations crm-073 (expand) and crm-074 (contract, settings);
+code in `app/campaigns/`, routes in `app/routers/campaigns.py` and three public routes in `app/routers/public.py`;
+decisions in `docs/implementation-notes/AA-968.md`. **Feature key**: every write needs the `campaigns` feature
+(`crm.tenant_entitlement.allowed_features`, projected from the CIS `crm.campaigns` entitlement), off for every agency
+until AA allows it after the independent review (AA-969).
+
+- **Who**: owner and agent (`marketing_view` reads, `campaign_send` writes and sends); the assistant neither.
+- **BYO**: a campaign names one of the agency's own mailboxes (the agency mailbox or the member's own, never another
+  member's personal one); it is sent by the AA-945 sender through that mailbox only (no AA sender, card R of CRM-17).
+- **d21 content gate** (`app.campaigns.model.content_gate`, no LLM; at save, at schedule and on each send day): an AA
+  subject (a served AA tour, a listed AA campaign block `crm.aa_content` kind `campaign_block`, or brand content);
+  every web link goes to an AA tour page of the client host (`<INTAKE_PAGE_ORIGINS[0]>/trip/<tour key>`, a tour the
+  campaign names) or to the TripPlanner site (`TRIPPLANNER_SITE_ORIGIN`; empty = planner links refused); brand content
+  has no such link; `mailto:` / `tel:` pass. Codes are worded by the web (`camp.gate.<code>`).
+- **Plan** (`app.campaigns.audience`, at schedule): live, not archived clients (with one of the campaign's client tags
+  when it names some): `no_email`, `no_consent` (latest marketing consent row not a yes), `suppressed` (the e-mail
+  blind index on `crm.campaign_suppression`) are left out and counted; above `crm.campaign.max_recipients` 409
+  `audience_over_cap`; the caller sends back the previewed count (409 `count_changed`). The eligible clients are
+  spread from the start day at `crm.campaign.mailbox_daily_limit` a day (the agency's own value or the platform's)
+  minus what the agency's other campaigns planned or queued on that mailbox (`model.spread`).
+- **Send**: `crm_campaign_tick` (jobs table). Each mail ends with the unsubscribe lines (`/c/u/<token>` on the client
+  host) and carries `List-Unsubscribe` + `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058; the sender
+  opens `campaign_recipient.unsubscribe_url_enc`). The dispatcher's gate drops a marketing e-mail to a suppressed
+  address (`no_consent`), workflows included.
+- **Retired tour**: the `crm_tour_retired_fanout` job holds every scheduled or sending campaign naming the tour
+  (`app.campaigns.send.pull_retired`, `aa_tour_retired`); the send pass also holds one whose tour is not served.
+- **Unsubscribe** (`app.campaigns.unsubscribe`, `app.tenancy.campaign_unsubscribe_tx`, actor `campaign_unsubscribe:<id>`,
+  audit kind `traveler`): `GET /crm/public/v1/unsubscribe/{token}` (agency name, subscribed or not), `POST` (the page's
+  button and the mail program's one-click POST; not under the per-address public limit, an unknown token is 404):
+  a `marketing` consent row false (source `portal`), `traveler_profile.marketing_ok` false, the address on
+  `crm.campaign_suppression`; `POST .../resubscribe` (the client's own yes) lifts it. A locked agency still honours
+  an opt-out. The import (AA-962) records no marketing yes for a new client whose address is suppressed (row code
+  `marketing_suppressed`).
+- **Web**: `/marketing` Campaigns panel (`components/campaigns/CampaignsPanel.tsx`: list with state, hold reason and
+  counts; the editor with mailbox, AA tours search, AA campaign text, brand switch, client tags, subject and text, the
+  gate codes, "Check who gets it" and Schedule; cancel with a confirm), the public page `/c/u/[token]`
+  (`UnsubscribePage.tsx`, `unsub.*` strings only, no-referrer). BFF routes `campaigns*` (card AA-968).
 
 ## CIS tenant erasure saga, stage 2 (AA-1093, decision D2)
 
@@ -3020,7 +3066,7 @@ outside `dev` / `test` / `local`. Output: one JSON line per agency, ids, labels 
 ## Configuration (environment of the ECS task, AA-CIS-Infra `crm_app.tf`)
 
 `DATABASE_URL` (secret `crm/dev/database-url`), `DB_SSL`, `ENVIRONMENT`, `WORKER_ENABLED`, `JOB_RETENTION_DRY_RUN`,
-`JOB_RETENTION_UTC_HOUR`,
+`JOB_RETENTION_UTC_HOUR`, `TRIPPLANNER_SITE_ORIGIN` (AA-968: the TripPlanner site a campaign may link to; empty = none),
 `RATE_LIMIT_XFF_HOPS`, `SENTRY_DSN` / `SENTRY_REQUIRED`, and the identity values
 `COGNITO_WORKFORCE_ISSUER`, `COGNITO_CIS_ADMIN_CLIENT_ID`, `COGNITO_BREAKGLASS_CLIENT_ID`, `COGNITO_CRM_STAFF_CLIENT_ID`,
 `COGNITO_PARTNER_ISSUER`, `COGNITO_PARTNER_WEB_CLIENT_ID` (the retired `COGNITO_EXTERNAL_ISSUER` /
