@@ -50,17 +50,40 @@ IDENTITY_CLASSES = {
     "health",
     "emergency_contact",
 }
-# Every (index, column) pair of a schema: key columns, expression columns and predicate columns (pg_depend records
-# each column an index uses), with the column's type and its DM-6.1 comment.
+# Every (index, column) pair of a schema, from three sources so no index column escapes the check:
+# 1. the key and INCLUDE columns from pg_index.indkey (attnum > 0; 0 marks an expression slot);
+# 2. the columns of expressions and predicates of a plain CREATE INDEX (pg_depend on the index);
+# 3. the same for an index that backs a PRIMARY KEY / UNIQUE / EXCLUDE constraint: PostgreSQL records those column
+#    dependencies on the pg_constraint row (conindid = the index), not on the index itself.
+# Each row carries the column's type and its DM-6.1 comment.
 INDEX_COLUMNS_SQL = """
-SELECT DISTINCT i.indexrelid::regclass::text AS index_name, c.relname AS table_name, a.attname AS column_name,
+WITH idx AS (
+  SELECT i.indexrelid, i.indrelid, i.indkey
+    FROM pg_index i
+    JOIN pg_class c ON c.oid = i.indrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = $1
+), cols AS (
+  SELECT idx.indexrelid, idx.indrelid, k.attnum
+    FROM idx CROSS JOIN LATERAL unnest(idx.indkey::int2[]) AS k(attnum)
+   WHERE k.attnum > 0
+  UNION
+  SELECT idx.indexrelid, idx.indrelid, d.refobjsubid
+    FROM idx
+    JOIN pg_depend d ON d.classid = 'pg_class'::regclass AND d.objid = idx.indexrelid
+                    AND d.refclassid = 'pg_class'::regclass AND d.refobjid = idx.indrelid AND d.refobjsubid > 0
+  UNION
+  SELECT idx.indexrelid, idx.indrelid, d.refobjsubid
+    FROM idx
+    JOIN pg_constraint con ON con.conindid = idx.indexrelid AND con.conrelid = idx.indrelid
+                          AND con.contype IN ('p', 'u', 'x')
+    JOIN pg_depend d ON d.classid = 'pg_constraint'::regclass AND d.objid = con.oid
+                    AND d.refclassid = 'pg_class'::regclass AND d.refobjid = idx.indrelid AND d.refobjsubid > 0
+)
+SELECT DISTINCT cols.indexrelid::regclass::text AS index_name, c.relname AS table_name, a.attname AS column_name,
        format_type(a.atttypid, a.atttypmod) AS column_type, coalesce(col_description(c.oid, a.attnum), '') AS comment
-  FROM pg_index i
-  JOIN pg_class c ON c.oid = i.indrelid
-  JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = $1
-  JOIN pg_depend d ON d.classid = 'pg_class'::regclass AND d.objid = i.indexrelid
-                  AND d.refclassid = 'pg_class'::regclass AND d.refobjid = c.oid AND d.refobjsubid > 0
-  JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = d.refobjsubid
+  FROM cols
+  JOIN pg_class c ON c.oid = cols.indrelid
+  JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = cols.attnum
  ORDER BY 1, 3
 """
 # Operator classes made for partial-text lookups: never on a personal-data column of the schema.
@@ -118,7 +141,6 @@ async def test_r_no_plaintext_index_of_personal_data_in_schema_crm(admin: asyncp
     }  # the blind indexes are indexed, as bytea
     assert plaintext_pii_index_problems(rows) == []
     assert await admin.fetch(PATTERN_OPCLASSES_SQL, "crm") == []
-    # The plaintext columns the search folds are not indexed at all (a scan inside one agency's rows).
     # The plaintext personal field the search folds (trip.title, pii:travel) is not indexed at all: a scan inside
     # one agency's rows. (Names of suppliers, templates and tags hold no personal data; their unique keys stay.)
     assert not [r for r in rows if (r["table_name"], r["column_name"]) == ("trip", "title")]
@@ -145,11 +167,23 @@ async def test_r_the_index_check_catches_a_plaintext_personal_index(admin: async
         await admin.execute("CREATE INDEX person_title_idx ON aa963_probe.person (title) WHERE starts IS NOT NULL")
         await admin.execute("CREATE INDEX person_notes_idx ON aa963_probe.person (id) WHERE notes IS NOT NULL")
         await admin.execute("CREATE INDEX person_pattern_idx ON aa963_probe.person (title text_pattern_ops)")
+        # Constraint-backed indexes: their column dependencies sit on pg_constraint, not on the index.
+        await admin.execute("ALTER TABLE aa963_probe.person ADD CONSTRAINT person_email_uq UNIQUE (email)")
+        await admin.execute(
+            "ALTER TABLE aa963_probe.person ADD CONSTRAINT person_notes_ex EXCLUDE USING btree (lower(notes) WITH =)"
+        )
+        await admin.execute(
+            "CREATE TABLE aa963_probe.guest (id int, email text, CONSTRAINT guest_pk PRIMARY KEY (id) INCLUDE (email))"
+        )
+        await admin.execute("COMMENT ON COLUMN aa963_probe.guest.email IS 'pii:contact; plaintext by mistake'")
         problems = plaintext_pii_index_problems(await admin.fetch(INDEX_COLUMNS_SQL, "aa963_probe"))
         patterns = await admin.fetch(PATTERN_OPCLASSES_SQL, "aa963_probe")
         await admin.execute("DROP SCHEMA aa963_probe CASCADE")
     assert problems == [
+        "aa963_probe.guest_pk: guest.email (text, pii:contact)",
         "aa963_probe.person_email_idx: person.email (text, pii:contact)",
+        "aa963_probe.person_email_uq: person.email (text, pii:contact)",
+        "aa963_probe.person_notes_ex: person.notes (text, pii:free_text)",
         "aa963_probe.person_notes_idx: person.notes (text, pii:free_text)",
         "aa963_probe.person_pattern_idx: person.title (text, pii:travel)",
         "aa963_probe.person_title_idx: person.title (text, pii:travel)",
