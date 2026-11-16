@@ -34,6 +34,7 @@ from app.tenancy import TenantContext
 from app.vault import Vault
 
 FEATURE = "campaigns"
+MAIL_PURPOSE = "mail"  # the campaign text and the mailbox address are under the agency's mail DEK
 PAGE_SIZE = 50
 
 LIST_SQL = """
@@ -192,7 +193,7 @@ async def _check_refs(ctx: TenantContext, v: dict[str, Any]) -> None:
 async def _seal(vault: Vault, campaign_id: uuid.UUID, text: str, column: str) -> bytes | None:
     if not text:
         return None
-    return await vault.encrypt("campaign", column, campaign_id, text, purpose=audience.MAIL_PURPOSE)
+    return await vault.encrypt("campaign", column, campaign_id, text, purpose=MAIL_PURPOSE)
 
 
 async def _row(ctx: TenantContext, campaign_id: uuid.UUID, *, lock: bool = False) -> Any:
@@ -458,7 +459,7 @@ async def options(ctx: TenantContext, vault: Vault, links: audience.Links) -> di
     boxes = []
     for r in await ctx.conn.fetch(MAILBOXES_SQL, ctx.member_id):
         address = await vault.decrypt(
-            "channel_account", "address_enc", r["channel_account_id"], r["address_enc"], purpose=audience.MAIL_PURPOSE
+            "channel_account", "address_enc", r["channel_account_id"], r["address_enc"], purpose=MAIL_PURPOSE
         )
         boxes.append(
             {

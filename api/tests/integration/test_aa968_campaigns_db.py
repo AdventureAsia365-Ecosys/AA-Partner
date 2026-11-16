@@ -36,6 +36,7 @@ import pytest_asyncio
 from app.campaigns import audience, send, service, unsubscribe
 from app.dispatch import queue as dispatch_queue
 from app.dispatch import worker as dispatch_worker
+from app.documents.store import MemoryDocumentStore
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.jobs.queue import Job
 from app.mail.sender import MailSender
@@ -48,6 +49,7 @@ from tests.integration.test_crm010_schema import ISS, _ctx, _erase
 from tests.integration.test_mail_db import _scalar
 from tests.integration.test_mail_db import _setup as _mail_setup
 from tests.integration.test_onboarding_import_api import _import, _preview
+from tests.integration.test_portability_api import _download, _export
 from tests.unit.mail_fakes import FakeProvider
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -283,6 +285,13 @@ async def test_consent_and_the_daily_spread(app_pool: asyncpg.Pool, monkeypatch:
     async with tenant_tx(app_pool, d["owner"], d["tenant"]) as ctx:
         listed = (await service.listing(ctx))["items"]
         assert [(c["state"], c["counts"]["queued"], c["counts"]["skipped"]) for c in listed] == [("sent", 3, 1)]
+    # The agency's portability export opens the campaign text under the mail DEK and leaves the unsubscribe tokens out.
+    store = MemoryDocumentStore()
+    row = await _export(app_pool, d["keys"], store, d)
+    zf, _ = await _download(app_pool, d["keys"], store, d, row["export_id"])
+    assert "Spring on the river" in zf.read("csv/campaign.csv").decode("utf-8-sig")
+    header = zf.read("csv/campaign_recipient.csv").decode("utf-8-sig").splitlines()[0]
+    assert "unsubscribe_hash" not in header and "unsubscribe_url" not in header and "send_on" in header
     # RLS: another agency sees nothing and cannot open it.
     other = await _mail_setup(app_pool)
     async with tenant_tx(app_pool, other["owner"], other["tenant"]) as ctx:

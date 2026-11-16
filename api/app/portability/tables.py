@@ -37,15 +37,35 @@ NEVER_EXPORT_TABLES = frozenset(
     }
 )
 # Hashes of link / invitation tokens, the F2 pointer (the profile rows are exported themselves), the KEK material.
+# AA-968: a campaign mail's unsubscribe token hash and its one-click URL (the token itself).
 NEVER_EXPORT_COLUMNS = frozenset(
-    {"profile_token_enc", "token_hash", "link_sha256", "code_enc", "secret_enc", "map_enc", "wrapped_dek"}
+    {
+        "profile_token_enc",
+        "token_hash",
+        "link_sha256",
+        "code_enc",
+        "secret_enc",
+        "map_enc",
+        "wrapped_dek",
+        "unsubscribe_hash",
+        "unsubscribe_url_enc",
+    }
 )
-# The DEK purpose of each encrypted column: the vault DEK unless named here (mail content: app.mail, CRM-17, and the
-# text-template values of app.messaging / app.workflows on ``message_delivery``; the sealed signing envelope: crm-025,
-# the docs DEK; the AA ops release document: app.ops_release, its own DEK). tests/unit/test_portability.py scans every
-# writer's ``purpose=`` so a new one cannot drift (S269: a missing entry fails every agency export ``decrypt_denied``).
+# The DEK purpose of each encrypted column: the vault DEK unless named here (mail content: app.mail, CRM-17, the
+# text-template values of app.messaging / app.workflows on ``message_delivery``, AA-968 a campaign's subject and text;
+# the sealed signing envelope: crm-025, the docs DEK; the AA ops release document: app.ops_release, its own DEK).
+# tests/unit/test_portability.py scans every writer's ``purpose=`` so a new one cannot drift (S269: a missing entry
+# fails every agency export ``decrypt_denied``).
 MAIL_TABLES = frozenset(
-    {"message", "message_delivery", "channel_account", "saved_reply", "message_template", "ingest_address"}
+    {
+        "message",
+        "message_delivery",
+        "channel_account",
+        "saved_reply",
+        "message_template",
+        "ingest_address",
+        "campaign",  # AA-968: the campaign's subject and text
+    }
 )
 COLUMN_PURPOSES: dict[tuple[str, str], str] = {
     ("signature_event", "envelope_enc"): "docs",

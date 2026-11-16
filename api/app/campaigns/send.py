@@ -56,6 +56,7 @@ from app.vault.errors import DecryptionDenied
 log = logging.getLogger(__name__)
 
 ACTOR = "job:crm_campaign_tick"
+MAIL_PURPOSE = "mail"  # the agency's mail DEK (the AA-945 messages, the List-Unsubscribe URL)
 SCHEDULER = "scheduler:crm-campaign-tick"
 MAX_ATTEMPTS = 3  # technical-constant: job retries of one hourly pass (the next hour runs anyway)
 HISTORY_DAYS = 2  # technical-constant: finished tick rows pruned after 2 days (queue hygiene, like the workflow tick)
@@ -175,9 +176,10 @@ async def _queue_one(
     text = merged_body + model.footer(campaign["locale"], agency, model.page_url(client_origin, token))
     message_id = uuid.uuid4()
     conversation_id = await threads.conversation_for(ctx, None, row["traveler_id"])
-    purpose = audience.MAIL_PURPOSE
-    subject_enc = await vault.encrypt("message", "subject_enc", message_id, merged_subject or subject, purpose=purpose)
-    body_enc = await vault.encrypt("message", "body_enc", message_id, text, purpose=purpose)
+    subject_enc = await vault.encrypt(
+        "message", "subject_enc", message_id, merged_subject or subject, purpose=MAIL_PURPOSE
+    )
+    body_enc = await vault.encrypt("message", "body_enc", message_id, text, purpose=MAIL_PURPOSE)
     await ctx.conn.execute(MAIL_SQL, message_id, conversation_id, campaign["channel_account_id"], subject_enc, body_enc)
     await ctx.conn.execute(TOUCH_SQL, conversation_id)
     queued = await dispatch.enqueue_message(
@@ -186,7 +188,7 @@ async def _queue_one(
     )  # fmt: skip
     url_enc = await vault.encrypt(
         "campaign_recipient", "unsubscribe_url_enc", row["campaign_recipient_id"],
-        model.one_click_url(client_origin, token), purpose=purpose,
+        model.one_click_url(client_origin, token), purpose=MAIL_PURPOSE,
     )  # fmt: skip
     await ctx.conn.execute(QUEUED_SQL, row["campaign_recipient_id"], message_id, uuid.UUID(queued["dispatch_id"]),
                            token_hash(token), url_enc)  # fmt: skip
