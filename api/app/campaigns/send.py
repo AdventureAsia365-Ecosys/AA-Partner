@@ -7,10 +7,14 @@ queued row as busy; not deploy-gate exempt). Per agency, in one :func:`app.tenan
 
 1. **Gates, again on each send day**: the agency's plan still allows ``campaigns`` (else held ``feature_off``); the
    client host is configured (the unsubscribe link, else held ``not_configured``); the campaign's mailbox is one of
-   the agency's own, not deleted (else held ``no_mailbox``: BYO, never another sender); the d21 content gate passes
-   (an AA tour no longer served -> held ``aa_tour_retired``; any other code -> held ``content_gate``).
+   the agency's own, not deleted, and either the agency mailbox or the own mailbox of a member still active (else
+   held ``no_mailbox``: BYO, never another sender); the d21 content gate passes (an AA tour no longer served -> held
+   ``aa_tour_retired``; any other code -> held ``content_gate``). A **disconnected** mailbox queues nothing that day
+   (counted ``mailbox_disconnected``; the campaign stays live): queued mails would only wait ``held_reconnect`` and
+   leave in one burst on reconnect.
 2. **Today's clients**: the planned rows due by today (agency timezone), at most the mailbox's room today (the daily
-   limit, ``crm.campaign.mailbox_daily_limit`` or the agency's own value, minus the campaign mails it queued today):
+   limit, ``crm.campaign.mailbox_daily_limit`` or the agency's own value, minus the campaign mails that leave it
+   today: queued today, still waiting from an earlier day, or sent today; :func:`app.campaigns.audience.day_room`):
    the rest wait for the next day (card E). Each client is checked again: gone or archived (``archived``), no address
    (``no_email``), no current marketing yes (``no_consent``, card R), the address on the suppression list
    (``suppressed``): the row is ``skipped`` with that code. Otherwise one outbound ``crm.message`` in the client's
@@ -22,6 +26,12 @@ queued row as busy; not deploy-gate exempt). Per agency, in one :func:`app.tenan
 
 :func:`pull_retired` is the CRM fan-out's step (:mod:`app.catalog.retired`): a campaign that names an AA tour AA
 retired is held ``aa_tour_retired`` at once, before its next send day.
+
+**A stopped campaign takes its unsent mails back** (:func:`withdraw`, on every hold and on cancel): the dispatch rows
+still queued, or held for a disconnected mailbox (``held_reconnect``) or a missing sender (``no_sender``), are
+cancelled, so a reconnected mailbox never releases a held or cancelled campaign's mail; their messages are marked
+failed ``campaign_stopped``; a held campaign's clients go back to the plan (scheduled again, they are planned anew),
+a cancelled one's are skipped ``cancelled``.
 
 Payload and result are ids and counts only. A locked or offboarding agency is skipped.
 """
@@ -60,6 +70,7 @@ MAIL_PURPOSE = "mail"  # the agency's mail DEK (the AA-945 messages, the List-Un
 SCHEDULER = "scheduler:crm-campaign-tick"
 MAX_ATTEMPTS = 3  # technical-constant: job retries of one hourly pass (the next hour runs anyway)
 HISTORY_DAYS = 2  # technical-constant: finished tick rows pruned after 2 days (queue hygiene, like the workflow tick)
+MAILBOX_DISCONNECTED = "disconnected"  # crm.channel_account.status: the sender holds every mail (held_reconnect)
 
 LIVE_SQL = """
 SELECT campaign_id, name, locale, subject_enc, body_enc, channel_account_id, aa_tour_ids, aa_content_id, brand_only,
@@ -68,7 +79,16 @@ SELECT campaign_id, name, locale, subject_enc, body_enc, channel_account_id, aa_
  WHERE state IN ('scheduled', 'sending') AND scheduled_at <= now() AND deleted_at IS NULL
  ORDER BY scheduled_at, campaign_id
 """
-MAILBOX_SQL = "SELECT channel_account_id FROM crm.channel_account WHERE channel_account_id = $1 AND deleted_at IS NULL"
+# The campaign's mailbox on a send day: still the agency's (not deleted), its status, and whether it may still send
+# for the agency: the agency mailbox, or a member's own while that member is active (BYO: a member who left takes
+# their mailbox with them).
+MAILBOX_SQL = """
+SELECT a.status,
+       (a.member_id IS NULL OR EXISTS (SELECT 1 FROM crm.member m WHERE m.member_id = a.member_id
+                                         AND m.status = 'active' AND m.deleted_at IS NULL)) AS owner_ok
+  FROM crm.channel_account a
+ WHERE a.channel_account_id = $1 AND a.deleted_at IS NULL
+"""
 HOLD_SQL = """
 UPDATE crm.campaign SET state = 'held', hold_code = $2, gate_codes = $3, version = version + 1
  WHERE campaign_id = $1 AND state IN ('scheduled', 'sending')
@@ -115,6 +135,34 @@ UPDATE crm.campaign SET state = 'sent', started_at = coalesce(started_at, now())
  WHERE campaign_id = $1 AND state IN ('scheduled', 'sending')
 """
 AGENCY_SQL = "SELECT display_name FROM crm.tenant WHERE tenant_id = $1"
+# A stopped campaign (held or cancelled) takes back its mails not handed to the provider yet: the dispatch rows still
+# queued, and those held for the mailbox (re-queued on reconnect, app.mail.state.requeue_mailbox) or for a sender.
+# Rows the provider may have (sent, send_uncertain) or already decided stay as they are.
+WITHDRAW_SQL = """
+UPDATE crm.dispatch_queue d SET status = 'cancelled', gate_result = 'undone', decided_at = now()
+  FROM crm.campaign_recipient r
+ WHERE r.campaign_id = $1 AND r.state = 'queued' AND r.deleted_at IS NULL AND d.dispatch_id = r.dispatch_id
+   AND (d.status = 'queued' OR (d.status = 'held' AND d.gate_result IN ('held_reconnect', 'no_sender')))
+RETURNING r.campaign_recipient_id, d.message_id
+"""
+STOP_MESSAGES_SQL = """
+UPDATE crm.message SET status = 'failed', failure_code = 'campaign_stopped'
+ WHERE message_id = ANY($1::uuid[]) AND status IN ('queued', 'held_reconnect')
+"""
+# Held: the client goes back to the plan (a schedule again plans them anew; the unsent mail's token dies with it).
+REPLAN_SQL = """
+UPDATE crm.campaign_recipient
+   SET state = 'planned', message_id = NULL, dispatch_id = NULL, queued_at = NULL, unsubscribe_hash = NULL,
+       unsubscribe_url_enc = NULL
+ WHERE campaign_recipient_id = ANY($1::uuid[]) AND state = 'queued'
+"""
+# Cancelled: the client is skipped ``cancelled`` (the cancelled dispatch row stays named for the report).
+CANCELLED_SQL = """
+UPDATE crm.campaign_recipient
+   SET state = 'skipped', outcome_code = 'cancelled', message_id = NULL, queued_at = NULL, unsubscribe_hash = NULL,
+       unsubscribe_url_enc = NULL
+ WHERE campaign_recipient_id = ANY($1::uuid[]) AND state = 'queued'
+"""
 RETIRED_SQL = """
 UPDATE crm.campaign SET state = 'held', hold_code = 'aa_tour_retired', gate_codes = $2, version = version + 1
  WHERE state IN ('scheduled', 'sending') AND deleted_at IS NULL AND $1 = ANY (aa_tour_ids)
@@ -126,17 +174,31 @@ def token_hash(token: str) -> bytes:
     return hashlib.sha256(token.encode()).digest()
 
 
+async def withdraw(ctx: AnyContext, campaign_id: uuid.UUID, *, cancelled: bool) -> int:
+    """Take back the campaign's mails not handed to the provider yet (see WITHDRAW_SQL): their dispatch rows are
+    cancelled (a reconnected mailbox no longer releases them), their messages marked failed ``campaign_stopped``,
+    and their clients go back to the plan (held) or are skipped ``cancelled``. Returns how many it took back."""
+    rows = await ctx.conn.fetch(WITHDRAW_SQL, campaign_id)
+    if not rows:
+        return 0
+    await ctx.conn.execute(STOP_MESSAGES_SQL, [r["message_id"] for r in rows if r["message_id"] is not None])
+    await ctx.conn.execute(CANCELLED_SQL if cancelled else REPLAN_SQL, [r["campaign_recipient_id"] for r in rows])
+    return len(rows)
+
+
 async def pull_retired(ctx: AnyContext, source_id: str) -> int:
-    """Hold every scheduled or sending campaign of this agency that names the retired AA tour (the fan-out's step;
-    the same tour run twice holds nothing new). Returns how many it held."""
+    """Hold every scheduled or sending campaign of this agency that names the retired AA tour, and take back its
+    mails not sent yet (the fan-out's step; the same tour run twice holds nothing new). Returns how many it held."""
     held = [r["campaign_id"] for r in await ctx.conn.fetch(RETIRED_SQL, source_id, [model.TOUR_NOT_SERVED])]
     for campaign_id in held:
+        await withdraw(ctx, campaign_id, cancelled=False)
         ctx.audit("campaign_hold", "allowed", "campaign", str(campaign_id), reason=model.HOLD_RETIRED)
     return len(held)
 
 
 async def _hold(ctx: AnyContext, campaign_id: uuid.UUID, code: str, gate_codes: list[str] | None = None) -> None:
     await ctx.conn.execute(HOLD_SQL, campaign_id, code, gate_codes or [])
+    await withdraw(ctx, campaign_id, cancelled=False)
     ctx.audit("campaign_hold", "allowed", "campaign", str(campaign_id), reason=code)
 
 
@@ -210,9 +272,15 @@ async def run_campaign(
         counts["held"] += 1
         return counts
     mailbox = campaign["channel_account_id"]
-    if mailbox is None or await ctx.conn.fetchval(MAILBOX_SQL, mailbox) is None:
+    box = await ctx.conn.fetchrow(MAILBOX_SQL, mailbox) if mailbox is not None else None
+    if box is None or not box["owner_ok"]:
         await _hold(ctx, cid, model.HOLD_MAILBOX)
         counts["held"] += 1
+        return counts
+    if box["status"] == MAILBOX_DISCONNECTED:
+        # Nothing is queued while the mailbox is disconnected (each mail would wait held_reconnect and go out in one
+        # burst on reconnect); the campaign stays live and its clients wait for a day the mailbox can send.
+        counts["mailbox_disconnected"] += 1
         return counts
     texts = await audience.texts(vault, campaign)
     codes = await audience.gate(ctx, campaign, *texts, links)

@@ -29,6 +29,7 @@ MAILBOX = uuid.UUID("00000000-0000-4000-8000-0000000c4a02")
 CLIENT_A = uuid.UUID("00000000-0000-4000-8000-0000000c4a03")
 CLIENT_B = uuid.UUID("00000000-0000-4000-8000-0000000c4a04")
 RECIPIENT = uuid.UUID("00000000-0000-4000-8000-0000000c4a05")
+MESSAGE_A = uuid.UUID("00000000-0000-4000-8000-0000000c4a06")
 TOUR = "3e7a91c4-58b2-4f0d-a6e1-9c2b7d4f8a16"
 ORIGIN = "https://go.crm.example.test"
 LINKS = audience.Links(client_origin=ORIGIN, tripplanner_origin=None)
@@ -302,6 +303,15 @@ async def test_schedule_refusals_and_the_plan() -> None:
     with pytest.raises(Conflict) as err:
         await call(_conn(campaign=_campaign(channel_account_id=None), people=people))
     assert err.value.code == "mailbox_required"
+    # BYO at schedule time too: a colleague's personal mailbox on a draft they wrote cannot be scheduled by another.
+    theirs = _conn(people=people).on("FROM crm.channel_account WHERE channel_account_id",
+                                     {"channel_account_id": MAILBOX, "member_id": OTHER_MEMBER})  # fmt: skip
+    with pytest.raises(Conflict) as err:
+        await call(theirs)
+    assert err.value.code == "invalid_mailbox" and not theirs.sql("INSERT INTO crm.campaign_recipient")
+    mine = _conn(people=people).on("FROM crm.channel_account WHERE channel_account_id",
+                                   {"channel_account_id": MAILBOX, "member_id": MEMBER})  # fmt: skip
+    assert (await call(mine))["state"] == "scheduled"
     gated = _campaign(body_enc=b"enc:campaign.body_enc:Deals at https://other.example.test/x")
     with pytest.raises(Invalid) as err:
         await call(_conn(campaign=gated, people=people))
@@ -353,22 +363,26 @@ async def test_preview_listing_detail_options() -> None:
     assert conn.sql("FROM crm.aa_catalog_tour WHERE source_system = 'cis' AND served_state")[0] == ("50\\%\\_off",)
 
 
+WITHDRAW = "UPDATE crm.dispatch_queue d SET status = 'cancelled'"
+WITHDRAWN = [{"campaign_recipient_id": CLIENT_A, "message_id": MESSAGE_A}, {"campaign_recipient_id": CLIENT_B,
+                                                                           "message_id": None}]  # fmt: skip
+
+
 @pytest.mark.asyncio
-async def test_cancel_skips_the_plan_and_undoes_what_is_still_queued(monkeypatch: pytest.MonkeyPatch) -> None:
-    undone: list[Any] = []
-
-    async def undo(_ctx: Any, dispatch_id: Any) -> dict[str, Any]:
-        if dispatch_id == "gone":
-            raise Conflict("already_dispatched")
-        undone.append(dispatch_id)
-        return {}
-
-    monkeypatch.setattr(service.dispatch, "undo", undo)
-    conn = _conn(campaign=_campaign(state="sending")).on(
-        "r.state = 'queued' AND d.status = 'queued'", [{"dispatch_id": "d-1"}, {"dispatch_id": "gone"}]
-    )
+async def test_cancel_skips_the_plan_and_takes_back_the_unsent_mails() -> None:
+    conn = _conn(campaign=_campaign(state="sending")).on(WITHDRAW, WITHDRAWN)
     out = await service.cancel(tenant_ctx(conn), CAMPAIGN, 2)
-    assert (out["state"], out["undone"], undone) == ("cancelled", 1, ["d-1"])
+    assert (out["state"], out["undone"]) == ("cancelled", 2)
+    # The mails still queued or held for a disconnected mailbox: cancelled, so a reconnect never sends them.
+    [(campaign_id,)] = conn.sql(WITHDRAW)
+    assert campaign_id == CAMPAIGN
+    assert "d.gate_result IN ('held_reconnect', 'no_sender')" in next(f for f, _ in conn.calls if WITHDRAW in f)
+    assert conn.sql("failure_code = 'campaign_stopped'") == [([MESSAGE_A],)]
+    assert conn.sql("SET state = 'skipped', outcome_code = 'cancelled', message_id = NULL") == [([CLIENT_A, CLIENT_B],)]
+    assert not conn.sql("SET state = 'planned'")
+    nothing = _conn(campaign=_campaign(state="scheduled"))
+    assert (await service.cancel(tenant_ctx(nothing), CAMPAIGN, 2))["undone"] == 0
+    assert not nothing.sql("campaign_stopped")
     with pytest.raises(Conflict) as err:
         await service.cancel(tenant_ctx(_conn(campaign=_campaign(state="sent"))), CAMPAIGN, 2)
     assert err.value.code == "campaign_not_cancellable"
@@ -388,9 +402,13 @@ def _send_conn(due: list[Any], *, left: int = 0, allowed: bool = True, queued_to
     conn = _conn(allowed=allowed)
     conn.on("FROM crm.campaign_recipient r JOIN crm.traveler t", due)
     conn.on("SELECT count(*)::int FROM crm.campaign_recipient WHERE campaign_id", left)
-    conn.on("r.state = 'queued' AND r.deleted_at IS NULL AND (r.queued_at", queued_today)
+    conn.on("LEFT JOIN crm.dispatch_queue d ON d.dispatch_id = r.dispatch_id CROSS JOIN LATERAL", queued_today)
     conn.on("crm.conversation", uuid.UUID(int=99))
+    conn.on(SEND_MAILBOX, {"status": "connected", "owner_ok": True})
     return conn
+
+
+SEND_MAILBOX = "FROM crm.channel_account a WHERE a.channel_account_id"
 
 
 @pytest.fixture
@@ -411,7 +429,9 @@ async def test_the_send_pass_holds_a_campaign_that_may_not_go(queued: list[Any])
     cases = [
         (_send_conn([], allowed=False), LINKS, row, "feature_off"),
         (_send_conn([]), audience.Links(None, None), row, "not_configured"),
-        (_send_conn([]).on("FROM crm.channel_account WHERE channel_account_id", None), LINKS, row, "no_mailbox"),
+        (_send_conn([]).on(SEND_MAILBOX, None), LINKS, row, "no_mailbox"),
+        (_send_conn([]).on(SEND_MAILBOX, {"status": "connected", "owner_ok": False}), LINKS, row, "no_mailbox"),
+        (_send_conn([]), LINKS, _campaign(state="scheduled", channel_account_id=None), "no_mailbox"),
         (_send_conn([]).on("source_id = ANY", [{"source_id": TOUR, "served_state": "retired"}]), LINKS, row,
          "aa_tour_retired"),
         (_send_conn([]), LINKS, _campaign(state="scheduled", body_enc=b"enc:campaign.body_enc:www.other.example.test"),
@@ -445,6 +465,34 @@ async def test_todays_clients_are_checked_again_and_queued(queued: list[Any]) ->
     [(_rid, mid, _did, token_hash, url)] = conn.sql("SET state = 'queued'")
     assert mid == message_id and len(token_hash) == 32 and f"{ORIGIN}/crm/public/v1/unsubscribe/".encode() in url
     assert conn.sql("SET state = 'sent'")
+
+
+@pytest.mark.asyncio
+async def test_a_hold_takes_back_the_unsent_mails(queued: list[Any]) -> None:
+    conn = _send_conn([], allowed=False).on(WITHDRAW, WITHDRAWN)
+    await send.run_campaign(system_ctx(conn), FakeVault(), _campaign(state="sending"), LINKS, limit=2,
+                            agency="Sen Vang")  # fmt: skip
+    assert conn.sql("UPDATE crm.campaign SET state = 'held'")[0][1] == "feature_off"
+    assert conn.sql("failure_code = 'campaign_stopped'") == [([MESSAGE_A],)]
+    # Held, not cancelled: the clients go back to the plan (scheduled again, they are planned anew).
+    assert conn.sql("SET state = 'planned', message_id = NULL") == [([CLIENT_A, CLIENT_B],)]
+    assert not conn.sql("outcome_code = 'cancelled'")
+
+
+@pytest.mark.asyncio
+async def test_a_disconnected_mailbox_queues_nothing_and_the_campaign_waits(queued: list[Any]) -> None:
+    conn = _send_conn([_due(CLIENT_A)], left=1).on(SEND_MAILBOX, {"status": "disconnected", "owner_ok": True})
+    for _day in range(2):  # two send days in a row: nothing queued, nothing held, nothing finished
+        counts = await send.run_campaign(system_ctx(conn), FakeVault(), _campaign(state="sending"), LINKS, limit=2,
+                                         agency="Sen Vang")  # fmt: skip
+        assert dict(counts) == {"mailbox_disconnected": 1}
+    assert queued == [] and not conn.sql("JOIN crm.traveler t") and not conn.sql("SET state = 'held'")
+    assert not conn.sql("SET state = 'sent'") and not conn.sql("SET state = 'sending'")
+    # "needs attention" still sends (the sender holds only a disconnected mailbox).
+    conn = _send_conn([_due(CLIENT_A)], left=0).on(SEND_MAILBOX, {"status": "needs_attention", "owner_ok": True})
+    counts = await send.run_campaign(system_ctx(conn), FakeVault(), _campaign(state="sending"), LINKS, limit=2,
+                                     agency="Sen Vang")  # fmt: skip
+    assert counts["queued"] == 1
 
 
 @pytest.mark.asyncio
@@ -521,9 +569,12 @@ async def test_a_failing_campaign_leaves_the_others(monkeypatch: pytest.MonkeyPa
 async def test_pull_retired_and_the_hourly_hook(monkeypatch: pytest.MonkeyPatch) -> None:
     conn = ScriptedConn().on("UPDATE crm.campaign SET state = 'held', hold_code = 'aa_tour_retired'",
                              [{"campaign_id": CAMPAIGN}])  # fmt: skip
+    conn.on(WITHDRAW, WITHDRAWN)
     ctx = system_ctx(conn)
     assert await send.pull_retired(ctx, TOUR) == 1
     assert ctx.audit_events[0].reason == "aa_tour_retired"
+    # The pulled campaign's mails not sent yet are taken back too (a reconnect would otherwise send them).
+    assert conn.sql(WITHDRAW) == [(CAMPAIGN,)] and conn.sql("SET state = 'planned', message_id = NULL")
     enqueued: list[str] = []
 
     async def enqueue(_pool: Any, kind: str, _payload: Any, *, idempotency_key: str, **_: Any) -> str:

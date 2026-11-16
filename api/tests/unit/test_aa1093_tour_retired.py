@@ -147,6 +147,7 @@ class _Conn:
         self.view: list[dict[str, Any]] = []
         self.campaigns: list[str] = []
         self.held: list[str] = []
+        self.withdrawn: list[str] = []
 
     async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
         if sql == retired.ITEMS_SQL:
@@ -163,6 +164,9 @@ class _Conn:
             newly = [c for c in self.campaigns if c not in self.held]
             self.held += newly
             return [{"campaign_id": c} for c in newly]
+        if sql == campaign_send.WITHDRAW_SQL:  # the held campaign's unsent mails (none here: nothing queued yet)
+            self.withdrawn.append(args[0])
+            return []
         raise AssertionError(sql)
 
     async def fetchval(self, sql: str, *args: Any) -> Any:
@@ -331,6 +335,7 @@ async def test_a_retirement_holds_the_campaigns_that_name_the_tour(monkeypatch: 
     payload = {"source_id": TOUR, "purpose": "retired", "changed_at": us}
     out = await handler(object(), Job("j", retired.KIND, payload, 1, 3))  # type: ignore[arg-type]
     assert out["campaign_held_count"] == 2 and with_campaigns.held == ["camp-1", "camp-2"]
+    assert with_campaigns.withdrawn == ["camp-1", "camp-2"]
     again = await handler(object(), Job("j", retired.KIND, payload, 2, 3))  # type: ignore[arg-type]
     assert "campaign_held_count" not in again
 

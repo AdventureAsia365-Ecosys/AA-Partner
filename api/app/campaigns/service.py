@@ -11,8 +11,10 @@ with the codes), checks the mailbox (one of the agency's own: the agency mailbox
 mail), counts the audience (none -> 409 ``audience_empty``; above ``crm.campaign.max_recipients`` -> 409
 ``audience_over_cap``; the caller sends back the previewed count, another one -> 409 ``count_changed``), and plans the
 recipients over days (card E); a **held** campaign (the send pass or the retired-tour pull stopped it) is edited and
-scheduled again the same way (its queued clients are kept); **cancel** skips every planned client (``cancelled``) and
-undoes the dispatch rows not sent yet. The send itself is :mod:`app.campaigns.send`.
+scheduled again the same way (the clients whose mail the hold took back are planned anew); schedule also checks
+that the mailbox is the agency's or the caller's own (BYO, like the editor); **cancel** skips every planned client
+(``cancelled``) and takes back the mails not handed to the provider yet, queued or waiting for a disconnected mailbox
+(:func:`app.campaigns.send.withdraw`). The send itself is :mod:`app.campaigns.send`.
 
 Reads give counts per state and per dispatch outcome, never a client name: the campaign report is the agency's own
 marketing and Adventure Asia never reads it.
@@ -26,8 +28,7 @@ import uuid
 from typing import Any
 
 from app import entitlements
-from app.campaigns import audience, model
-from app.dispatch import queue as dispatch
+from app.campaigns import audience, model, send
 from app.errors import Conflict, Invalid, NotFound
 from app.permissions import Action, require
 from app.tenancy import TenantContext
@@ -89,10 +90,6 @@ RETURNING version
 SKIP_PLANNED_SQL = """
 UPDATE crm.campaign_recipient SET state = 'skipped', outcome_code = 'cancelled'
  WHERE campaign_id = $1 AND state = 'planned'
-"""
-QUEUED_DISPATCH_SQL = """
-SELECT r.dispatch_id FROM crm.campaign_recipient r JOIN crm.dispatch_queue d ON d.dispatch_id = r.dispatch_id
- WHERE r.campaign_id = $1 AND r.state = 'queued' AND d.status = 'queued'
 """
 DELETE_SQL = "DELETE FROM crm.campaign WHERE campaign_id = $1 AND state = 'draft'"
 MAILBOX_SQL = """
@@ -176,11 +173,16 @@ def _clean(fields: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _may_send_from(ctx: TenantContext, box: Any) -> bool:
+    """BYO: the agency mailbox (no member) or the caller's own; never another member's personal mailbox."""
+    return box["member_id"] is None or box["member_id"] == ctx.member_id
+
+
 async def _check_refs(ctx: TenantContext, v: dict[str, Any]) -> None:
     if v["channel_account_id"] is not None:
         box = await ctx.conn.fetchrow(MAILBOX_SQL, v["channel_account_id"])
         # BYO: the agency's mailbox or the member's own; never another member's personal mailbox.
-        if box is None or (box["member_id"] is not None and box["member_id"] != ctx.member_id):
+        if box is None or not _may_send_from(ctx, box):
             raise Invalid("invalid_mailbox", "pick the agency mailbox or your own")
     if v["audience_tags"]:
         known = set(await ctx.conn.fetchval(TAG_CODES_SQL, v["audience_tags"]) or [])
@@ -397,8 +399,13 @@ async def schedule(
     if not links.client_origin:
         raise Conflict("campaigns_not_configured", "campaign links cannot be made here yet")
     mailbox = row["channel_account_id"]
-    if mailbox is None or await ctx.conn.fetchrow(MAILBOX_SQL, mailbox) is None:
+    box = await ctx.conn.fetchrow(MAILBOX_SQL, mailbox) if mailbox is not None else None
+    if box is None:
         raise Conflict("mailbox_required", "connect and pick one of the agency's own mailboxes")
+    if not _may_send_from(ctx, box):
+        # BYO: whoever schedules sends from the agency mailbox or their own, never another member's (the editor's
+        # check alone is not enough: a colleague could schedule a draft written on someone's personal mailbox).
+        raise Conflict("invalid_mailbox", "pick the agency mailbox or your own")
     codes, found, limit, cap, _done = await _prepare(ctx, vault, row, links)
     if codes:
         raise Invalid("content_gate", "the campaign cannot go out as written", codes=codes)
@@ -439,13 +446,7 @@ async def cancel(ctx: TenantContext, campaign_id: uuid.UUID, version: int) -> di
         raise Conflict("campaign_not_cancellable", "a sent or cancelled campaign stays as it is")
     status = await ctx.conn.execute(SKIP_PLANNED_SQL, campaign_id)  # "UPDATE <n>"
     skipped = int(status.split()[-1]) if status.split()[-1].isdigit() else 0
-    undone = 0
-    for r in await ctx.conn.fetch(QUEUED_DISPATCH_SQL, campaign_id):
-        try:
-            await dispatch.undo(ctx, r["dispatch_id"])
-            undone += 1
-        except Conflict:
-            continue  # left the queue meanwhile: it is the dispatcher's
+    undone = await send.withdraw(ctx, campaign_id, cancelled=True)  # queued or waiting for the mailbox
     new_version = await ctx.conn.fetchval(CANCEL_SQL, campaign_id)
     ctx.audit("campaign_cancel", "allowed", "campaign", str(campaign_id), reason=row["state"])
     return {"campaign_id": str(campaign_id), "state": "cancelled", "skipped": skipped, "undone": undone,

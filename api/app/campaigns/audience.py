@@ -187,17 +187,26 @@ async def used(
 
 
 async def day_room(ctx: AnyContext, mailbox: uuid.UUID, day: dt.date, limit: int) -> int:
-    """How many more campaign mails ``mailbox`` may queue on ``day`` (queued that day count, planned ones do not:
-    a planned row of another campaign is a reservation the queue step honours by order, see :mod:`.send`)."""
-    queued = await ctx.conn.fetchval(QUEUED_ON_SQL, mailbox, day, DEFAULT_TZ)
-    return max(limit - int(queued or 0), 0)
+    """How many more campaign mails ``mailbox`` may queue on ``day``: the limit minus the campaign mails that leave
+    it that day (queued that day; queued earlier and still waiting, in the queue or held for a disconnected mailbox
+    that releases them on reconnect; queued earlier and sent that day). So a mailbox that was disconnected never sends
+    more than its limit in a day after it reconnects. Planned ones do not count: a planned row of another campaign is
+    a reservation the queue step honours by order, see :mod:`.send`."""
+    leaving = await ctx.conn.fetchval(QUEUED_ON_SQL, mailbox, day, DEFAULT_TZ)
+    return max(limit - int(leaving or 0), 0)
 
 
 QUEUED_ON_SQL = """
 SELECT count(*)::int
-  FROM crm.campaign_recipient r JOIN crm.campaign c ON c.campaign_id = r.campaign_id
+  FROM crm.campaign_recipient r
+  JOIN crm.campaign c ON c.campaign_id = r.campaign_id
+  LEFT JOIN crm.dispatch_queue d ON d.dispatch_id = r.dispatch_id
+ CROSS JOIN LATERAL (SELECT coalesce((SELECT timezone FROM crm.tenant_settings LIMIT 1), $3) AS tz) z
  WHERE c.channel_account_id = $1 AND r.state = 'queued' AND r.deleted_at IS NULL
-   AND (r.queued_at AT TIME ZONE coalesce((SELECT timezone FROM crm.tenant_settings LIMIT 1), $3))::date = $2
+   AND ((r.queued_at AT TIME ZONE z.tz)::date = $2
+        OR d.status = 'queued'
+        OR (d.status = 'held' AND d.gate_result IN ('held_reconnect', 'no_sender'))
+        OR (d.status = 'sent' AND (d.decided_at AT TIME ZONE z.tz)::date = $2))
 """
 
 

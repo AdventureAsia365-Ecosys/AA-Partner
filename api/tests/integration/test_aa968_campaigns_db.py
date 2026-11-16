@@ -15,6 +15,12 @@ with a fake provider:
   client erased and imported again with a marketing yes stays suppressed; "subscribe again" lifts it.
 - **Retired tour**: the CRM fan-out's pull holds a scheduled campaign naming the tour; a tour no longer served holds
   it on its send day.
+- **A stopped campaign sends nothing on reconnect**: cancel, the retired-tour pull and a send-day hold take back the
+  mails still queued or held for a disconnected mailbox, so the reconnect releases none of them.
+- **A disconnected mailbox keeps to the daily limit**: nothing is queued while it is disconnected, and the mails it
+  releases on reconnect count against that day's room.
+- **BYO at schedule and send time**: a colleague cannot schedule a campaign on another member's personal mailbox, and
+  a member who is no longer active takes their mailbox with them (the campaign is held ``no_mailbox``).
 - **RLS**: another agency sees none of it.
 
 Invented names, addresses and places only.
@@ -33,12 +39,14 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
+from app.auth.route_guard import Caller
 from app.campaigns import audience, send, service, unsubscribe
 from app.dispatch import queue as dispatch_queue
 from app.dispatch import worker as dispatch_worker
 from app.documents.store import MemoryDocumentStore
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.jobs.queue import Job
+from app.mail import state as mail_state
 from app.mail.sender import MailSender
 from app.mail.state import MailRuntime
 from app.permissions import Action
@@ -239,6 +247,29 @@ async def test_feature_key_byo_mailbox_and_the_content_gate(
         )
     with pytest.raises(Invalid, match="agency mailbox or your own"):
         await _create(app_pool, d, channel_account_id=theirs)
+    # Nor schedule one written on another member's personal mailbox: the agent cannot send as the owner.
+    mine = await _create(app_pool, d)  # the owner's own Gmail
+    agent = Caller("agency", "partner", "partner-web", ISS, f"sub-{other_member}", ())
+    async with tenant_tx(app_pool, agent, d["tenant"], action=Action.CAMPAIGN_SEND) as ctx:
+        cid = uuid.UUID(mine["campaign_id"])
+        with pytest.raises(Conflict) as err:
+            await service.schedule(ctx, Vault(d["keys"], ctx), cid, at=None, expected=4, version=1, links=LINKS)
+    assert err.value.code == "invalid_mailbox"
+    assert await _scalar(app_pool, d["tenant"], "SELECT state FROM crm.campaign WHERE campaign_id = $1", cid) == "draft"
+    # The agent's own mailbox is theirs to schedule; once the agent is disabled, the send pass holds it (BYO).
+    async with tenant_tx(app_pool, agent, d["tenant"], action=Action.CAMPAIGN_SEND) as ctx:
+        vault = Vault(d["keys"], ctx)
+        own = await service.create(ctx, vault, _fields(d, channel_account_id=theirs), LINKS)
+        own_id = uuid.UUID(own["campaign_id"])
+        seen = await service.preview(ctx, vault, own_id, LINKS)
+        out = await service.schedule(ctx, vault, own_id, at=None, expected=seen["eligible"], version=1, links=LINKS)
+    assert out["state"] == "scheduled"
+    async with app_pool.acquire() as conn, conn.transaction():
+        await _ctx(conn, d["tenant"], "seed:test")
+        await conn.execute("UPDATE crm.member SET status = 'disabled' WHERE member_id = $1", other_member)
+    assert (await _tick(app_pool, d)).get("held") == 1
+    held = await _rows(app_pool, d, "SELECT state, hold_code FROM crm.campaign WHERE campaign_id = $1", own_id)
+    assert tuple(held[0]) == ("held", "no_mailbox")
 
 
 async def test_consent_and_the_daily_spread(app_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -261,6 +292,8 @@ async def test_consent_and_the_daily_spread(app_pool: asyncpg.Pool, monkeypatch:
         "JOIN crm.dispatch_queue q ON q.dispatch_id = r.dispatch_id JOIN crm.message m ON m.message_id = r.message_id",
     )  # fmt: skip
     assert {tuple(r) for r in queued} == {("marketing", "system", "email", d["mailbox"], "agency_mailbox")}
+    # The dispatcher sends them (a mail still waiting would count against the next day's room too).
+    assert await _dispatch_all(app_pool, d, FakeProvider(external_id=None)) == ["sent", "sent"]
     # A yes withdrawn after the plan: that client is skipped on the send day.
     later = await _rows(app_pool, d, "SELECT traveler_id FROM crm.campaign_recipient WHERE state = 'planned'")
     withdrawn = later[0]["traveler_id"]
@@ -428,3 +461,107 @@ async def test_a_retired_tour_pulls_scheduled_campaigns(
                                           uuid.UUID(second["campaign_id"]))  # fmt: skip
         gone = await service.cancel(ctx, uuid.UUID(second["campaign_id"]), version)
     assert gone["state"] == "cancelled" and gone["skipped"] == 4
+
+
+async def _mailbox(pool: asyncpg.Pool, d: dict[str, Any], *, connected: bool) -> int:
+    """The owner's Gmail goes disconnected (a revoked token) or connected again (its held mails go back to the
+    queue); returns how many went back."""
+    async with system_tx(pool, d["tenant"], actor="job:crm_mailbox_check") as ctx:
+        credential = await ctx.conn.fetchval(
+            "SELECT credential_id FROM crm.channel_account WHERE channel_account_id = $1", d["mailbox"]
+        )
+        if connected:
+            return await mail_state.mark_connected(ctx, d["mailbox"], credential)
+        await mail_state.mark_disconnected(ctx, d["mailbox"], credential, "auth_revoked")
+        return 0
+
+
+async def _dispatch_all(pool: asyncpg.Pool, d: dict[str, Any], provider: FakeProvider) -> list[str]:
+    """Run the real dispatcher + mail sender on every campaign mail; returns each row's outcome."""
+    handler = dispatch_worker.build_handler(MailSender(MailRuntime(keys=d["keys"], providers={"gmail": provider})))
+    out = []
+    for r in await _rows(pool, d, "SELECT dispatch_id FROM crm.campaign_recipient WHERE dispatch_id IS NOT NULL "
+                                  "ORDER BY dispatch_id"):  # fmt: skip
+        job = Job("j", "crm_dispatch", {"tenant_id": str(d["tenant"]), "dispatch_id": str(r["dispatch_id"])}, 1, 5)
+        result = await handler(pool, job)
+        out.append(result.get("reason_code") or result["status"])
+    return out
+
+
+async def test_a_stopped_campaign_sends_nothing_when_the_mailbox_reconnects(
+    app_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    d = await _world(app_pool, monkeypatch)
+    provider = FakeProvider(external_id=None)
+    # Cancel: two mails queued, the mailbox drops, both wait held_reconnect; the cancel takes them back.
+    first = await _create(app_pool, d)
+    await _schedule(app_pool, d, first)
+    assert (await _tick(app_pool, d)).get("queued") == 2
+    await _mailbox(app_pool, d, connected=False)
+    assert await _dispatch_all(app_pool, d, provider) == ["held_reconnect", "held_reconnect"]
+    cid = uuid.UUID(first["campaign_id"])
+    async with tenant_tx(app_pool, d["owner"], d["tenant"], action=Action.CAMPAIGN_SEND) as ctx:
+        version = await ctx.conn.fetchval("SELECT version FROM crm.campaign WHERE campaign_id = $1", cid)
+        gone = await service.cancel(ctx, cid, version)
+    assert (gone["skipped"], gone["undone"]) == (2, 2)
+    stopped = await _rows(
+        app_pool, d,
+        "SELECT r.state, r.outcome_code, r.message_id IS NULL AS no_message, q.status, q.gate_result "
+        "FROM crm.campaign_recipient r LEFT JOIN crm.dispatch_queue q ON q.dispatch_id = r.dispatch_id "
+        "WHERE r.campaign_id = $1 AND r.dispatch_id IS NOT NULL", cid,
+    )  # fmt: skip
+    assert {tuple(r) for r in stopped} == {("skipped", "cancelled", True, "cancelled", "undone")}
+    assert await _scalar(app_pool, d["tenant"], "SELECT count(*) FROM crm.message WHERE status = 'failed' "
+                                                "AND failure_code = 'campaign_stopped'") == 2  # fmt: skip
+    assert await _mailbox(app_pool, d, connected=True) == 0  # nothing of the campaign goes back to the queue
+    assert await _dispatch_all(app_pool, d, provider) == ["skipped", "skipped"] and provider.sent == []
+    # The retired-tour pull: the same, and the clients go back to the plan for a later schedule.
+    second = await _create(app_pool, d, name="Autumn river valley")
+    await _schedule(app_pool, d, second)
+    assert (await _tick(app_pool, d)).get("queued") == 2
+    await _mailbox(app_pool, d, connected=False)
+    held = await _dispatch_all(app_pool, d, provider)
+    assert held.count("held_reconnect") == 2
+    async with system_tx(app_pool, d["tenant"], actor="job:crm_tour_retired_fanout") as ctx:
+        assert await send.pull_retired(ctx, TOUR) == 1
+    sid = uuid.UUID(second["campaign_id"])
+    states = await _rows(app_pool, d, "SELECT state, count(*) AS n FROM crm.campaign_recipient WHERE campaign_id = $1 "
+                                      "GROUP BY 1", sid)  # fmt: skip
+    assert {r["state"]: r["n"] for r in states} == {"planned": 4}
+    assert await _mailbox(app_pool, d, connected=True) == 0
+    assert set(await _dispatch_all(app_pool, d, provider)) == {"skipped"} and provider.sent == []
+
+
+async def test_a_disconnected_mailbox_keeps_to_the_daily_limit(
+    app_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    d = await _world(app_pool, monkeypatch)
+    await _schedule(app_pool, d, await _create(app_pool, d))  # four clients, two a day
+    assert (await _tick(app_pool, d)).get("queued") == 2
+    await _mailbox(app_pool, d, connected=False)
+    provider = FakeProvider(external_id=None)
+    assert await _dispatch_all(app_pool, d, provider) == ["held_reconnect", "held_reconnect"]
+    async with tenant_tx(app_pool, d["owner"], d["tenant"]) as ctx:
+        today = await audience.today(ctx)
+    for offset in (1, 2):  # two send days while disconnected: nothing more is queued, the campaign stays live
+        day = today + dt.timedelta(days=offset)
+
+        async def fixed(_ctx: Any, day: dt.date = day) -> dt.date:
+            return day
+
+        monkeypatch.setattr(audience, "today", fixed)
+        assert await _tick(app_pool, d) == {"mailbox_disconnected": 1}
+    assert (
+        await _scalar(app_pool, d["tenant"], "SELECT count(*) FROM crm.campaign_recipient WHERE state = 'queued'") == 2
+    )
+    assert await _scalar(app_pool, d["tenant"], "SELECT state FROM crm.campaign") == "sending"
+    # Reconnected on the third day: the two held mails go back to the queue and fill that day's room.
+    assert await _mailbox(app_pool, d, connected=True) == 2
+    assert (await _tick(app_pool, d)).get("queued") is None
+    assert await _dispatch_all(app_pool, d, provider) == ["sent", "sent"] and len(provider.sent) == 2
+    # Sent that day (queued an earlier day): they still count against the day they left.
+    async with tenant_tx(app_pool, d["owner"], d["tenant"]) as ctx:
+        await ctx.conn.execute("UPDATE crm.campaign_recipient SET queued_at = queued_at - interval '2 days' "
+                               "WHERE state = 'queued'")  # fmt: skip
+        assert await audience.day_room(ctx, d["mailbox"], today, 2) == 0
+        assert await audience.day_room(ctx, d["mailbox"], today + dt.timedelta(days=1), 2) == 2
