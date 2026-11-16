@@ -11,8 +11,9 @@ Done-when of the card:
 
 from __future__ import annotations
 
+import re
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
 import asyncpg
@@ -20,6 +21,7 @@ import pytest
 import pytest_asyncio
 
 from app import platform_settings as ps
+from app.catalogue import service as catalogue
 from app.errors import Forbidden, Invalid
 from app.ledger import lines, suppliers
 from app.mail import templates
@@ -97,26 +99,157 @@ SELECT i.indexrelid::regclass::text AS index_name, oc.opcname AS opclass
  WHERE oc.opcname ~ '(trgm|pattern_ops|tsvector)'
 """
 PLAINTEXT_OK_TYPES = {"date", "smallint", "integer", "character(2)"}  # travel-class dates, room numbers, country codes
+# The column types that can hold a name, an e-mail, a phone or free text in clear (and their arrays).
+TEXT_LIKE = re.compile(r"^(text|character varying(\(\d+\))?|character(\(\d+\))?|bpchar|citext|jsonb?)(\[\])?$")
+
+# AA-963 review: the proof fails CLOSED. Every indexed text-like column of schema crm carries a DM-6.1 tag (pii:<class>
+# or conf:<class>, read case-insensitively after stripping) or is listed below as holding no personal data, with the
+# reason. A new indexed text column that is in neither place fails the proof until its author tags it or lists it.
+# 1. Column names that are a closed-list code, a technical name or an id in every crm table that indexes them.
+NON_PERSONAL_NAMES: dict[str, str] = {
+    **dict.fromkeys(
+        (
+            "status",
+            "state",
+            "stage",
+            "kind",
+            "scope",
+            "purpose",
+            "mode",
+            "role",
+            "direction",
+            "entry_kind",
+            "pax_type",
+            "step_status",
+            "served_state",
+            "aa_status",
+            "resolution",
+            "post_outcome",
+            "trigger_kind",
+            "from_status",
+            "to_status",
+            "applies_to",
+            "category",
+            "channel",
+            "locale",
+            "provider",
+            "source",
+            "source_system",
+            "contract",
+            "table_name",
+            "app",
+            "model",
+        ),
+        "a closed-list code or a technical name (CHECK lists, provider names, stage and model names)",
+    ),  # fmt: skip
+    "object_kind": "audit: the kind of the object an event names (a table or a code), never a value",
+    "object_id": "audit: the id of the object an event names, never a value",
+    "idempotency_key": "a random request id (a retried call is stored once)",
+    "departure_id": "an Adventure Asia departure id (Booking feed)",
+    "base": "an ISO 4217 currency code",
+    "quote": "an ISO 4217 currency code",
+    "country_code": "an ISO 3166 country code of an AA tour",
+}
+# 2. Single columns: what each holds and why it is not personal data.
+NON_PERSONAL_COLUMNS: dict[tuple[str, str], str] = {
+    ("aa_catalog_tour", "source_id"): "the AA tour id in the CIS catalogue",
+    ("aa_catalog_tour", "title"): "the title of an AA catalogue tour (AA's product)",
+    ("aa_content", "group_key"): "the key of an AA content group",
+    ("aa_invoice_cache", "number"): "the number of an AA invoice to the agency",
+    ("agency_service", "name"): "the name of a service the agency sells (its product)",
+    ("agency_supplier", "name"): (
+        "the supplier's business or trading name as the agency enters it; the contact person's name and e-mail are "
+        "encrypted (pii:name / pii:contact, crm-014). A guide who trades under their own name is a business "
+        "counterpart, not a client; the search matches this name as a non-personal field"
+    ),
+    ("agreement_doc", "version_label"): "the version label of the agency's own terms",
+    ("booking_line", "bk_booking_id"): "an AA Booking id",
+    ("booking_line", "bk_hold_id"): "an AA Booking hold id",
+    ("booking_line", "conf_unique_key"): "the supplier's confirmation number, letters and digits only (crm-014)",
+    ("campaign", "aa_tour_ids"): "AA tour ids (crm.aa_catalog_tour source ids)",
+    ("cancellation_policy", "name"): "the name of one of the agency's cancellation policies",
+    ("channel_template", "content_sid"): "a Twilio Content SID (HX + 32 hex)",
+    ("departure_cost", "departure_ref"): "an AA departure id or the agency's own group code",
+    ("document", "s3_key"): "a path of ids only (tenants/<id>/documents/<id>), never a file name",
+    ("incident_flag", "raised_event_id"): "the id of the Booking event that raised the flag",
+    ("inclusion_item", "text_en"): "an 'included / not included' line of the agency's offers (its product)",
+    ("ingest_address", "local_part"): "the agency's forward-in address, <slug>-<random> (crm-015)",
+    ("intake_form", "public_key"): "a random public key of an intake form",
+    ("invoice", "number"): "the agency's invoice number, <prefix>-<sequence> (crm-024)",
+    ("member", "cognito_iss"): "the issuer URL of the sign-in token (a pool, the same for every member)",
+    ("member", "cognito_sub"): (
+        "the random Cognito id of an agency member, the sign-in lookup key on every request (an agency staff "
+        "identifier, not a client's; DM-6.1 online_id tagging of (iss, sub) is a follow-up of the AA-963 review)"
+    ),
+    ("message", "external_id"): "the provider's message id",
+    ("message_template", "aa_group_key"): "the key of an AA library template group",
+    ("message_template", "title"): "the title of a message template (the body is encrypted)",
+    ("messaging_connection", "hook_id"): "32 random hex characters (the agency's webhook path)",
+    ("metric_event", "name"): "an event name code (proposal.viewed ...)",
+    ("payment", "provider_ref"): "the payment provider's reference of a payment",
+    ("payment_session", "txn_ref"): "a random merchant transaction reference",
+    ("prep_pack_selection", "group_key"): "the key of an AA prep pack group",
+    ("proposal", "hold_set_ref"): "the reference of an AA hold set",
+    ("saved_reply", "title"): "the title of a saved reply (agency text; the body is encrypted, crm-015)",
+    ("setting_definition", "key"): "a setting key (crm.search.enabled ...)",
+    ("setting_value", "key"): "a setting key (crm.search.enabled ...)",
+    ("supplier_bill", "number"): "the number of a bill a supplier sent the agency",
+    ("support_session", "staff_sub"): (
+        "the random WORKFORCE Cognito id of an AA staff member (DM-6.1 online_id tagging is a follow-up of the "
+        "AA-963 review)"
+    ),
+    ("tag", "code"): "the tag's fixed key (^[a-z][a-z0-9_]{0,39}$)",
+    ("tour_retired_flag", "raised_key"): "retired:<epoch microseconds>",
+    ("tour_retired_flag", "source_id"): "the AA tour id",
+    ("trip", "group_code"): "the agency's own code of a group departure",
+    ("trip", "mail_token"): "a random mail reference of the trip (crm-015)",
+    ("trip_commitment", "source_ref"): "the id of the hold, booking, invoice, payment or signature it comes from",
+    ("visa_template", "country"): "the ISO country code a visa template is for",
+    ("visa_template", "visa_type"): "a visa type code",
+    ("workflow_rule", "template_key"): "the key of an AA library workflow template",
+    ("workflow_rule", "trigger_value"): "the stage, event or date anchor code that triggers a rule",
+    ("workflow_run", "trigger_key"): "ids and codes of the trigger (stage:<id> | event:<id> | date:...)",
+}
 
 
-def plaintext_pii_index_problems(rows: list[asyncpg.Record]) -> list[str]:
-    """Indexed columns tagged ``pii:`` that are not ciphertext or a blind index ([] = none). Pure.
+def dm61_tag(comment: str) -> str | None:
+    """The DM-6.1 tag of a column comment (``pii:<class>`` / ``conf:<class>``), lower-cased, or None. Leading
+    white space and case are ignored: `` PII:Contact; ...`` is ``pii:contact``."""
+    head = comment.strip().split(";", 1)[0].strip().lower()
+    for prefix in ("pii:", "conf:"):
+        if head.startswith(prefix):
+            return prefix + head[len(prefix) :].strip()
+    return None
 
-    - a column of an identity / free-text class must be ``bytea`` / ``bytea[]`` (an encrypted value or a blind index);
-    - any other ``pii:`` column may be indexed only as a date, a number or a two-letter code, never as text."""
+
+def plaintext_pii_index_problems(
+    rows: list[asyncpg.Record],
+    names: Mapping[str, str] = NON_PERSONAL_NAMES,
+    columns: Mapping[tuple[str, str], str] = NON_PERSONAL_COLUMNS,
+) -> list[str]:
+    """Indexed columns that may hold personal data in clear ([] = none). Pure. Fails closed:
+
+    - a column tagged ``pii:`` of an identity / free-text class must be ``bytea`` / ``bytea[]`` (an encrypted value or
+      a blind index); any other ``pii:`` column may be indexed only as a date, a number or a two-letter code;
+    - a text-like column (text, varchar, char, citext, json, jsonb, or an array of them) with NO DM-6.1 tag must be
+      listed in ``names`` or ``columns`` (no personal data, with the reason); otherwise it is a problem."""
     out = []
     for r in rows:
-        comment = r["comment"]
-        if not comment.startswith("pii:"):
-            continue
-        cls = comment[4:].split(";", 1)[0].strip()
         typ = r["column_type"]
-        if typ in ("bytea", "bytea[]"):
+        where = f"{r['index_name']}: {r['table_name']}.{r['column_name']} ({typ}"
+        tag = dm61_tag(r["comment"])
+        if tag is None:
+            listed = r["column_name"] in names or (r["table_name"], r["column_name"]) in columns
+            if TEXT_LIKE.match(typ) and not listed:
+                out.append(f"{where}, untagged)")
             continue
+        if not tag.startswith("pii:") or typ in ("bytea", "bytea[]"):
+            continue
+        cls = tag[4:]
         if cls in IDENTITY_CLASSES or not (
             typ in PLAINTEXT_OK_TYPES or typ.startswith("timestamp") or typ.startswith("time")
         ):
-            out.append(f"{r['index_name']}: {r['table_name']}.{r['column_name']} ({typ}, pii:{cls})")
+            out.append(f"{where}, {tag})")
     return out
 
 
@@ -133,13 +266,16 @@ async def _fresh_reader() -> AsyncIterator[None]:
 async def test_r_no_plaintext_index_of_personal_data_in_schema_crm(admin: asyncpg.Connection) -> None:
     rows = await admin.fetch(INDEX_COLUMNS_SQL, "crm")
     assert len(rows) > 100  # the catalogue query sees the schema's indexes
-    tagged = [r for r in rows if r["comment"].startswith("pii:")]
+    tagged = [r for r in rows if (dm61_tag(r["comment"]) or "").startswith("pii:")]
     assert {(r["table_name"], r["column_name"]) for r in tagged} >= {
         ("traveler", "email_bidx"),
         ("traveler", "phone_bidx"),
         ("traveler", "name_token_bidx"),
     }  # the blind indexes are indexed, as bytea
     assert plaintext_pii_index_problems(rows) == []
+    # The allow-list does not rot: every listed column is still an indexed, untagged column of schema crm.
+    untagged = {(r["table_name"], r["column_name"]) for r in rows if dm61_tag(r["comment"]) is None}
+    assert set(NON_PERSONAL_COLUMNS) - untagged == set()
     assert await admin.fetch(PATTERN_OPCLASSES_SQL, "crm") == []
     # The plaintext personal field the search folds (trip.title, pii:travel) is not indexed at all: a scan inside
     # one agency's rows. (Names of suppliers, templates and tags hold no personal data; their unique keys stay.)
@@ -176,10 +312,23 @@ async def test_r_the_index_check_catches_a_plaintext_personal_index(admin: async
             "CREATE TABLE aa963_probe.guest (id int, email text, CONSTRAINT guest_pk PRIMARY KEY (id) INCLUDE (email))"
         )
         await admin.execute("COMMENT ON COLUMN aa963_probe.guest.email IS 'pii:contact; plaintext by mistake'")
+        # Fail closed (AA-963 review): an untagged plaintext e-mail and jsonb, a tag with a leading space and upper
+        # case, and an untagged code column the allow-list names (not a problem).
+        await admin.execute(
+            "CREATE TABLE aa963_probe.contact_card (id int, email text, profile jsonb, note varchar(200), status text)"
+        )
+        await admin.execute("COMMENT ON COLUMN aa963_probe.contact_card.note IS ' PII:Free_Text; padded tag'")
+        await admin.execute("CREATE INDEX card_email_idx ON aa963_probe.contact_card (id, lower(email))")
+        await admin.execute("CREATE INDEX card_profile_idx ON aa963_probe.contact_card USING gin (profile)")
+        await admin.execute("CREATE INDEX card_note_idx ON aa963_probe.contact_card (note)")
+        await admin.execute("CREATE INDEX card_status_idx ON aa963_probe.contact_card (status)")
         problems = plaintext_pii_index_problems(await admin.fetch(INDEX_COLUMNS_SQL, "aa963_probe"))
         patterns = await admin.fetch(PATTERN_OPCLASSES_SQL, "aa963_probe")
         await admin.execute("DROP SCHEMA aa963_probe CASCADE")
     assert problems == [
+        "aa963_probe.card_email_idx: contact_card.email (text, untagged)",
+        "aa963_probe.card_note_idx: contact_card.note (character varying(200), pii:free_text)",
+        "aa963_probe.card_profile_idx: contact_card.profile (jsonb, untagged)",
         "aa963_probe.guest_pk: guest.email (text, pii:contact)",
         "aa963_probe.person_email_idx: person.email (text, pii:contact)",
         "aa963_probe.person_email_uq: person.email (text, pii:contact)",
@@ -311,7 +460,8 @@ async def test_clients_by_whole_email_phone_or_name_words_and_one_list_view(
     views = await _owner_fetch(
         admin,
         s["tenant"],
-        "SELECT fields, reason, object_ids FROM crm.audit_event WHERE action = 'list_view' ORDER BY at, event_id",
+        "SELECT fields, reason, object_ids FROM crm.audit_event"
+        " WHERE action = 'list_view' AND object_kind = 'traveler' ORDER BY at, event_id",
     )
     assert [(r["fields"], r["reason"], r["object_ids"]) for r in views] == [
         (["display_name"], "global_search", [s["client"]])
@@ -362,3 +512,100 @@ async def test_rls_another_agency_with_the_same_email_and_title_is_never_found(a
         ids_b = {i["id"] for g in got_b["groups"] for i in g["items"]}
         assert ids_a and ids_b and not ids_a & ids_b, q
         assert a["client"] not in ids_b and str(a["dalat"]) not in ids_b, q
+
+
+# ── AA-963 review fixes ──────────────────────────────────────────────────────────────────────────────
+async def test_a_term_that_folds_to_nothing_is_refused_and_the_sql_fails_safe(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    s = await _setup(app_pool)
+    await _switch_on(app_pool, s["tenant"])
+    for q in ("\u0301\u0301", "a\u0300"):  # lone combining marks fold to nothing, an NFD "à" to one letter
+        with pytest.raises(Invalid) as err:
+            await _search(app_pool, s, q)
+        assert err.value.code == "query_too_short", q
+    # The SQL's own guard: an empty folded needle never matches (strpos(x, '') = 1 without it).
+    sql = f"SELECT {fold.contains_sql('$1::text', '$2::text')} AS hit"  # noqa: S608 — fixed expression
+    assert await admin.fetchval(sql, "Nhà nghỉ Đồi Thông", "\u0301\u0301") is False
+    assert await admin.fetchval(sql, "Nhà nghỉ Đồi Thông", "doi") is True
+
+
+async def test_wildcards_and_a_spaced_at_search_the_plaintext_kinds_only(app_pool: asyncpg.Pool) -> None:
+    s = await _setup(app_pool)
+    await _switch_on(app_pool, s["tenant"])
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+        v = Vault(s["keys"], ctx)
+        await suppliers.create_supplier(ctx, v, {"name": "100% Lantern Valley", "category": "activity"})
+        await suppliers.create_supplier(ctx, v, {"name": "Quách @ Pine Hill", "category": "accommodation"})
+    out = await _search(app_pool, s, "100% lantern")
+    assert (out["notice"], _labels(out)) == ("partial_search_refused", {"supplier": ["100% Lantern Valley"]})
+    out = await _search(app_pool, s, "Quách @ Pine")  # the client is named Quách: never searched through an "@" term
+    assert (out["notice"], _labels(out)) == ("partial_contact_search", {"supplier": ["Quách @ Pine Hill"]})
+    with pytest.raises(Invalid) as err:
+        await _search(app_pool, s, "*@example.test")
+    assert err.value.code == "partial_search_refused"
+
+
+async def test_a_booking_reference_with_space_runs_is_found(app_pool: asyncpg.Pool) -> None:
+    s = await _setup(app_pool)
+    await _switch_on(app_pool, s["tenant"])
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+        v = Vault(s["keys"], ctx)
+        sup = await suppliers.create_supplier(ctx, v, {"name": "Lantern boats", "category": "transport"})
+        line = await lines.create_line(
+            ctx, s["hue"], {"agency_supplier_id": uuid.UUID(sup["agency_supplier_id"]), "title": "River boat"}
+        )
+        await lines.update_line(ctx, uuid.UUID(line["booking_line_id"]), {"confirmation_no": "RB   42  K"})
+    for q in ("rb 42 k", "RB   42  K"):
+        assert _labels(await _search(app_pool, s, q)).get("booking") == ["River boat"], q
+    assert "booking" not in _labels(await _search(app_pool, s, "rb 42"))  # still exact
+
+
+async def test_every_kind_with_a_list_audit_writes_one_per_search(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection
+) -> None:
+    s = await _setup(app_pool)
+    await _switch_on(app_pool, s["tenant"])
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+        made = await catalogue.create_service(
+            ctx,
+            {"category": "fee", "name": "Pine room upgrade", "unit_sell": "25", "currency": "USD",
+             "qty_basis": "per_booking"},
+        )  # fmt: skip
+    await _search(app_pool, s, "Đà Lạt")  # trip, template, inclusion, tag
+    await _search(app_pool, s, "ph-88q1")  # booking line
+    await _search(app_pool, s, "upgrade")  # service
+    await _search(app_pool, s, "doi thong")  # supplier
+    rows = await _owner_fetch(
+        admin,
+        s["tenant"],
+        "SELECT object_kind, reason, object_ids FROM crm.audit_event WHERE action = 'list_view' ORDER BY at, event_id",
+    )
+    seen = {(r["object_kind"], r["reason"]) for r in rows}
+    assert seen == {
+        ("trip", "global_search"),
+        ("inclusion_item", "global_search"),
+        ("booking_line", "global_search"),
+        ("agency_service", "global_search"),
+        ("agency_supplier", "global_search"),
+    }
+    service_ids = [r["object_ids"] for r in rows if r["object_kind"] == "agency_service"]
+    assert service_ids == [[made["service_id"]]]
+    trip_ids = [r["object_ids"] for r in rows if r["object_kind"] == "trip"]
+    assert trip_ids == [[str(s["dalat"])]]
+
+
+async def test_a_failed_settings_read_switches_search_off_on_the_database(
+    app_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    s = await _setup(app_pool)
+    await _switch_on(app_pool, s["tenant"])
+    assert (await _search(app_pool, s, "Da Lat"))["groups"]  # on, and cached in this process
+    # The agency's settings read now fails (a statement error, as a grant or RLS change would cause).
+    monkeypatch.setattr(ps, "TENANT_SQL", "SELECT * FROM crm.no_such_settings_table WHERE $1::uuid IS NOT NULL")
+    async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
+        assert await search.is_enabled(ctx) is False
+        with pytest.raises(Forbidden) as err:
+            await search.search(ctx, Vault(s["keys"], ctx), "Da Lat")
+        assert err.value.code == "search_not_enabled"
+        assert await ctx.conn.fetchval("SELECT 1 AS ok") == 1  # the savepoint kept the request's transaction usable

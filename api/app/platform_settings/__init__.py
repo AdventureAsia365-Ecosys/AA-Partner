@@ -250,6 +250,20 @@ async def tenant_get(conn: Any, key: str, tenant_id: uuid.UUID | str) -> Any:
     return get(key, tenant_id)
 
 
+async def tenant_get_fail_closed(conn: Any, key: str, tenant_id: uuid.UUID | str, closed: Any) -> Any:
+    """A security switch that must fail CLOSED (``crm.search.enabled``, AA-963 review): the agency's rows are re-read
+    now (``force``, one small indexed read in a savepoint of ``conn``, so an approval in another task counts at once),
+    and ``closed`` is the answer when that read fails, or when the value would come from a platform snapshot whose last
+    refresh failed (the last good snapshot may hold a value that was switched off since). :func:`tenant_get` keeps the
+    last good rows instead, which is right for limits and wrong for a switch that exposes records."""
+    if READER.definition(key).tenant_scoped and not await tenant_refresh(conn, tenant_id, force=True):
+        return closed
+    found = resolve(key, tenant_id)
+    if found.source in ("platform", "default") and READER.last_error is not None:
+        return closed
+    return found.value
+
+
 def forget_tenant(tenant_id: uuid.UUID | str | None = None) -> None:
     """Drop the cached rows of one agency (after an approval in this process), or of every agency."""
     if tenant_id is None:

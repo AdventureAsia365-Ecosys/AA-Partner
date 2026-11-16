@@ -2,17 +2,27 @@
 
 Order of one search:
 
-1. the agency's switch ``crm.search.enabled`` (platform+tenant setting, off by default): off -> 403
+1. the agency's switch ``crm.search.enabled`` (platform+tenant setting, off by default), read fresh and failing
+   CLOSED (:func:`app.platform_settings.tenant_get_fail_closed`: a failed settings read means off): off -> 403
    ``search_not_enabled`` with a ``denied`` audit event;
-2. the term (:mod:`app.search.query`): a partial e-mail or phone, or a wildcard -> 422 before any read;
+2. the term (:mod:`app.search.query`): a partial e-mail or phone, or a term that folds to fewer letters than the
+   minimum -> 422 before any read; a wildcard or an ``@`` inside a text term keeps the client kind out;
 3. the kinds the member is entitled to (:mod:`app.search.kinds`: role-matrix action + feature key);
 4. one bounded query per kind that answers the term's mode, at most ``crm.search.results_per_kind`` rows each, all
    under the agency's FORCE RLS (``tenant_tx``): no other agency's row can match.
 
 Clients are found only through their blind indexes (e-mail, phone, whole name tokens); the candidates of a name are
-confirmed after decrypting their display names (the 4-byte token index is lossy on purpose), and the page writes ONE
-``list_view`` audit event naming the clients shown (reason ``global_search``), like the directory. No other field of a
-client is decrypted or returned. Nothing here reads, logs or returns the term.
+confirmed after decrypting their display names (a 4-byte token index can collide; at agency scale it rarely does, see
+:mod:`app.vault.blind_index` on what the index does and does not hide). No other field of a client is decrypted or
+returned.
+
+Every kind whose own list page writes a ``list_view`` audit event writes one here too, per search and per kind, naming
+the records shown (reason ``global_search``): clients (``traveler``, field ``display_name``, like the directory), trips
+(``trip``: titles are ``pii:travel``), booking lines (``booking_line``, like the ledger), suppliers
+(``agency_supplier``), services (``agency_service``) and inclusion lines (``inclusion_item``). Message templates,
+automations, tags and WhatsApp templates have no list audit on their own pages and get none here.
+
+Nothing here reads, logs or returns the term.
 """
 
 from __future__ import annotations
@@ -32,9 +42,9 @@ from app.tenancy import TenantContext
 from app.vault import Vault
 from app.vault.blind_index import NormalisationError, name_tokens
 
-# Name candidates read per client shown: the 4-byte token index collides on purpose (design §4.2), the collisions
-# are dropped after decrypting, so a few more rows than the page shows are read.
-CANDIDATES_PER_RESULT = 4  # technical-constant: headroom for lossy blind-index collisions, not a policy value
+# Name candidates read per client shown: a 4-byte token index can collide (rarely at agency scale, see
+# app.vault.blind_index), a collision is dropped after decrypting, so a few more rows than the page shows are read.
+CANDIDATES_PER_RESULT = 4  # technical-constant: headroom for blind-index collisions, not a policy value
 
 CLIENT_SQL = """
 SELECT traveler_id, display_name_enc, archived_at
@@ -60,8 +70,8 @@ SELECT l.booking_line_id, l.trip_id, l.title, l.supplier_kind, l.status, t.title
   FROM crm.booking_line l
   JOIN crm.trip t ON t.trip_id = l.trip_id AND t.deleted_at IS NULL
  WHERE l.deleted_at IS NULL
-   AND (lower(btrim(l.confirmation_no)) = lower($1) OR lower(l.bk_booking_id) = lower($1)
-        OR lower(l.bk_hold_id) = lower($1))
+   AND (lower(regexp_replace(btrim(l.confirmation_no), '[[:space:]]+', ' ', 'g')) = lower($1)
+        OR lower(l.bk_booking_id) = lower($1) OR lower(l.bk_hold_id) = lower($1))
  ORDER BY l.updated_at DESC, l.booking_line_id
  LIMIT $2
 """
@@ -130,8 +140,9 @@ def _item(id_: Any, label: str, **meta: Any) -> dict[str, Any]:
 
 
 async def is_enabled(ctx: TenantContext) -> bool:
-    """The agency's switch (its own approved value of ``crm.search.enabled``, else the platform value, else off)."""
-    return bool(await ps.tenant_get(ctx.conn, ps.SEARCH_ENABLED, ctx.tenant_id))
+    """The agency's switch (its own approved value of ``crm.search.enabled``, else the platform value, else off), read
+    now and failing closed: a settings read that fails answers off, never the last cached value."""
+    return await ps.tenant_get_fail_closed(ctx.conn, ps.SEARCH_ENABLED, ctx.tenant_id, False) is True
 
 
 async def kinds_for(ctx: TenantContext) -> list[Kind]:
@@ -166,12 +177,41 @@ async def search(ctx: TenantContext, vault: Vault, q: str) -> dict[str, Any]:
     groups: list[dict[str, Any]] = []
     if term.mode != "too_short":
         for kind in kinds:
-            if term.mode not in kind.modes:
+            if term.mode not in kind.modes or (kind.code == "client" and not term.clients):
                 continue
             items = await _RUNNERS[kind.code](ctx, vault, term, per_kind)
             if items:
+                _audit_shown(ctx, kind.code, items)
                 groups.append({"kind": kind.code, "items": items})
-    return {"mode": term.mode, "kinds": [k.code for k in kinds], "groups": groups}
+    return {"mode": term.mode, "kinds": [k.code for k in kinds], "groups": groups, "notice": term.notice}
+
+
+# The audit object kind of each search kind whose own list page writes a list_view (and the fields it names).
+LIST_VIEW_AUDIT: dict[str, tuple[str, tuple[str, ...]]] = {
+    "client": ("traveler", ("display_name",)),
+    "trip": ("trip", ()),
+    "booking": ("booking_line", ()),
+    "supplier": ("agency_supplier", ()),
+    "service": ("agency_service", ()),
+    "inclusion": ("inclusion_item", ()),
+}
+
+
+def _audit_shown(ctx: TenantContext, kind: str, items: list[dict[str, Any]]) -> None:
+    """One ``list_view`` per kind shown (reason ``global_search``), for the kinds of :data:`LIST_VIEW_AUDIT`."""
+    audit = LIST_VIEW_AUDIT.get(kind)
+    if audit is None:
+        return
+    object_kind, fields = audit
+    ctx.audit(
+        "list_view",
+        "allowed",
+        object_kind,
+        None,
+        fields=fields,
+        reason="global_search",
+        object_ids=tuple(i["id"] for i in items),
+    )
 
 
 # ── Clients: blind indexes only ──────────────────────────────────────────────────────────────────────
@@ -194,20 +234,10 @@ async def _clients(ctx: TenantContext, vault: Vault, term: Term, per_kind: int) 
             "traveler", "display_name_enc", r["traveler_id"], r["display_name_enc"], tenant_id=ctx.tenant_id
         )
         if wanted and not wanted <= set(_tokens(name)):
-            continue  # a token index collision (4 bytes, lossy on purpose): not a match
+            continue  # a 4-byte token index collision: not a match
         items.append(_item(r["traveler_id"], name, archived=r["archived_at"] is not None))
         if len(items) == per_kind:
             break
-    if items:
-        ctx.audit(
-            "list_view",
-            "allowed",
-            "traveler",
-            None,
-            fields=("display_name",),
-            reason="global_search",
-            object_ids=tuple(i["id"] for i in items),
-        )
     return items
 
 

@@ -39,18 +39,51 @@ export interface SearchGroup {
   items: SearchItem[];
 }
 
+/** Why the API kept the client kind out of a text search while the other kinds ran (a wildcard, or an "@" inside a
+ * term with spaces): the palette says so above the results. */
+export const NOTICES = ["partial_search_refused", "partial_contact_search"] as const;
+export type SearchNotice = (typeof NOTICES)[number];
+
 export interface SearchResult {
   mode: "email" | "phone" | "text" | "too_short";
   kinds: SearchKind[];
   groups: SearchGroup[];
+  notice?: SearchNotice | null;
 }
 
 /** The API's refusals the palette explains (any other failure is the generic error). */
-export const REFUSALS = ["partial_contact_search", "partial_search_refused", "query_too_long", "search_not_enabled"] as const;
+export const REFUSALS = [
+  "partial_contact_search",
+  "partial_search_refused",
+  "query_too_long",
+  "query_too_short",
+  "search_not_enabled",
+] as const;
 export type Refusal = (typeof REFUSALS)[number];
 
 export function refusalOf(detail: string): Refusal | null {
   return (REFUSALS as readonly string[]).includes(detail) ? (detail as Refusal) : null;
+}
+
+export function noticeOf(result: SearchResult | null): SearchNotice | null {
+  const n = result?.notice;
+  return n && (NOTICES as readonly string[]).includes(n) ? n : null;
+}
+
+/** What the palette knows about one term: a search in flight, its answer, or its refusal. Every state names the term
+ * it belongs to, so the answer of an earlier term is never shown (or opened with Enter) for the term typed now. */
+export type SearchStatus =
+  | { kind: "idle" }
+  | { kind: "loading"; term: string }
+  | { kind: "done"; term: string; result: SearchResult }
+  | { kind: "error"; term: string; key: string };
+
+/** The status as it applies to the term in the input now: the state of an earlier term (the debounce has not sent
+ * the new one yet) is "loading" when the new term will be searched, "idle" otherwise. Pure. */
+export function statusFor(status: SearchStatus, term: string, cfg: SearchConfig): SearchStatus {
+  const current = term.trim();
+  if (status.kind !== "idle" && status.term === current) return status;
+  return shouldSearch(term, cfg) ? { kind: "loading", term: current } : { kind: "idle" };
 }
 
 /** The config of an agency where search is off (also what a failed config read becomes: fail closed). */

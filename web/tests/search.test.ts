@@ -12,12 +12,14 @@ import {
   matchContentPieces,
   paletteGroups,
   parseConfig,
+  noticeOf,
   refusalOf,
+  statusFor,
   shouldSearch,
   type SearchConfig,
   type SearchItem,
 } from "@/lib/search";
-import { fetchContentPieces } from "@/lib/searchContent";
+import { fetchContentPieces, loadContentPieces, resetContentPieces } from "@/lib/searchContent";
 
 const ON: SearchConfig = { enabled: true, kinds: ["client", "trip"], query_max_chars: 120, min_text_chars: 2, results_per_kind: 5 };
 const T = "00000000-0000-4000-8000-0000000009a1";
@@ -110,6 +112,29 @@ describe("results", () => {
     expect(refusalOf("partial_contact_search")).toBe("partial_contact_search");
     expect(refusalOf("search_not_enabled")).toBe("search_not_enabled");
     expect(refusalOf("role_forbidden")).toBeNull();
+    expect(refusalOf("query_too_short")).toBe("query_too_short"); // a term that folds to too few letters
+  });
+
+  it("say why clients were left out of a text search, and nothing else", () => {
+    const base = { mode: "text" as const, kinds: [], groups: [] };
+    expect(noticeOf({ ...base, notice: "partial_search_refused" })).toBe("partial_search_refused");
+    expect(noticeOf({ ...base, notice: "partial_contact_search" })).toBe("partial_contact_search");
+    expect(noticeOf({ ...base, notice: null })).toBeNull();
+    expect(noticeOf(base)).toBeNull();
+    expect(noticeOf(null)).toBeNull();
+  });
+});
+
+describe("the status of the term typed now", () => {
+  const done = { kind: "done" as const, term: "Da Lat", result: { mode: "text" as const, kinds: [], groups: [] } };
+
+  it("keeps an answer only for its own term", () => {
+    expect(statusFor(done, " Da Lat ", ON)).toBe(done);
+    // typed on, the debounce has not sent the new term: searching, never the previous term's results
+    expect(statusFor(done, "Da Lat x", ON)).toEqual({ kind: "loading", term: "Da Lat x" });
+    expect(statusFor(done, "D", ON)).toEqual({ kind: "idle" }); // too short to send
+    expect(statusFor({ kind: "error", term: "anna@", key: "search.error" }, "anna@x", ON)).toEqual({ kind: "loading", term: "anna@x" });
+    expect(statusFor({ kind: "idle" }, "", ON)).toEqual({ kind: "idle" });
   });
 });
 
@@ -138,6 +163,35 @@ describe("Content pieces of the studio", () => {
     expect(await fetchContentPieces(T, "en", fake(T, [piece]))).toEqual([{ pieceId: "p1", title: "Mùa hoa Đà Lạt", tour: "Đà Lạt highlands" }]);
     expect(await fetchContentPieces(T, "en", fake("00000000-0000-4000-8000-0000000009a2", [piece]))).toEqual([]);
     expect(await fetchContentPieces(T, "en", fake(null, [piece]))).toEqual([]);
+  });
+
+  function counting(failFirst: number, pieces: unknown[]): { fetchImpl: typeof fetch; calls: () => number } {
+    let n = 0;
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      if (String(input) !== "/api/tenant/me") return new Response(JSON.stringify({ data: pieces }));
+      n += 1;
+      return n <= failFirst ? new Response("{}", { status: 503 }) : new Response(JSON.stringify({ tenant_id: T }));
+    }) as typeof fetch;
+    return { fetchImpl, calls: () => n };
+  }
+
+  it("never keep a failed read: the next call reads again", async () => {
+    resetContentPieces();
+    const open = {};
+    const { fetchImpl, calls } = counting(1, [piece]);
+    expect(await loadContentPieces(T, "en", open, fetchImpl)).toEqual([]); // CIS briefly down
+    expect(await loadContentPieces(T, "en", open, fetchImpl)).toHaveLength(1); // asked again, same palette open
+    expect(await loadContentPieces(T, "en", open, fetchImpl)).toHaveLength(1);
+    expect(calls()).toBe(2); // a good read is reused while the palette stays open
+  });
+
+  it("are read again at the next palette open (a deleted piece drops out)", async () => {
+    resetContentPieces();
+    const first = counting(0, [piece]);
+    expect(await loadContentPieces(T, "en", {}, first.fetchImpl)).toHaveLength(1);
+    const after = counting(0, []); // the piece was deleted in the studio
+    expect(await loadContentPieces(T, "en", {}, after.fetchImpl)).toEqual([]);
+    expect(after.calls()).toBe(1);
   });
 });
 

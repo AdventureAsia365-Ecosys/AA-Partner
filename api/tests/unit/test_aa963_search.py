@@ -10,6 +10,7 @@ import uuid
 from collections.abc import Iterator
 from typing import Any
 
+import asyncpg
 import pytest
 from fastapi.testclient import TestClient
 
@@ -55,8 +56,9 @@ def test_words_split_on_spaces_and_punctuation() -> None:
 
 def test_the_sql_fold_folds_both_sides_with_one_expression() -> None:
     sql = fold.contains_sql("name", "$1")
-    assert sql.count("normalize(") == 2 and "NFKD" in sql and "[\\u0300-\\u036f]" in sql
-    assert sql.startswith("strpos(lower(") and "$1" in sql and "name" in sql
+    assert sql.count("normalize(") == 3 and "NFKD" in sql and "[\\u0300-\\u036f]" in sql
+    assert sql.startswith("(strpos(lower(") and "$1" in sql and "name" in sql
+    assert sql.endswith(") <> '')")  # a param that folds to nothing never matches (strpos(x, '') = 1)
     words = fold.all_words_sql("title", "$1")
     assert "@>" in words and "cardinality(" in words
     for expr in (sql, words):  # never a pattern match: a % or _ in the term is plain text
@@ -73,10 +75,13 @@ def test_the_sql_fold_folds_both_sides_with_one_expression() -> None:
         ("+8491", "partial_contact_search"),
         ("+84 91", "partial_contact_search"),
         ("+", "partial_contact_search"),
-        ("Ngu*", "partial_search_refused"),
-        ("%vui%", "partial_search_refused"),
+        ("*@example.test", "partial_search_refused"),
         ("x" * 121, "query_too_long"),
         ("   ", "invalid_query"),
+        # Long enough raw, too short once folded: lone combining marks fold to nothing, an NFD "à" to "a".
+        ("\u0301\u0301", "query_too_short"),
+        ("\u0301 \u0301 \u0301", "query_too_short"),
+        ("a\u0300", "query_too_short"),
     ],
 )
 def test_r_partial_contact_and_wildcards_are_refused(raw: str, code: str) -> None:
@@ -96,11 +101,27 @@ def test_r_partial_contact_and_wildcards_are_refused(raw: str, code: str) -> Non
         ("0912345", "text", ("0912345",)),  # digits without + are a reference, never a partial phone
         ("BK-7Q2", "text", ("bk", "7q2")),
         ("x", "too_short", ()),
+        ("a\u0300b", "text", ("ab",)),  # NFD "àb" folds to two letters: long enough
     ],
 )
 def test_terms_are_classified(raw: str, mode: str, tokens: tuple[str, ...]) -> None:
     term = classify(raw, **LIMITS)
-    assert (term.mode, term.name_tokens) == (mode, tokens)
+    assert (term.mode, term.name_tokens, term.clients, term.notice) == (mode, tokens, True, None)
+
+
+@pytest.mark.parametrize(
+    ("raw", "notice"),
+    [
+        ("Ngu*", "partial_search_refused"),
+        ("%vui%", "partial_search_refused"),
+        ("100% Vietnam", "partial_search_refused"),
+        ("Café @ Hội An", "partial_contact_search"),
+        ("anna @example.test", "partial_contact_search"),
+    ],
+)
+def test_wildcards_and_a_spaced_at_keep_clients_out_but_search_the_plaintext_kinds(raw: str, notice: str) -> None:
+    term = classify(raw, **LIMITS)
+    assert (term.mode, term.name_tokens, term.clients, term.notice) == ("text", (), False, notice)
 
 
 def test_the_bounds_come_from_the_caller() -> None:
@@ -195,10 +216,11 @@ async def test_text_search_runs_only_text_kinds_and_confirms_name_tokens(on: Non
     by_kind = {g["kind"]: g["items"] for g in out["groups"]}
     assert [i["label"] for i in by_kind["client"]] == ["Võ Thị Linh"]
     assert by_kind["trip"][0]["meta"]["stage"] == "inquiry"
-    [event] = ctx.audit_events  # one list_view for the clients shown, no contact field
-    assert (event.action, event.reason, event.fields, event.object_ids) == (
-        "list_view", "global_search", ("display_name",), (str(T1),)
-    )  # fmt: skip
+    # one list_view per kind shown: the clients (display name only, no contact field) and the trips (pii:travel)
+    assert [(e.action, e.object_kind, e.reason, e.fields, e.object_ids) for e in ctx.audit_events] == [
+        ("list_view", "traveler", "global_search", ("display_name",), (str(T1),)),
+        ("list_view", "trip", "global_search", (), (str(T1),)),
+    ]  # fmt: skip
     assert not conn.sql("crm.channel_template")  # the feature key is missing: not even queried
     [(_, _, tokens, limit)] = conn.sql("FROM crm.traveler")
     assert tokens == [b"tok1"] and limit == ps.get(ps.SEARCH_RESULTS_PER_KIND) * service.CANDIDATES_PER_RESULT
@@ -219,7 +241,7 @@ async def test_an_email_searches_clients_only_through_the_blind_index(on: None) 
 async def test_a_short_term_reads_nothing(on: None) -> None:
     conn = _conn()
     out = await service.search(tenant_ctx(conn), FakeVault(), "x")  # type: ignore[arg-type]
-    assert out == {"mode": "too_short", "kinds": out["kinds"], "groups": []}
+    assert out == {"mode": "too_short", "kinds": out["kinds"], "groups": [], "notice": None}
     assert not [c for c in conn.calls if "FROM crm." in c[0] and "allowed_features" not in c[0]
                 and "setting_value" not in c[0]]  # fmt: skip
 
@@ -231,6 +253,93 @@ async def test_the_feature_key_adds_whatsapp_templates(on: None) -> None:
     ])  # fmt: skip
     out = await service.search(tenant_ctx(conn, role="agent"), FakeVault(), "chao")  # type: ignore[arg-type]
     assert {g["kind"]: g["items"][0]["label"] for g in out["groups"]} == {"whatsapp_template": "Chào mừng"}
+
+
+@pytest.mark.asyncio
+async def test_a_wildcard_searches_the_plaintext_kinds_and_never_the_clients(on: None) -> None:
+    conn = _conn().on("crm.agency_supplier", [
+        {"agency_supplier_id": T1, "name": "100% Vietnam Tours", "kind": "own", "category": "tour"}
+    ])  # fmt: skip
+    out = await service.search(tenant_ctx(conn), FakeVault(), "100% Vietnam")  # type: ignore[arg-type]
+    assert (out["mode"], out["notice"]) == ("text", "partial_search_refused")
+    assert {g["kind"]: [i["label"] for i in g["items"]] for g in out["groups"]} == {"supplier": ["100% Vietnam Tours"]}
+    assert not conn.sql("FROM crm.traveler")  # the client kind is not even queried
+    [(term, _)] = conn.sql("FROM crm.agency_supplier")
+    assert term == "100% Vietnam"  # strpos on the folded text: the % is a plain character
+
+
+@pytest.mark.asyncio
+async def test_bookings_suppliers_and_services_write_their_list_view(on: None) -> None:
+    conn = (
+        _conn()
+        .on("FROM crm.booking_line", [
+            {"booking_line_id": T1, "trip_id": T2, "title": "Pine room", "supplier_kind": "own", "status": "confirmed",
+             "trip_title": "Pine weekend"}
+        ])
+        .on("crm.agency_supplier", [{"agency_supplier_id": T1, "name": "Pine lodge", "kind": "own",
+                                     "category": "accommodation"}])
+        .on("crm.agency_service", [{"service_id": T2, "name": "Pine walk", "category": "activity", "active": True}])
+    )  # fmt: skip
+    ctx = tenant_ctx(conn)
+    await service.search(ctx, FakeVault(), "pine")  # type: ignore[arg-type]
+    assert [(e.action, e.object_kind, e.reason, e.object_ids) for e in ctx.audit_events] == [
+        ("list_view", "booking_line", "global_search", (str(T1),)),
+        ("list_view", "agency_supplier", "global_search", (str(T1),)),
+        ("list_view", "agency_service", "global_search", (str(T2),)),
+    ]
+
+
+def test_a_booking_reference_is_compared_with_its_space_runs_collapsed() -> None:
+    assert "regexp_replace(btrim(l.confirmation_no), '[[:space:]]+', ' ', 'g')" in service.BOOKING_SQL
+    assert classify("AB    123", **LIMITS).text == "AB 123"  # the term is collapsed the same way
+
+
+def test_the_audited_kinds_are_kinds() -> None:
+    assert set(service.LIST_VIEW_AUDIT) <= set(kinds.CODES)
+    assert {"client", "trip", "booking", "supplier", "service"} <= set(service.LIST_VIEW_AUDIT)
+
+
+# ── The switch fails closed ──────────────────────────────────────────────────────────────────────
+@pytest.fixture
+def clean_settings() -> Iterator[None]:
+    ps.forget_tenant()
+    yield
+    ps.forget_tenant()
+    ps.READER.last_error = None
+
+
+@pytest.mark.asyncio
+async def test_a_failed_agency_settings_read_switches_search_off(clean_settings: None) -> None:
+    ctx = tenant_ctx(ScriptedConn().on("WHERE v.tenant_id = $1", [
+        {"key": ps.SEARCH_ENABLED, "value_text": "true", "version": 3}
+    ]))  # fmt: skip
+    assert await service.is_enabled(ctx) is True  # the agency's own approved value
+    broken = tenant_ctx(ScriptedConn().on("WHERE v.tenant_id = $1", asyncpg.UndefinedTableError("no table")))
+    assert ps.get(ps.SEARCH_ENABLED, TENANT) is True  # the cache still holds the last good rows ...
+    assert await service.is_enabled(broken) is False  # ... the switch does not use them
+    with pytest.raises(Forbidden) as err:
+        await service.search(broken, FakeVault(), "Da Lat")  # type: ignore[arg-type]
+    assert err.value.code == "search_not_enabled"
+
+
+@pytest.mark.asyncio
+async def test_an_approval_in_another_task_counts_at_once(clean_settings: None) -> None:
+    on_ = tenant_ctx(ScriptedConn().on("WHERE v.tenant_id = $1", [
+        {"key": ps.SEARCH_ENABLED, "value_text": "true", "version": 3}
+    ]))  # fmt: skip
+    assert await service.is_enabled(on_) is True
+    off = tenant_ctx(ScriptedConn().on("WHERE v.tenant_id = $1", [
+        {"key": ps.SEARCH_ENABLED, "value_text": "false", "version": 4}
+    ]))  # fmt: skip
+    assert await service.is_enabled(off) is False  # read now, not after the 30 s cache window
+
+
+@pytest.mark.asyncio
+async def test_a_platform_value_from_a_failed_snapshot_refresh_is_off(on: None, clean_settings: None) -> None:
+    ctx = tenant_ctx(ScriptedConn())  # the agency has no row of its own: the platform value applies
+    assert await service.is_enabled(ctx) is True
+    ps.READER.last_error = "TimeoutError: "  # the last refresh failed: the snapshot is the last good one
+    assert await service.is_enabled(ctx) is False
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────────────────────────
@@ -277,9 +386,55 @@ def test_routes_reach_the_service_and_keep_the_term_in_the_body(
     assert client.get("/crm/v1/search/config", headers=h).json() == {"enabled": False, "kinds": []}
     assert client.post("/crm/v1/search", json={"q": "Đà Lạt"}, headers=h).status_code == 200
     assert seen == ["Đà Lạt"]
-    assert client.post("/crm/v1/search", json={"q": "x" * 201}, headers=h).status_code == 422
     assert client.post("/crm/v1/search", json={"q": "a", "page": 2}, headers=h).status_code == 422
     assert client.get("/crm/v1/search?q=anna", headers=h).status_code == 405  # never a term in a URL
+    # A raw term with long space runs is judged by the setting on the collapsed term, not by the body bound.
+    assert client.post("/crm/v1/search", json={"q": "a" + " " * 300 + "b"}, headers=h).status_code == 200
+
+
+SECRET_TERM = "dieu.linh.probe@example.test"
+
+
+@pytest.mark.parametrize(
+    ("body", "code"),
+    [
+        ({"q": SECRET_TERM + "x" * 1000}, "query_too_long"),
+        ({"q": "a", "email": SECRET_TERM}, "invalid_query"),
+        ({"q": ["a", SECRET_TERM]}, "invalid_query"),
+        ({"term": SECRET_TERM}, "invalid_query"),
+        ({"q": ""}, "invalid_query"),
+    ],
+)
+def test_a_refused_body_never_echoes_the_term(
+    client: TestClient, pools: LocalPools, caplog: pytest.LogCaptureFixture, body: dict[str, Any], code: str
+) -> None:
+    with caplog.at_level("DEBUG"):
+        res = client.post("/crm/v1/search", json=body, headers=_headers(pools.partner_web()))
+    assert res.status_code == 422 and res.json()["detail"] == code
+    assert SECRET_TERM not in res.text and "input" not in res.json()
+    assert SECRET_TERM not in caplog.text
+
+
+def test_a_body_that_is_not_json_is_refused_without_echo(client: TestClient, pools: LocalPools) -> None:
+    h = {**_headers(pools.partner_web()), "Content-Type": "application/json"}
+    res = client.post("/crm/v1/search", content=b'{"q": "' + SECRET_TERM.encode() + b'"', headers=h)
+    assert (res.status_code, res.json()["detail"]) == (422, "invalid_query") and SECRET_TERM not in res.text
+
+
+def test_a_service_refusal_never_echoes_the_term(
+    client: TestClient, pools: LocalPools, caplog: pytest.LogCaptureFixture
+) -> None:
+    settings_serve.serve({ps.SEARCH_ENABLED: "true"})
+    try:
+        with caplog.at_level("DEBUG"):
+            for q, code in (("dieu.linh.probe@", "partial_contact_search"), ("\u0301\u0301", "query_too_short"),
+                            ("dieu.linh.probe " * 20, "query_too_long")):  # fmt: skip
+                res = client.post("/crm/v1/search", json={"q": q}, headers=_headers(pools.partner_web()))
+                assert (res.status_code, res.json()["detail"]) == (422, code), q
+                assert "dieu.linh.probe" not in res.text
+        assert "dieu.linh.probe" not in caplog.text
+    finally:
+        settings_serve.reset()
 
 
 def test_routes_refuse_a_missing_or_foreign_token(client: TestClient, pools: LocalPools) -> None:

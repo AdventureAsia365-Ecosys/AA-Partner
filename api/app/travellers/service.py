@@ -5,7 +5,8 @@ Personal data rules (design v3 §4.4, Fix B15, Decision D7):
 - the **directory** and its search results decrypt ``display_name`` only; one page load writes **one**
   ``audit_event`` (``list_view``, field ``display_name``, the ids shown); no e-mail, no phone, no partial digits;
 - search is exact only (R35): an e-mail or a phone goes through its blind index, a name through the 4-byte token
-  indexes (lossy on purpose) and the candidates are confirmed after decrypting their display names;
+  indexes (a collision is possible, rare at agency scale) and the candidates are confirmed after decrypting their
+  display names;
 - the **profile** decrypts the display names of the traveller and of the related travellers, and the document file
   names, and writes one ``view`` event naming those fields; every other F1 field is click-to-reveal
   (:mod:`app.travellers.reveal`);
@@ -216,7 +217,7 @@ async def directory(
             "traveler", "display_name_enc", r["traveler_id"], r["display_name_enc"], tenant_id=ctx.tenant_id
         )
         if wanted and not set(wanted) <= set(_tokens(name)):
-            continue  # a token index collision (4 bytes, lossy on purpose): not a match
+            continue  # a 4-byte token index collision: not a match
         items.append(
             {
                 "traveler_id": str(r["traveler_id"]),
