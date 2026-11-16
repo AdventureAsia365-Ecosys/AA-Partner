@@ -156,7 +156,7 @@ async def test_summary_usage_entitlements_requests_and_jobs_are_audited_reads(mo
     summary = await console.agency_summary(conn, TENANT, staff_sub=STAFF)  # type: ignore[arg-type]
     assert summary["state"] == "offboarded" and summary["has_owner"] is True
     usage = await console.agency_usage(conn, TENANT, staff_sub=STAFF)  # type: ignore[arg-type]
-    assert usage["seats_used"] == 4 and usage["seats_allowed"] == 10 and usage["active_members_30d"] == 2
+    assert usage["seats_used"] == 4 and usage["seats_allowed"] == 3 and usage["active_members_30d"] == 2  # AA-1116
     assert usage["storage_bytes"] == 2048 and usage["inbound_mail_30d"] == 0 and usage["failed_jobs_24h"] == 1
     assert usage["ai_cost_usd_month"] == "0.1235" and usage["ai_budget_usd_month"] == "2.0000"  # AA-1096: ceiling 2
     assert usage["last_activity_at"] == NOW.isoformat()
@@ -165,7 +165,7 @@ async def test_summary_usage_entitlements_requests_and_jobs_are_audited_reads(mo
     assert (await console.agency_usage(conn, TENANT, staff_sub=STAFF))["ai_budget_usd_month"] == "2.0000"  # type: ignore[arg-type]
     assert await console.agency_entitlements(conn, TENANT, staff_sub=STAFF) == {  # type: ignore[arg-type]
         "plan": "free",
-        "seats_allowed": 10,
+        "seats_allowed": 3,  # AA-1116: crm.members.default_limit
         "features_allowed": [],
         "insights_opt_out": False,
         "managed_by": "ops",
@@ -432,7 +432,7 @@ async def test_allow_features_upserts_while_managed_by_ops_and_never_touches_ten
     projected from CIS: no CIS tenant, or the pull's adoption guard holds it)."""
     conn = agency_conn("locked")
     conn.on(
-        "INSERT INTO crm.tenant_entitlement (allowed_features)",
+        "INSERT INTO crm.tenant_entitlement (allowed_features, member_limit)",
         {"plan": "free", "member_limit": 10, "allowed_features": ["ai_assist", "campaigns"], "insights_opt_out": False,
          "projected_at": None},
     )  # fmt: skip
@@ -440,7 +440,7 @@ async def test_allow_features_upserts_while_managed_by_ops_and_never_touches_ten
         conn, TENANT, staff_sub=STAFF, features=["campaigns", "ai_assist"], ticket_ref="SUP-4"
     )
     assert out["features_allowed"] == ["ai_assist", "campaigns"] and out["managed_by"] == "ops"
-    assert conn.sql("INSERT INTO crm.tenant_entitlement (allowed_features)") == [(["ai_assist", "campaigns"],)]
+    assert conn.sql("INSERT INTO crm.tenant_entitlement (allowed_features") == [(["ai_assist", "campaigns"], 3)]
     assert "WHERE crm.tenant_entitlement.projected_at IS NULL" in console.ALLOW_FEATURES_SQL
     assert not [c for c, _ in conn.calls if "tenant_settings" in c]
     (event,) = audits(conn)
@@ -456,7 +456,7 @@ async def test_allow_features_is_refused_once_cis_projected_the_agency() -> None
     """Once crm_entitlement_pull projected the row (projected_at set) the upsert's conflict arm writes nothing: 409
     entitlements_managed_by_cis, audited as denied."""
     conn = agency_conn()
-    conn.on("INSERT INTO crm.tenant_entitlement (allowed_features)", None)
+    conn.on("INSERT INTO crm.tenant_entitlement (allowed_features, member_limit)", None)
     with raises(Conflict, "entitlements_managed_by_cis"):
         await console.allow_features(  # type: ignore[arg-type]
             conn, TENANT, staff_sub=STAFF, features=["campaigns", "ai_assist"], ticket_ref="SUP-4"
@@ -488,7 +488,7 @@ def test_the_console_never_writes_tenant_settings() -> None:
 @pytest.mark.asyncio
 async def test_insights_opt_out_upsert_and_audit() -> None:
     conn = agency_conn()
-    conn.on("INSERT INTO crm.tenant_entitlement (insights_opt_out)", lambda value: value)
+    conn.on("INSERT INTO crm.tenant_entitlement (insights_opt_out, member_limit)", lambda value, limit: value)
     assert await console.set_insights_opt_out(
         conn, TENANT, staff_sub=STAFF, opt_out=True, owner_request_ref="OWN-1"
     ) == {  # type: ignore[arg-type]

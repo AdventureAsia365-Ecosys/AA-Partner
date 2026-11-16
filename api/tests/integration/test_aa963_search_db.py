@@ -492,7 +492,8 @@ async def test_the_feature_key_decides_the_whatsapp_templates_kind(
         await admin.execute("SELECT set_config('app.tenant_id', $1, true)", str(s["tenant"]))
         await admin.execute("SELECT set_config('app.actor', 'seed:test', true)")
         await admin.execute(
-            "INSERT INTO crm.tenant_entitlement (tenant_id, allowed_features) VALUES ($1, ARRAY['whatsapp_sms']) "
+            "INSERT INTO crm.tenant_entitlement (tenant_id, allowed_features, member_limit)"
+            " VALUES ($1, ARRAY['whatsapp_sms'], 3) "
             "ON CONFLICT (tenant_id) DO UPDATE SET allowed_features = EXCLUDED.allowed_features",
             s["tenant"],
         )

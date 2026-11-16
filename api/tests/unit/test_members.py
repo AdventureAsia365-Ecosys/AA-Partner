@@ -64,7 +64,7 @@ async def test_plan_defaults_and_the_entitlement_row() -> None:
     conn = ScriptedConn().on("SELECT (SELECT count(*) FROM crm.member", 3)
     assert await team.plan(tenant_ctx(conn)) == {
         "plan": "free",
-        "member_limit": 10,
+        "member_limit": 3,  # AA-1116: crm.members.default_limit
         "allowed_features": [],
         "seats_used": 3,
     }

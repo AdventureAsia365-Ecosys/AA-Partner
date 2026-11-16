@@ -100,7 +100,7 @@ async def test_crm011_runs_again_as_a_no_op(admin: asyncpg.Connection) -> None:
 async def test_the_insights_opt_out_is_written_by_aa_only(app_pool: asyncpg.Pool) -> None:
     tenant, owner, _agent = await _agency(app_pool)
     upsert = (
-        "INSERT INTO crm.tenant_entitlement (insights_opt_out) VALUES ($1) "
+        "INSERT INTO crm.tenant_entitlement (insights_opt_out, member_limit) VALUES ($1, 3) "
         "ON CONFLICT (tenant_id) DO UPDATE SET insights_opt_out = EXCLUDED.insights_opt_out"
     )
     assert await _refused(app_pool, tenant, f"member:{owner}", "owner", upsert, True) == "CRM04"
@@ -114,7 +114,7 @@ async def test_the_insights_opt_out_is_written_by_aa_only(app_pool: asyncpg.Pool
         # Default for a row created without the column: included.
     other, _o, _a = await _agency(app_pool)
     async with ctx(app_pool, other, "platform:staff-1") as conn:
-        await conn.execute("INSERT INTO crm.tenant_entitlement (plan) VALUES ('free')")
+        await conn.execute("INSERT INTO crm.tenant_entitlement (plan, member_limit) VALUES ('free', 3)")
         assert await conn.fetchval("SELECT insights_opt_out FROM crm.tenant_entitlement") is False
 
 

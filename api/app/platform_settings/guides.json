@@ -609,6 +609,38 @@
     "example": "Với mặc định 2.000 khách, đại lý có 5.000 khách đồng ý nhận tin chọn một thẻ (ví dụ khách quay lại) để gửi một chiến dịch."
    }
   },
+  "crm.members.default_limit": {
+   "en": {
+    "what": "How many members (active, invited and pending invitations) an agency may have when its CIS account gives the CRM no seat number, and before its first entitlement sync. The seats sold on CIS Tenant 360 always win.",
+    "raise": "An agency without a seat number from CIS can invite more colleagues, but those seats are not billed until CIS sells them.",
+    "lower": "An agency without a seat number stays small until CIS sends its seats; an owner may not be able to invite a colleague.",
+    "when": "Keep it at the smallest plan's seat minimum (3 in the option B price list); change it only with that minimum.",
+    "example": "With the default of 3, a new agency synced before its CRM subscription exists can have its owner and two colleagues."
+   },
+   "vi": {
+    "what": "Số thành viên (đang hoạt động, đã mời và lời mời đang chờ) một đại lý được có khi tài khoản CIS chưa gửi số ghế cho CRM, và trước lần đồng bộ quyền đầu tiên. Số ghế bán trên CIS Tenant 360 luôn được ưu tiên.",
+    "raise": "Đại lý chưa có số ghế từ CIS mời được nhiều đồng nghiệp hơn, nhưng các ghế đó chưa được tính tiền tới khi CIS bán chúng.",
+    "lower": "Đại lý chưa có số ghế giữ quy mô nhỏ tới khi CIS gửi số ghế; chủ đại lý có thể không mời thêm được đồng nghiệp.",
+    "when": "Giữ bằng số ghế tối thiểu của gói nhỏ nhất (3 trong bảng giá phương án B); chỉ đổi cùng với mức tối thiểu đó.",
+    "example": "Với mặc định 3, một đại lý mới được đồng bộ trước khi có gói CRM có thể có chủ đại lý và hai đồng nghiệp."
+   }
+  },
+  "crm.members.max_limit": {
+   "en": {
+    "what": "The most members one agency may have in the CRM, whatever seat number CIS sends: a larger number is cut to this ceiling. The database refuses more than 500.",
+    "raise": "A very large agency can have every seat CIS sells it, up to the database limit of 500.",
+    "lower": "No agency can grow past the ceiling even when CIS sells it more seats; its owner sees the member limit reached.",
+    "when": "Keep it at 500 unless a capacity problem needs a lower ceiling for every agency.",
+    "example": "With the default of 500, an agency CIS sells 40 seats has 40; with a ceiling of 30 it would have 30."
+   },
+   "vi": {
+    "what": "Số thành viên tối đa một đại lý được có trong CRM, bất kể CIS gửi bao nhiêu ghế: số lớn hơn bị cắt về mức trần này. Cơ sở dữ liệu từ chối quá 500.",
+    "raise": "Một đại lý rất lớn có đủ mọi ghế CIS bán cho họ, tới giới hạn 500 của cơ sở dữ liệu.",
+    "lower": "Không đại lý nào vượt mức trần kể cả khi CIS bán thêm ghế; chủ đại lý sẽ thấy đã đủ số thành viên.",
+    "when": "Giữ 500 trừ khi có vấn đề công suất cần mức trần thấp hơn cho mọi đại lý.",
+    "example": "Với mặc định 500, đại lý được CIS bán 40 ghế có 40 ghế; với mức trần 30 thì chỉ có 30."
+   }
+  },
   "crm.search.enabled": {
    "en": {
     "what": "Whether one agency's app shows the global search box (Ctrl K). Clients are found only by a whole e-mail, a whole international phone number or whole name words, through the blind indexes; trips, bookings, suppliers, services, templates, workflows, inclusions and tags by their names.",
