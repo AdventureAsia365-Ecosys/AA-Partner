@@ -344,12 +344,8 @@ async def _clients(
                 await ctx.conn.execute(LINK_REF_SQL, earlier, v["ref_idx"])
             results.append(Result(row.number, "match", ("duplicate_contact",), earlier))
             continue
-        duplicate = v["name_idx"] in names or v["name_idx"] in state.names
-        warn: tuple[str, ...] = ("possible_duplicate",) if duplicate else ()
-        if v["marketing"] and v["email_idx"] in suppressed:
-            # AA-968 (card R): an unsubscribed address imported again stays suppressed: the file's yes is not recorded.
-            v = {**v, "marketing": None}
-            warn += ("marketing_suppressed",)
+        warn = ("possible_duplicate",) if v["name_idx"] in names or v["name_idx"] in state.names else ()
+        v, warn = _suppressed_marketing(v, suppressed, warn)
         state.refs.add(v["ref_idx"])
         state.names.add(v["name_idx"])
         traveler_id = await _insert_client(ctx, vault, v, member_id) if apply else None
@@ -359,6 +355,16 @@ async def _clients(
             state.phones[v["phone_idx"]] = traveler_id
         results.append(Result(row.number, "create", warn, traveler_id))
     return results
+
+
+def _suppressed_marketing(
+    v: dict[str, Any], suppressed: set[bytes], warn: tuple[str, ...]
+) -> tuple[dict[str, Any], tuple[str, ...]]:
+    """AA-968 (card CRM-36 R): an address on the agency's campaign suppression list imported again stays suppressed:
+    the file's marketing yes is not recorded (no consent row, ``marketing_ok`` false) and the row says why."""
+    if v["marketing"] and v["email_idx"] in suppressed:
+        return {**v, "marketing": None}, (*warn, "marketing_suppressed")
+    return v, warn
 
 
 async def _insert_client(ctx: AnyContext, vault: Vault, v: dict[str, Any], member_id: uuid.UUID | None) -> uuid.UUID:

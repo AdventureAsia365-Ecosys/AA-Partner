@@ -284,14 +284,11 @@ def _system_actor_kind(actor: str) -> str:
         return "aa_ops"
     if actor.startswith("invitation:"):
         return "user"  # the invited person accepting (AA-939)
-    if actor.startswith("client_link:"):
-        return "traveler"  # a client filling a form from a signed link (AA-943)
-    if actor.startswith("sales_partner_link:"):
-        return "traveler"  # AA-1071: a sales partner (an outside party) on its own signed link
+    if actor.startswith(("client_link:", "sales_partner_link:", "campaign_unsubscribe:")):
+        # a client on a signed link (AA-943), a sales partner on its own link (AA-1071), a client's unsubscribe (AA-968)
+        return "traveler"
     if actor.startswith("calendar_feed:"):
         return "user"  # a member's own calendar subscription (AA-961)
-    if actor.startswith("campaign_unsubscribe:"):
-        return "traveler"  # AA-968: a client on the unsubscribe link of a campaign mail
     if actor.startswith("support:"):
         return "support"  # AA-971: an AA support person inside the owner's grant (L2)
     if actor.startswith("breakglass:"):
@@ -1310,83 +1307,6 @@ async def calendar_feed_tx(
         try:
             async with conn.transaction():  # savepoint: the feed's work
                 yield ctx, feed
-        except Exception as exc:
-            denied = [e for e in ctx.audit_events if e.outcome == "denied"]
-            if not denied:
-                raise
-            await _write_audit(ctx, denied)
-            pending = exc
-        else:
-            await _write_audit(ctx, ctx.audit_events)
-    if pending is not None:
-        raise pending
-
-
-# ── AA-968 (CRM-36): a client's one-click unsubscribe from a campaign mail ───────────────────────────────────────
-CAMPAIGN_UNSUBSCRIBE_SQL = """
-SELECT campaign_recipient_id, tenant_id FROM crm.campaign_recipient
- WHERE unsubscribe_hash = decode($1, 'hex') AND deleted_at IS NULL
-"""
-CAMPAIGN_RECIPIENT_SQL = """
-SELECT r.campaign_recipient_id, r.campaign_id, r.traveler_id, r.unsubscribed_at
-  FROM crm.campaign_recipient r
-  JOIN crm.traveler t ON t.traveler_id = r.traveler_id AND t.deleted_at IS NULL
- WHERE r.campaign_recipient_id = $1 AND r.deleted_at IS NULL
-"""
-# A client's opt-out is honoured while AA has locked the agency too (a billing or support matter); an offboarding or
-# offboarded agency's data is being erased.
-UNSUBSCRIBE_STATUSES = frozenset({"active", "locked"})
-
-
-@dataclass(frozen=True)
-class CampaignRecipient:
-    campaign_recipient_id: uuid.UUID
-    campaign_id: uuid.UUID
-    traveler_id: uuid.UUID
-    tenant_id: uuid.UUID
-    unsubscribed_at: dt.datetime | None
-
-
-@asynccontextmanager
-async def campaign_unsubscribe_tx(
-    pool: asyncpg.Pool, token_hash_hex: str
-) -> AsyncIterator[tuple[SystemContext, CampaignRecipient]]:
-    """A client's unsubscribe link of one campaign mail (AA-968, crm-073): the token's SHA-256 (hex) finds one
-    ``crm.campaign_recipient`` row through the SELECT-only policy ``campaign_recipient_unsubscribe_lookup`` before any
-    agency is known; then ``app.tenant_id`` = its agency (active or locked: an opt-out is honoured while AA has locked
-    the agency), the client must still exist, and ``app.actor`` = ``campaign_unsubscribe:<recipient id>`` (audit kind
-    ``traveler``). Unknown token, a deleted client, an offboarding agency: 404 ``link_not_found`` (the same answer, so
-    tokens cannot be probed). Only ``app/campaigns/unsubscribe.py`` may open it."""
-    if not isinstance(token_hash_hex, str) or not re.fullmatch(r"[0-9a-f]{64}", token_hash_hex):
-        raise NotFound("link_not_found")
-    pending: Exception | None = None
-    async with _gated(pool, tenant_gate.PUBLIC_KEY, busy=tenant_gate.public_busy) as conn, conn.transaction():
-        await conn.execute("SELECT set_config('app.campaign_unsubscribe_hash', $1, true)", token_hash_hex)
-        row = await conn.fetchrow(CAMPAIGN_UNSUBSCRIBE_SQL, token_hash_hex)
-        await conn.execute("SELECT set_config('app.campaign_unsubscribe_hash', '', true)")
-        if row is None:
-            raise NotFound("link_not_found")
-        tenant_id = row["tenant_id"]
-        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
-        status = await conn.fetchval(TENANT_SQL, tenant_id)
-        if status not in UNSUBSCRIBE_STATUSES:
-            raise NotFound("link_not_found")
-        live = await conn.fetchrow(CAMPAIGN_RECIPIENT_SQL, row["campaign_recipient_id"])
-        if live is None:
-            raise NotFound("link_not_found")
-        actor = f"campaign_unsubscribe:{live['campaign_recipient_id']}"
-        await conn.execute("SELECT set_config('app.actor', $1, true)", actor)
-        found = CampaignRecipient(
-            campaign_recipient_id=live["campaign_recipient_id"],
-            campaign_id=live["campaign_id"],
-            traveler_id=live["traveler_id"],
-            tenant_id=tenant_id,
-            unsubscribed_at=live["unsubscribed_at"],
-        )
-        ctx = SystemContext(conn=conn, tenant_id=tenant_id, actor=actor, status=status)
-        try:
-            async with conn.transaction():  # savepoint: the page's work
-                yield ctx, found
         except Exception as exc:
             denied = [e for e in ctx.audit_events if e.outcome == "denied"]
             if not denied:

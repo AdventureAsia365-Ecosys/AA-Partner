@@ -545,7 +545,7 @@ async def test_pull_retired_and_the_hourly_hook(monkeypatch: pytest.MonkeyPatch)
 
 
 def _found(**over: Any) -> Any:
-    from app.tenancy import CampaignRecipient
+    from app.campaigns.link_tx import CampaignRecipient
 
     base = {"campaign_recipient_id": RECIPIENT, "campaign_id": CAMPAIGN, "traveler_id": CLIENT_A, "tenant_id": TENANT,
             "unsubscribed_at": None}  # fmt: skip

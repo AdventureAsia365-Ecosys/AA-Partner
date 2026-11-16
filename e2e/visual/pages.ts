@@ -144,6 +144,7 @@ export const EXCLUDED: Record<string, string> = {
   "/c/t": "the client host's trip view (needs a signed client link), not served on the agency host",
   "/c/a": "AA-1071: a sales partner's own page on the client host (needs a signed partner link and an e-mail code)",
   "/c/r/[token]": "AA-1071: a sales partner's inquiry link on the client host (needs a signed partner link)",
+  "/c/u/[token]": "AA-968: a client's campaign unsubscribe page on the client host (needs a live campaign mail token)",
   "/trip/[tourId]": "the client host's public tour page (redirects to the tour of a published catalog)",
   "/staff": "the AA staff console: a staff Cognito sign-in, no staff E2E user in CI (redirects to /staff/ops)",
   "/staff/ops": "the AA staff console: a staff Cognito sign-in, no staff E2E user in CI",

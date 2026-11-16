@@ -13,7 +13,7 @@ import type { CampaignList, CampaignOptions } from "@/lib/campaigns";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { formatDate } from "@/lib/dates";
-import { fmt, t } from "@/lib/i18n";
+import { fmt, t, type Lang } from "@/lib/i18n";
 import { serverContext } from "@/lib/serverContext";
 import { consentKey, reasonText, seesMarketing, type ReadyList } from "@/lib/tags";
 
@@ -27,6 +27,14 @@ function href(owner: string, page: number): string {
   if (page > 1) q.set("page", String(page));
   const s = q.toString();
   return s ? `/marketing?${s}` : "/marketing";
+}
+
+type Answer<T> = { ok: true; data: T } | { ok: false };
+
+/** AA-968: the campaigns panel, or the API error when either read failed. */
+function CampaignsSection({ lang, campaigns, options }: { lang: Lang; campaigns: Answer<CampaignList>; options: Answer<CampaignOptions> }) {
+  if (!campaigns.ok || !options.ok) return <ErrorState message={t(lang, "error.api")} />;
+  return <CampaignsPanel lang={lang} initial={campaigns.data} options={options.data} />;
 }
 
 export default async function MarketingPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
@@ -122,11 +130,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Pr
         )}
       </Panel>
       <Panel title={t(lang, "tag.marketing.campaigns")} testId="marketing-campaigns">
-        {campaigns.ok && options.ok ? (
-          <CampaignsPanel lang={lang} initial={campaigns.data} options={options.data} />
-        ) : (
-          <ErrorState message={t(lang, "error.api")} />
-        )}
+        <CampaignsSection lang={lang} campaigns={campaigns} options={options} />
       </Panel>
     </div>
   );

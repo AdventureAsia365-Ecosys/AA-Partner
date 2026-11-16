@@ -1,6 +1,6 @@
 """A client's unsubscribe from a campaign mail (AA-968, card CRM-36; design v3 C-11 "Preferences / unsubscribe";
 RFC 8058 one-click). No sign-in: the 43-character token of the mail is the credential (only its SHA-256 is stored,
-``crm.campaign_recipient.unsubscribe_hash``); the work runs in :func:`app.tenancy.campaign_unsubscribe_tx`.
+``crm.campaign_recipient.unsubscribe_hash``); the work runs in :func:`app.campaigns.link_tx.campaign_unsubscribe_tx`.
 
 - :func:`state`: the page's facts: the agency's name and whether the client is subscribed now.
 - :func:`unsubscribe` (the page's button, and the mail program's one-click POST): one ``crm.consent`` row (purpose
@@ -22,7 +22,8 @@ from typing import Any
 
 import asyncpg
 
-from app.tenancy import SystemContext, campaign_unsubscribe_tx
+from app.campaigns.link_tx import campaign_unsubscribe_tx
+from app.tenancy import SystemContext
 from app.vault import KeyProvider, Vault
 
 TRAVELER_SQL = "SELECT email_bidx, profile_token_enc FROM crm.traveler WHERE traveler_id = $1"

@@ -78,6 +78,64 @@ def _tour_key(value: str) -> str | None:
         return None
 
 
+def _subject_codes(
+    subject: str, body: str, tours: list[str], tour_states: Mapping[str, str | None], content_listed: bool | None,
+    brand_only: bool,
+) -> set[str]:  # fmt: skip
+    """The AA subject and the text being there (d21 "every piece links to at least one AA subject")."""
+    codes: set[str] = set()
+    if not subject.strip():
+        codes.add(EMPTY_SUBJECT)
+    if not body.strip():
+        codes.add(EMPTY_BODY)
+    if not tours and content_listed is None and not brand_only:
+        codes.add(NO_SUBJECT)
+    if content_listed is False:
+        codes.add(CONTENT_UNLISTED)
+    if any(tour_states.get(t) != "served" for t in tours):
+        codes.add(TOUR_NOT_SERVED)
+    return codes
+
+
+def _link_kind(link: str, client_host: str | None, planner_host: str | None) -> tuple[str, str | None]:
+    """``("tour", key)`` for an AA tour page of the client host, ``("planner", None)`` for the TripPlanner site,
+    ``("other", None)`` for anything else (another host, http, a port, credentials in the URL)."""
+    url = link if "://" in link else f"https://{link}"
+    try:
+        parts = urlsplit(url)
+        host = (parts.hostname or "").lower()
+        port = parts.port
+    except ValueError:
+        return "other", None
+    if parts.scheme != "https" or parts.username is not None or parts.password is not None or port not in (None, 443):
+        return "other", None
+    tour = _TOUR_PATH.match(parts.path or "")
+    if client_host and host == client_host and tour:
+        return "tour", _tour_key(tour.group(1))
+    if planner_host and host == planner_host:
+        return "planner", None
+    return "other", None
+
+
+def _link_codes(
+    text: str, named: set[str | None], brand_only: bool, client: str | None, planner: str | None
+) -> set[str]:
+    """d21 "sales links and CTAs may point only to AA tour pages or the tenant's TripPlanner site"; brand content has
+    no sales link at all."""
+    codes: set[str] = set()
+    client_host, planner_host = _origin_host(client), _origin_host(planner)
+    for link in links(text):
+        kind, key = _link_kind(link, client_host, planner_host)
+        if kind == "other":
+            codes.add(LINK_NOT_ALLOWED)
+            continue
+        if kind == "tour" and key not in named:
+            codes.add(TOUR_LINK_NOT_LISTED)
+        if brand_only:
+            codes.add(BRAND_SALES_LINK)
+    return codes
+
+
 def content_gate(
     *,
     subject: str,
@@ -92,43 +150,10 @@ def content_gate(
     """The d21 refusal codes of a campaign's content (empty = it passes). ``tour_states``: the CRM catalogue cache's
     ``served_state`` of each named tour (None = not in the cache); ``content_listed``: whether the AA campaign block
     is still listed (None = the campaign names no block)."""
-    codes: set[str] = set()
-    tours = [t for t in aa_tour_ids]
-    if not subject.strip():
-        codes.add(EMPTY_SUBJECT)
-    if not body.strip():
-        codes.add(EMPTY_BODY)
-    if not tours and content_listed is None and not brand_only:
-        codes.add(NO_SUBJECT)
-    if content_listed is False:
-        codes.add(CONTENT_UNLISTED)
-    if any(tour_states.get(t) != "served" for t in tours):
-        codes.add(TOUR_NOT_SERVED)
+    tours = list(aa_tour_ids)
     named = {_tour_key(t) for t in tours} - {None}
-    client_host = _origin_host(client_origin)
-    planner_host = _origin_host(tripplanner_origin)
-    for link in links(subject) + links(body):
-        url = link if "://" in link else f"https://{link}"
-        try:
-            parts = urlsplit(url)
-            host = (parts.hostname or "").lower()
-        except ValueError:
-            codes.add(LINK_NOT_ALLOWED)
-            continue
-        if parts.username is not None or parts.password is not None or parts.port not in (None, 443):
-            codes.add(LINK_NOT_ALLOWED)
-            continue
-        tour = _TOUR_PATH.match(parts.path or "")
-        if client_host and host == client_host and parts.scheme == "https" and tour:
-            if _tour_key(tour.group(1)) not in named:
-                codes.add(TOUR_LINK_NOT_LISTED)
-            if brand_only:
-                codes.add(BRAND_SALES_LINK)
-        elif planner_host and host == planner_host and parts.scheme == "https":
-            if brand_only:
-                codes.add(BRAND_SALES_LINK)
-        else:
-            codes.add(LINK_NOT_ALLOWED)
+    codes = _subject_codes(subject, body, tours, tour_states, content_listed, brand_only)
+    codes |= _link_codes(f"{subject}\n{body}", named, brand_only, client_origin, tripplanner_origin)
     return sorted(codes)
 
 
