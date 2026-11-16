@@ -85,8 +85,8 @@ ASSISTANT_READS = (
 # margin-bearing money (a new money route must be seeded here instead).
 UNSEEDED = {
     "/crm/v1/conversations/{conversation_id}/messages": "mail messages: no money table behind them",
-    "/crm/v1/campaigns/{campaign_id}": "an agency marketing campaign: subject, text and counts, no money table behind it",
-    "/crm/v1/campaigns/blocks/{content_id}": "a Content studio block for a campaign: marketing text, no money table behind it",
+    "/crm/v1/campaigns/{campaign_id}": "agency campaign: text and counts, no money table",
+    "/crm/v1/campaigns/blocks/{content_id}": "Content studio block: marketing text, no money",
     "/crm/v1/mail/imports/{import_id}": "mailbox history import status: counts only",
     "/crm/v1/lifecycle/offboarding/{request_id}/export": "owner-only agency export: never the assistant",
     "/crm/v1/data/exports/{export_id}/download": "owner-only portability ZIP (AA-967): never the assistant",
