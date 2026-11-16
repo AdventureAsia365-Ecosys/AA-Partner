@@ -608,3 +608,65 @@ async def test_resubscribe_is_the_clients_own_yes(monkeypatch: pytest.MonkeyPatc
     ctx = _unsub(monkeypatch, conn)
     await unsubscribe.resubscribe(object(), object(), TOKEN)  # type: ignore[arg-type]
     assert not conn.sql("DELETE FROM crm.campaign_suppression") and ctx.audit_events == []
+
+
+# ── the unsubscribe link's context ───────────────────────────────────────────────────────────────
+
+
+def _link_pool(conn: ScriptedConn) -> Any:
+    class Pool:
+        @asynccontextmanager
+        async def acquire(self, timeout: float | None = None) -> Any:  # noqa: ASYNC109 — asyncpg Pool.acquire signature
+            yield conn
+
+    return Pool()
+
+
+def _link_conn(*, found: bool = True, status: str = "active", live: bool = True) -> ScriptedConn:
+    from app.campaigns import link_tx
+
+    conn = ScriptedConn()
+    conn.on(
+        " ".join(link_tx.LOOKUP_SQL.split()),
+        {"campaign_recipient_id": RECIPIENT, "tenant_id": TENANT} if found else None,
+    )
+    conn.on("SELECT status FROM crm.tenant", status)
+    row = {
+        "campaign_recipient_id": RECIPIENT,
+        "campaign_id": CAMPAIGN,
+        "traveler_id": CLIENT_A,
+        "unsubscribed_at": None,
+    }
+    conn.on(" ".join(link_tx.RECIPIENT_SQL.split()), row if live else None)
+    return conn
+
+
+@pytest.mark.asyncio
+async def test_the_link_context_finds_one_recipient_or_answers_404() -> None:
+    from app.campaigns.link_tx import campaign_unsubscribe_tx
+
+    digest = "ab" * 32
+    for bad in ("short", "AB" * 32):
+        with pytest.raises(NotFound):
+            async with campaign_unsubscribe_tx(_link_pool(_link_conn()), bad):
+                pass
+    for conn in (_link_conn(found=False), _link_conn(status="offboarding"), _link_conn(live=False)):
+        with pytest.raises(NotFound, match="link_not_found"):
+            async with campaign_unsubscribe_tx(_link_pool(conn), digest):
+                pass
+    conn = _link_conn(status="locked")  # an opt-out is honoured while AA has locked the agency
+    async with campaign_unsubscribe_tx(_link_pool(conn), digest) as (ctx, found):
+        assert (found.traveler_id, ctx.actor) == (CLIENT_A, f"campaign_unsubscribe:{RECIPIENT}")
+        ctx.audit("campaign_unsubscribe", "allowed", "campaign", str(CAMPAIGN))
+    assert conn.sql("set_config('app.campaign_unsubscribe_hash'")[0] == (digest,)
+    assert conn.sql("INSERT INTO crm.audit_event")
+    # A refusal inside keeps its denied audit event and is raised again.
+    conn = _link_conn()
+    with pytest.raises(Forbidden):
+        async with campaign_unsubscribe_tx(_link_pool(conn), digest) as (ctx, _found):
+            ctx.audit("campaign_unsubscribe", "denied", "campaign", str(CAMPAIGN), reason="test")
+            raise Forbidden("nope")
+    assert conn.sql("INSERT INTO crm.audit_event")
+    with pytest.raises(RuntimeError):
+        async with campaign_unsubscribe_tx(_link_pool(_link_conn()), digest):
+            raise RuntimeError("boom")
