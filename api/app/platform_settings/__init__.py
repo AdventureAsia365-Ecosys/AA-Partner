@@ -94,7 +94,7 @@ JOB_RETENTION_DRY_RUN = "crm.retention.job_dry_run"
 AUDIT_RETENTION_DRY_RUN = "crm.retention.audit_dry_run"
 PARTNER_CLEANUP_DRY_RUN = "crm.retention.partner_account_cleanup_dry_run"
 TWO_PERSON_APPROVAL = "crm.settings.two_person_approval"
-# AA-970 (crm-077): the per-agency preview switch (R42): an agency on preview sees the preview features of
+# AA-970 (crm-072): the per-agency preview switch (R42): an agency on preview sees the preview features of
 # web/lib/preview.ts; never privacy or price logic (api/scripts/preview_flag_lint.py).
 RELEASE_PREVIEW = "crm.release.preview"
 

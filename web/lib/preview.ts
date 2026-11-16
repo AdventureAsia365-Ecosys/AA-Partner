@@ -1,6 +1,6 @@
 // web/lib/preview.ts
 // AA-970 (design v3 card CRM-37b, R42 "What's new + preview switch") — the agency app's preview features. An agency is
-// "on preview" when its own value of the settings key crm.release.preview is on (crm-077, off by default; an AA
+// "on preview" when its own value of the settings key crm.release.preview is on (crm-072, off by default; an AA
 // administrator switches one agency on at CIS Platform > Settings, CRM tab). The API says so in /me (`preview`); the
 // web shows a preview feature only when previewOn() is true, so an agency on preview sees the flagged UI and every
 // other agency does not. The API refuses nothing on this flag: it is a UI channel, not a permission.

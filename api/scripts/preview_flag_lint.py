@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Preview-flag lint (AA-970, design v3 card CRM-37b, R42): privacy or price logic never sits behind a preview flag.
 
-An agency is "on preview" when its own value of the settings key ``crm.release.preview`` is on (crm-077); the web then
+An agency is "on preview" when its own value of the settings key ``crm.release.preview`` is on (crm-072); the web then
 shows the preview features of ``web/lib/preview.ts`` (``previewOn(me, flag)``, ``/crm/v1/me`` ``preview``). A preview
 is a UI channel for trying new screens early. A change to who sees personal data, to retention, erasure or consent, or
 to a price, a payment, a margin or a commission must reach every agency at once, so this lint fails when:

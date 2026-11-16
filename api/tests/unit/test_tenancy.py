@@ -365,7 +365,7 @@ async def test_as_eraser_refuses_a_reader_context() -> None:
 
 @pytest.mark.parametrize(("stored", "preview"), [(None, False), ("true", True), ("false", False)])
 def test_me_says_whether_the_agency_is_on_preview(stored: str | None, preview: bool) -> None:
-    """AA-970 (R42): /me answers ``preview`` from the agency's own approved value of crm.release.preview (crm-077),
+    """AA-970 (R42): /me answers ``preview`` from the agency's own approved value of crm.release.preview (crm-072),
     read inside the agency's context; no row = the platform value, off by default."""
     from app import platform_settings as ps
 

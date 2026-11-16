@@ -13,7 +13,7 @@ app (``crm.llm_app_profile.ai_enabled`` false, :func:`app.llm.app_profile.for_ca
 unreadable row = AI on), so the agency app shows one banner instead of a failure per draft. The staff reason
 (``disabled_reason``) is never sent. AA-1030: ``permissions`` carries the matrix answers the web hides links by
 (``aa_tariff_view``: the AA prices page); the API still refuses on its own. AA-970 (R42): ``preview`` is the
-agency's own value of the settings key ``crm.release.preview`` (crm-077, off by default; an AA administrator switches
+agency's own value of the settings key ``crm.release.preview`` (crm-072, off by default; an AA administrator switches
 one agency on at Platform > Settings): the web shows its preview features and the preview entries of What's new only
 when it is true. It never gates privacy or price logic (``api/scripts/preview_flag_lint.py``).
 Margin-bearing fields arrive with later cards behind the per-role serializer allow-list (design v3 §4.6).

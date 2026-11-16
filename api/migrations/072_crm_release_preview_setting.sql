@@ -1,11 +1,13 @@
--- Migration crm-077: AA-970 (design v3 §6.3 card CRM-37b, R42 "What's new + preview switch"; tech lead S279: every
+-- Migration crm-072: AA-970 (design v3 §6.3 card CRM-37b, R42 "What's new + preview switch"; tech lead S279: every
 -- switch and threshold is an admin-editable setting) — the per-agency preview switch in the CRM settings registry
 -- (crm-064).
 --
--- Owner: AA-Partner (api/migrations/077_crm_release_preview_setting.sql). AA-CIS-Infra db/migrations/crm/ holds the
--- byte copy Migration Apply runs. Key crm-077 (crm-071..076 are held by other lanes of the same wave); if the numbers
--- move, renumber: file name, this header, Guard 0 and the registration below, and the tests that name it
--- (git grep '077_' and 'crm-077').
+-- Owner: AA-Partner (api/migrations/072_crm_release_preview_setting.sql). AA-CIS-Infra db/migrations/crm/ holds the
+-- byte copy Migration Apply runs. Key crm-072 = crm main max + 1 (main holds crm-071); the campaigns lane of the same
+-- wave holds crm-073 and crm-074 right after it, so the wave's crm keys stay consecutive. If main moves first (the
+-- migration preflight accepts only main max + 1), renumber to the next free key: file name, this header, Guard 0 and
+-- the registration below, compiled_defaults.json (scripts/gen_settings_defaults.py), the CONTEXT.md migration row and
+-- the comments that name it (git grep '072_' and 'crm-072').
 --
 -- What: one crm.setting_definition row, area release, enforced, no env override (the block between
 -- "settings-seed:begin" and "settings-seed:end" is read by api/scripts/gen_settings_defaults.py into
@@ -41,14 +43,14 @@ SET LOCAL statement_timeout = '1min';
 DO $$
 BEGIN
     IF current_user <> 'crm_owner' THEN
-        RAISE EXCEPTION 'crm-077: must run as crm_owner (Migration Apply live-owner switch), runs as %', current_user;
+        RAISE EXCEPTION 'crm-072: must run as crm_owner (Migration Apply live-owner switch), runs as %', current_user;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM shared.schema_versions WHERE version = 'crm-064') THEN
-        RAISE EXCEPTION 'crm-077: crm-064 (settings registry) lands first';
+        RAISE EXCEPTION 'crm-072: crm-064 (settings registry) lands first';
     END IF;
     IF EXISTS (SELECT 1 FROM shared.schema_versions
-                WHERE version = 'crm-077' AND description NOT LIKE 'AA-970 release preview setting:%') THEN
-        RAISE EXCEPTION 'crm-077: the key crm-077 is already held by another migration (not AA-970): renumber one';
+                WHERE version = 'crm-072' AND description NOT LIKE 'AA-970 release preview setting:%') THEN
+        RAISE EXCEPTION 'crm-072: the key crm-072 is already held by another migration (not AA-970): renumber one';
     END IF;
 END $$;
 
@@ -71,12 +73,12 @@ ON CONFLICT (key) DO NOTHING;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM crm.setting_definition WHERE key IN ('crm.release.preview')) THEN
-        RAISE EXCEPTION 'crm-077: the release preview setting is missing';
+        RAISE EXCEPTION 'crm-072: the release preview setting is missing';
     END IF;
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('crm-077', now(), 'AA-970 release preview setting: the per-agency preview switch (off; area release, maker-checker)')
+VALUES ('crm-072', now(), 'AA-970 release preview setting: the per-agency preview switch (off; area release, maker-checker)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;
