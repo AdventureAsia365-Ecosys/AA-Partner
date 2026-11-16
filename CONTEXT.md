@@ -401,6 +401,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-067` | `api/migrations/067_crm_tenant_erasure_studio_invitations.sql` | AA-1093 stage 2 (**contract**: a SECURITY DEFINER function with REVOKE / GRANT and a post-check, MIG-4): `crm.erase_studio_invitations(cis_tenant, dry_run)` counts or deletes one CIS tenant's `crm.studio_invitation` rows (keyed by `cis_tenant_id`, out of `crm.erase_subject`'s reach); actor `job:crm_tenant_erase` only (CRM56), EXECUTE `crm_eraser` only; crm_app still has no DELETE on the table. |
 | `crm-069` | `api/migrations/069_crm_ai_voice_profiles_supplier_options.sql` | AA-965 CRM-33b (**contract**, MIG-4; crm-066..068 are other cards' of the S281 wave): `crm.voice_profile` (base template, R41: a member's writing voice for the reply draft: name, locale en / vi, channel email / whatsapp, `descriptors` = fixed codes only (formality, warmth, length, emoji, greeting, sign_off; at most 1000 bytes); never trashed, hard delete; cascades from `tenant_settings` and its member); `crm.ai_draft` kinds + `supplier_confirmation` / `notes_to_options`, `voice_profile_id` (no key, history), `validation` (the code's check of the answer: ids, codes, short references; object <= 16 KB; a voice only on a message draft); AI stages `crm_supplier_confirm` / `crm_notes_options` (writer) copied from the `crm_draft_reply` profile and route at apply time |
 | `crm-070` | `api/migrations/070_crm_ai_crm33b_settings.sql` | AA-965 CRM-33b (**contract**: config rows; ships in the code PR like crm-068, the settings lint binds seed, readers and compiled defaults): eight `crm.setting_definition` rows, area ai: `crm.ai.supplier_confirm_max_tokens` (800), `_max_chars` (12000), `_max_lines` (20), `crm.ai.notes_options_max_tokens` (600), `_max_chars` (8000), `_max_candidates` (80), `_max_suggestions` (5), `crm.ai.voice_profiles_per_member_max` (4) |
+| `crm-077` | `api/migrations/077_crm_release_preview_setting.sql` | AA-970 CRM-37b (**contract**: one config row; ships in the code PR like crm-070, the settings lint binds seed, reader and compiled defaults): `crm.release.preview` (bool, platform+tenant, off, maker-checker), the per-agency preview switch of R42 (section "CRM-37b What's new, preview, help, data pages") |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -1752,6 +1753,34 @@ the owner acknowledgement). Implementation notes: `docs/implementation-notes/AA-
   `merge_blocked` (with `blockers` and `swap_possible`) when the client that would go has client links, portal access,
   signatures or accepted terms (that evidence names it); 409 `legal_hold` for a held client.
 - **Help** (`web/app/(crm)/help/page.tsx`): the guides each step and connection links to (`/help#<topic>`), EN / VI.
+
+## CRM-37b What's new, preview, help, data pages (AA-970)
+
+Design v3 card CRM-37b (R42 What's new + preview switch, R43 help pages). Implementation notes:
+`docs/implementation-notes/AA-970.md`.
+
+- **What's new** (`web/lib/whatsNew.ts`, Help & what's new `#whats-new`): entries EN / VI, newest first, shipped with
+  the release that brings the feature (reviewed in its pull request). The design's `release_note` table is not built:
+  a note only changes with a release. A link shows only to a role that sees that part of the app (`lib/nav.ts`).
+- **Preview switch** (R42 `release_channel`): the settings key `crm.release.preview` (crm-077, platform+tenant, off),
+  set per agency by an AA administrator on CIS Platform > Settings (CRM tab, the agency's own value; audited and
+  versioned by crm-064). `GET /crm/v1/me` answers `preview` (the agency's value, read inside its context). The web
+  shows a preview feature only when `previewOn(me, flag)` is true (`web/lib/preview.ts`: the registry of preview
+  features, each with its area); a What's new entry with `preview` shows only to an agency on preview. Today the one
+  preview feature is the Help page's Preview panel. The API refuses nothing on the flag: it is a UI channel.
+- **R: no privacy or price logic behind a preview flag.** `api/scripts/preview_flag_lint.py` (run on the repo by
+  `tests/unit/test_aa970_preview_lint.py` in Unit Tests) fails when a registry area, the path or an import of a web
+  file that calls the gate, or the path or an import of an API module that reads the switch, is privacy or money
+  (data rules, consent, erasure, reveal, access log; prices, payments, invoices, margins, commissions, finance, FX).
+- **Help topics** beyond getting started (`#using`): the pipeline, clients, proposals, the inbox, tasks; and "Your
+  data" (`#data`) with the public pages and Settings > Data and privacy.
+- **Public data pages** `/legal/data` and `/legal/subprocessors` (public, `lib/hosts.ts`; not indexed while the annex is
+  a draft): rendered from the root DPA Annex 3 §5 public summary (`AA-Ecosys/docs/legal/dpa-annex-3-subprocessors.md`,
+  between its `public-summary` markers) copied by `api/scripts/gen_legal_annex.py` into
+  `web/lib/legal/annex3.generated.json` and read by `web/lib/legal/annexMarkdown.ts` (a small Markdown subset; a table
+  becomes one card per row). The CI job "Vendored CIS copies" fails when the copy differs from the root file on
+  `master`. The body is the annex's English (the version that applies); the frame is EN / VI. Settings > Data and
+  privacy links both pages.
 
 ## CRM-30 duty of care + calendar (AA-961)
 

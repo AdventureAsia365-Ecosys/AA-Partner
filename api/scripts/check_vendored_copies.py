@@ -7,7 +7,11 @@
 - the CRM web's BFF helpers (``web/``, AA-935): ``web/lib/{sameOrigin,crossSiteGuard,bffPath,
   proxyResponse,upstreamHeaders}.ts`` =
   AA-CIS-App ``frontend/lib/*`` (the AA-911 cross-site rule and the AA-577 path rule of every BFF); the Content
-  studio's BFF uses the same copies since it moved into the web (AA-1036; the separate ``portal/`` copies went with it).
+  studio's BFF uses the same copies since it moved into the web (AA-1036; the separate ``portal/`` copies went with it);
+- AA-970: ``web/lib/legal/annex3.generated.json`` = the public summary of AA-Ecosys (the root repo, branch ``master``)
+  ``docs/legal/dpa-annex-3-subprocessors.md``, as ``scripts/gen_legal_annex.py`` writes it (not a byte copy: the JSON
+  must equal what the script makes of the root file today). The agency app's public data and sub-processor pages
+  render it.
 
 The UI kit is not checked here any more (AA-994 S2a, root ADR 0016 decision 5): ``web/app/_kit/core/`` is synced by
 the root ``tools/kit/kit-sync.sh`` and pinned to a CIS commit by ``kit.lock.json``; Web Build checks it offline
@@ -29,7 +33,9 @@ errors and 5xx are retried, then reported as a FAIL (never a traceback). Standar
 
 from __future__ import annotations
 
+import functools
 import hashlib
+import importlib.util
 import os
 import sys
 import time
@@ -42,6 +48,9 @@ from typing import TextIO
 ORG = "AdventureAsia365-Ecosys"
 REPO = "AA-CIS-App"
 BRANCH = "main"
+# AA-970: the root repo, where the DPA annexes live (public, default branch master).
+ROOT_REPO = "AA-Ecosys"
+ROOT_BRANCH = "master"
 API_DIR = Path(__file__).resolve().parent.parent
 WEB_DIR = API_DIR.parent / "web"
 # path under api/ -> path in AA-CIS-App
@@ -98,8 +107,14 @@ def _token() -> str:
     return (os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN") or "").strip()
 
 
-def github_fetch(path: str, attempts: int = 3, sleep: Callable[[float], None] = time.sleep) -> bytes | None:
-    url = f"https://api.github.com/repos/{ORG}/{REPO}/contents/{path}?ref={BRANCH}"
+def github_fetch(
+    path: str,
+    attempts: int = 3,
+    sleep: Callable[[float], None] = time.sleep,
+    repo: str = REPO,
+    branch: str = BRANCH,
+) -> bytes | None:
+    url = f"https://api.github.com/repos/{ORG}/{repo}/contents/{path}?ref={branch}"
     token = _token()
     auths = ([token] if token else []) + [""]
     last = ""
@@ -123,7 +138,7 @@ def github_fetch(path: str, attempts: int = 3, sleep: Callable[[float], None] = 
                 if exc.code in (401, 403, 429):
                     continue  # token refused or rate limited: try anonymous / next round
                 if exc.code < 500:
-                    raise FetchError(f"GitHub API {last} for {REPO}:{path}") from None
+                    raise FetchError(f"GitHub API {last} for {repo}:{path}") from None
                 break  # 5xx: back off and retry
             except (urllib.error.URLError, TimeoutError, OSError) as exc:
                 last = f"network error {exc}"
@@ -131,7 +146,54 @@ def github_fetch(path: str, attempts: int = 3, sleep: Callable[[float], None] = 
         if attempt + 1 < attempts:
             sleep(2 * (attempt + 1))
     hint = "" if token else " (anonymous: 60 requests/hour; set GITHUB_TOKEN or GH_TOKEN)"
-    raise FetchError(f"could not read {REPO}:{path} from GitHub: {last}{hint}")
+    raise FetchError(f"could not read {repo}:{path} from GitHub: {last}{hint}")
+
+
+root_fetch: Fetcher = functools.partial(github_fetch, repo=ROOT_REPO, branch=ROOT_BRANCH)
+
+
+def _annex_module():  # noqa: ANN202 — the sibling script, loaded by path (scripts/ is not a package)
+    spec = importlib.util.spec_from_file_location("gen_legal_annex", Path(__file__).with_name("gen_legal_annex.py"))
+    if spec is None or spec.loader is None:
+        raise RuntimeError("scripts/gen_legal_annex.py is missing")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def check_annex(fetch: Fetcher, out: TextIO, local: Path | None = None) -> int:
+    """AA-970: the agency app's copy of the annex 3 public summary equals what the root file on master gives."""
+    gen = _annex_module()
+    local = local or gen.OUT
+    source = gen.SOURCE["path"]
+    rel = "web/lib/legal/annex3.generated.json"
+    where = f"{ORG}/{ROOT_REPO}@{ROOT_BRANCH}:{source}"
+    problem = None
+    try:
+        upstream = fetch(source)
+    except FetchError as exc:
+        upstream, problem = None, f"cannot compare with {where}: {exc}"
+    if problem is None and upstream is None:
+        problem = f"not found on {where}: merge the root change first, then re-run this check"
+    if problem is None:
+        try:
+            want = gen.render(gen.extract(upstream.decode("utf-8")))
+        except gen.AnnexError as exc:
+            want, problem = "", f"the annex on {where} has no usable public summary: {exc}"
+        if problem is None:
+            have = local.read_text(encoding="utf-8") if local.is_file() else ""
+            if have != want:
+                problem = (
+                    f"differs from the public summary of {where}; run "
+                    "python3 scripts/gen_legal_annex.py <AA-Ecosys>/docs/legal/dpa-annex-3-subprocessors.md"
+                )
+    if problem:
+        print(f"FAIL  {rel}: {problem}", file=out)
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            print(f"::error file={rel}::{problem}", file=out)
+        return 1
+    print(f"ok    {rel}", file=out)
+    return 0
 
 
 def run(
@@ -156,11 +218,12 @@ def run(
     return 1 if failed else 0
 
 
-def main(fetch: Fetcher = github_fetch, out: TextIO = sys.stdout) -> int:
-    """Both sets: the API's copies (under api/) and the web's (under web/)."""
+def main(fetch: Fetcher = github_fetch, out: TextIO = sys.stdout, fetch_root: Fetcher = root_fetch) -> int:
+    """Both sets: the API's copies (under api/) and the web's (under web/), and the annex 3 public summary (AA-970)."""
     api = run(API_DIR, fetch, out)
     web = run(WEB_DIR, fetch, out, WEB_COPIES, "web")
-    return 1 if (api or web) else 0
+    annex = check_annex(fetch_root, out)
+    return 1 if (api or web or annex) else 0
 
 
 if __name__ == "__main__":

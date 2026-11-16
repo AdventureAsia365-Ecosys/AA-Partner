@@ -76,7 +76,7 @@ describe("changed-pages", () => {
 describe("selectPages", () => {
   it("separates public and signed pages; the gallery only in a gallery run; the planted pages only in the self-test", () => {
     const pub = selectPages(PAGES, { auth: "public", slugs: "all", gallery: false, selftest: false }).map((p) => p.slug);
-    expect(pub.sort()).toEqual(["health", "legal-partner-terms", "legal-privacy", "signed-out", "staff-signed-out"]);
+    expect(pub.sort()).toEqual(["health", "legal-data", "legal-partner-terms", "legal-privacy", "legal-subprocessors", "signed-out", "staff-signed-out"]);
     const pr = selectPages(PAGES, { auth: "public", slugs: "", gallery: true, selftest: false }).map((p) => p.slug);
     expect(pr).toEqual(["kit-gallery"]);
     const signed = selectPages(PAGES, { auth: "signed", slugs: "bookings,health", gallery: true, selftest: false }).map((p) => p.slug);
