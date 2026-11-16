@@ -8,7 +8,9 @@ The gate, in order (first match wins; the row ends ``dropped`` with the code as 
 2. the traveller is **archived** -> ``archived`` (R23, card R "an archived contact's queued message is dropped");
 3. a marketing message without a current marketing consent (latest ``crm.consent`` row of purpose ``marketing``) ->
    ``no_consent``; AA-958: an SMS / WhatsApp message to a client who texted STOP on that channel (any of their
-   conversations on it has ``opted_out_at``) -> ``no_consent``.
+   conversations on it has ``opted_out_at``) -> ``no_consent``; AA-968: a marketing e-mail to an address on the
+   agency's campaign suppression list (``crm.campaign_suppression``: it unsubscribed, bounced or complained, even as
+   a client since deleted and imported again) -> ``no_consent``.
 
 A row that passes goes to the sender: ``sent``; with no sender configured -> ``held`` / ``no_sender``. AA-945
 (CRM-17): the e-mail sender (:mod:`app.mail.sender`) answers a gate code: ``sent``; ``held_reconnect`` (the agency's
@@ -64,7 +66,10 @@ SELECT d.dispatch_id, d.status, d.channel, d.purpose, d.message_ref, d.message_i
        (d.channel IN ('sms', 'whatsapp') AND EXISTS (
             SELECT 1 FROM crm.conversation cv
              WHERE cv.traveler_id = d.traveler_id AND cv.channel = d.channel AND cv.opted_out_at IS NOT NULL
-               AND cv.deleted_at IS NULL)) AS text_opted_out
+               AND cv.deleted_at IS NULL)) AS text_opted_out,
+       (d.channel = 'email' AND d.purpose = 'marketing' AND EXISTS (
+            SELECT 1 FROM crm.campaign_suppression s
+             WHERE s.email_bidx = t.email_bidx AND s.deleted_at IS NULL)) AS email_suppressed
   FROM crm.dispatch_queue d
   LEFT JOIN crm.traveler t ON t.traveler_id = d.traveler_id
   LEFT JOIN crm.sales_partner sp ON sp.sales_partner_id = d.sales_partner_id
@@ -117,6 +122,8 @@ def gate(row: Any) -> str | None:
     if row["purpose"] == "marketing" and row["marketing_ok"] is not True:
         return "no_consent"
     if row.get("text_opted_out"):  # AA-958: the client texted STOP on this SMS / WhatsApp channel
+        return "no_consent"
+    if row.get("email_suppressed"):  # AA-968: the address is on the agency's do-not-mail list for marketing
         return "no_consent"
     return None
 

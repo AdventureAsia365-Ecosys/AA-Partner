@@ -16,6 +16,8 @@
   tour retirement or reinstatement the catalog sync stored): the flags and tasks of :mod:`app.catalog.retired`.
 - ``crm_ops_release_sync`` (AA-956, hourly, :class:`app.ops_release.job.HourlyOpsReleaseSync`, plus one-trip nudges):
   the Module 8 ops release (create, refresh, T-21 alert, withdraw, purge with a receipt).
+- ``crm_campaign_tick`` (AA-968, CRM-36, hourly, :class:`app.campaigns.send.HourlyCampaignTick`): the live campaigns'
+  gates and today's clients up to the mailbox daily limit, one ``crm_dispatch`` row each.
 - ``crm_workflow_run`` / ``crm_workflow_tick`` / ``crm_task_digest`` (AA-959, CRM-29a): one workflow run's due
   steps (:mod:`app.workflows.runner`), the hourly tick (:class:`app.workflows.tick.HourlyWorkflowTick`: date and
   special-date triggers, due runs, task dates, the digest) and one agency's morning digest
@@ -49,6 +51,7 @@ from app.jobs.kinds import (
     AUDIT_EXPORT,
     AUDIT_RETENTION,
     BOOKING_SYNC,
+    CAMPAIGN_TICK,
     CATALOG_SYNC,
     CLIENT_IMPORT,
     DATA_EXPORT,
@@ -87,6 +90,7 @@ from app.platform_settings import flag
 if TYPE_CHECKING:  # pragma: no cover
     from app.audit_export.archive import AuditArchive
     from app.booking.client import BookingClient
+    from app.campaigns.audience import Links as CampaignLinks
     from app.catalog.client import CatalogConfig
     from app.cis.activation import ActivationConfig
     from app.cis.membership_feed import FeedConfig
@@ -187,6 +191,7 @@ def build_handlers(
     tenant_erasure: FeedConfig | None = None,
     tenant_erase_apply_enabled: bool | Callable[[], bool] = False,
     environment: str = "test",
+    campaign_links: CampaignLinks | None = None,
 ) -> dict[str, Handler]:
     """Every kind the worker runs. ``keys``: the field-encryption provider the intake kind needs (AA-936); without
     it ``crm_intake_process`` jobs are retried until the provider is configured. ``audit_archive``: the two audit
@@ -209,10 +214,14 @@ def build_handlers(
     not_configured). AA-1038: ``tp_leads`` (TRIPPLANNER_API_URL + the M2M token: the TripPlanner lead pull; None =
     not_configured). AA-1093 stage 2: ``tenant_erasure`` (CIS_API_URL + the M2M token, scope cis.tenant/erasure; None
     = not_configured), ``tenant_erase_apply_enabled`` (``TENANT_ERASE_APPLY_ENABLED``, the Terraform kill switch of
-    the CRM erase apply) and ``environment`` (outside prod only a synthetic tenant is applied)."""
+    the CRM erase apply) and ``environment`` (outside prod only a synthetic tenant is applied). AA-968:
+    ``campaign_links`` (the client host and the TripPlanner site origins the campaign gate and the unsubscribe links
+    use; None = nothing configured, every live campaign is held ``not_configured``)."""
     from app.audit_export import export as audit_export
     from app.audit_export import retention as audit_retention
     from app.booking.sync import BookingSync
+    from app.campaigns import audience as campaign_audience
+    from app.campaigns import send as campaign_send
     from app.catalog import retired as tour_retired
     from app.catalog.sync import CatalogSync
     from app.cis.entitlement_feed import EntitlementFeed
@@ -285,6 +294,9 @@ def build_handlers(
             apply_enabled=tenant_erase_apply_enabled,
             environment=environment,
         ),
+        CAMPAIGN_TICK: campaign_send.build_handler(
+            keys, campaign_links or campaign_audience.Links(client_origin=None, tripplanner_origin=None)
+        ),
     }
 
 
@@ -332,6 +344,7 @@ def build_hooks(
     ``ingest_store`` (the forward-in scan; none = no scan)."""
     from app.audit_export.export import HourlyAuditExportSchedule
     from app.audit_export.retention import DailyAuditRetentionSchedule
+    from app.campaigns.send import HourlyCampaignTick
     from app.catalog.sync import HourlyCatalogSync
     from app.cis.entitlement_feed import EntitlementPullSchedule
     from app.fx.fetch import DailyFxSchedule
@@ -368,6 +381,7 @@ def build_hooks(
         DailyPilotBackupSchedule(retention_utc_hour, clock),  # AA-969 d16: the pilot agency's nightly export
         LeadPullSchedule(clock),  # AA-1038: TripPlanner leads, every minute
         TenantEraseSchedule(clock),  # AA-1093 stage 2: the CIS tenant erasure saga, every 2 minutes
+        HourlyCampaignTick(clock),  # AA-968: the campaign send pass, every hour
     )
 
 
@@ -400,6 +414,7 @@ SCHEDULED_KINDS: frozenset[str] = frozenset(
         PILOT_BACKUP,  # AA-969 d16: daily, due now
         TP_LEAD_PULL,  # AA-1038: every minute slot, due now
         TENANT_ERASE,  # AA-1093 stage 2: every 2-minute slot, due now
+        CAMPAIGN_TICK,  # AA-968: hourly, due now
     }
 )
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.
