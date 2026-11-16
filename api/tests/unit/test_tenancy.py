@@ -385,5 +385,7 @@ def test_me_says_whether_the_agency_is_on_preview(stored: str | None, preview: b
     finally:
         ps.forget_tenant(TENANT)
     assert r.status_code == 200 and r.json()["preview"] is preview
-    # Read through the request's own connection, for this agency only (the RLS context of tenant_tx).
-    assert conn.sql("FROM crm.setting_value v") == [(TENANT,)]
+    # Read through the request's own connection, for this agency only (the RLS context of tenant_tx). The fake pool
+    # shares this connection, so a platform snapshot refresh (LIKE 'crm.%', no agency) may sit beside it, depending on
+    # which test refreshed the reader last: match the agency read alone.
+    assert conn.sql("WHERE v.tenant_id = $1 AND v.status = 'approved'") == [(TENANT,)]
