@@ -7,6 +7,8 @@
 // AA-1036 (R3): the amber "AI paused" banner when Adventure Asia switched the CRM's AI off for the whole app (/me
 // ai_paused, from crm.llm_app_profile); the Trip planner entry opens the CRM's own Settings > Add-ons page for the
 // owner (S269: a CRM-only owner has no studio; lib/addOns.ts).
+// AA-963 (CRM-32): the global search config (GET search/config: off by default per agency, the kinds the member may
+// see); Content pieces join the search only when CIS lists this agency among the person's studios ("yes").
 import { ErrorState, PageFrame } from "@/app/_kit";
 import { MailboxBanner } from "@/components/mail/MailboxBanner";
 import { SupportBanner } from "@/components/support/SupportBanner";
@@ -23,6 +25,7 @@ import type { Recovery } from "@/lib/team";
 import { CrmShell } from "@/app/_kit/local/CrmShell";
 import { plannerHref } from "@/lib/apps";
 import { AiPausedBanner } from "@/components/ai/AiPausedBanner";
+import { shellSearch } from "@/lib/searchServer";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +62,7 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
   const studioHref = contentStudioHref(ctx.cfg.contentStudioUrl, ctx.cfg.publicOrigin);
   const studio = studioHref && session ? await studioAccess(ctx.cfg.cisApiUrl, session) : "unknown";
   const contentHref = studioLink(studioHref, studio);
+  const search = await shellSearch(ctx.cfg, session, { tenantId: ctx.me.tenant_id, lang: ctx.lang, studio });
   return (
     <CrmShell
       dict={dictionary(ctx.lang)}
@@ -69,6 +73,7 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
       plannerHref={plannerHref(ctx.role)}
       locale={ctx.locale}
       syntheticBadge={ctx.cfg.environment !== "prod"}
+      search={search}
     >
       {banner && (
         <SupportBanner state={banner} canManage={!!supportView?.can_manage} lang={ctx.lang} locale={ctx.locale} timeZone={supportView?.timezone ?? "UTC"} />

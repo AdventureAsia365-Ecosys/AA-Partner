@@ -576,6 +576,70 @@
     "when": "Tăng khi thành viên cần thêm giọng văn (ví dụ mỗi ngôn ngữ và kênh một giọng); giảm nếu giọng văn tạo ra mà không dùng.",
     "example": "Với mặc định 4 giọng văn, một thành viên giữ được giọng tiếng Anh và tiếng Việt cho cả e-mail và WhatsApp."
    }
+  },
+  "crm.search.enabled": {
+   "en": {
+    "what": "Whether one agency's app shows the global search box (Ctrl K). Clients are found only by a whole e-mail, a whole international phone number or whole name words, through the blind indexes; trips, bookings, suppliers, services, templates, workflows, inclusions and tags by their names.",
+    "raise": "Turning it on lets the agency's members find any record they may open from one box. Every client shown is written to the agency's access log, like the client directory.",
+    "lower": "Turning it off hides the box and refuses every search; members go back to the client directory and the pipeline filters.",
+    "when": "Turn it on for one agency at a time, and only after the independent review of the search has passed; never for the pilot agency before that review. Turn it off if a review finds a problem.",
+    "example": "With the default of off, no agency sees the search box until an administrator switches it on for that agency."
+   },
+   "vi": {
+    "what": "Ứng dụng của một đại lý có hiện ô tìm kiếm chung (Ctrl K) hay không. Khách hàng chỉ tìm được bằng nguyên địa chỉ e-mail, nguyên số điện thoại quốc tế hoặc nguyên các từ trong tên, qua chỉ mục mù; chuyến đi, đặt chỗ, nhà cung cấp, dịch vụ, mẫu tin, quy trình, hạng mục bao gồm và nhãn tìm theo tên.",
+    "raise": "Bật lên thì thành viên đại lý tìm được mọi hồ sơ họ được mở từ một ô. Mỗi khách hàng hiện ra được ghi vào nhật ký truy cập của đại lý, giống danh bạ khách hàng.",
+    "lower": "Tắt đi thì ô tìm kiếm ẩn và mọi lượt tìm bị từ chối; thành viên quay về danh bạ khách hàng và bộ lọc của pipeline.",
+    "when": "Bật cho từng đại lý một, và chỉ sau khi đợt review độc lập của tính năng tìm kiếm đã đạt; không bật cho đại lý pilot trước đợt review đó. Tắt nếu review phát hiện vấn đề.",
+    "example": "Với mặc định là tắt, không đại lý nào thấy ô tìm kiếm cho tới khi quản trị viên bật cho đại lý đó."
+   }
+  },
+  "crm.search.min_text_chars": {
+   "en": {
+    "what": "The fewest characters a text search needs before it runs. An e-mail address or an international phone number is always searched whole, whatever this value.",
+    "raise": "A higher minimum avoids broad searches on one or two letters that match many supplier and template names.",
+    "lower": "A lower minimum lets members find short names and codes sooner, with broader result lists.",
+    "when": "Raise it if one- or two-letter searches show up as load; lower it if short supplier codes cannot be found.",
+    "example": "With the default of 2 characters, typing one letter shows nothing and two letters start the search."
+   },
+   "vi": {
+    "what": "Số ký tự tối thiểu để một lượt tìm theo văn bản chạy. Địa chỉ e-mail hoặc số điện thoại quốc tế luôn được tìm nguyên vẹn, bất kể giá trị này.",
+    "raise": "Mức tối thiểu cao hơn tránh các lượt tìm quá rộng chỉ với một hai chữ cái, khớp với rất nhiều tên nhà cung cấp và mẫu tin.",
+    "lower": "Mức thấp hơn giúp thành viên tìm tên và mã ngắn sớm hơn, với danh sách kết quả rộng hơn.",
+    "when": "Tăng nếu các lượt tìm một hai chữ cái gây tải; giảm nếu không tìm được mã nhà cung cấp ngắn.",
+    "example": "Với mặc định 2 ký tự, gõ một chữ cái chưa hiện gì, gõ hai chữ cái thì bắt đầu tìm."
+   }
+  },
+  "crm.search.query_max_chars": {
+   "en": {
+    "what": "The longest search term the agency app accepts. A longer term is refused before anything is read.",
+    "raise": "Longer terms allow pasting a long supplier reference or a long trip title, at the cost of slightly heavier text matching.",
+    "lower": "Shorter terms keep every search cheap; a member who pastes a long text is asked to shorten it.",
+    "when": "Raise it when members paste references or titles that are refused as too long; there is rarely a reason to lower it.",
+    "example": "With the default of 120 characters, the same bound as the client directory's search, a pasted paragraph is refused."
+   },
+   "vi": {
+    "what": "Độ dài tối đa của từ khoá tìm kiếm mà ứng dụng đại lý nhận. Từ khoá dài hơn bị từ chối trước khi đọc bất cứ dữ liệu nào.",
+    "raise": "Cho phép từ khoá dài hơn để dán mã tham chiếu dài của nhà cung cấp hoặc tên chuyến đi dài, đổi lại việc so khớp văn bản nặng hơn một chút.",
+    "lower": "Từ khoá ngắn hơn giữ mỗi lượt tìm nhẹ; thành viên dán đoạn văn dài sẽ được yêu cầu rút ngắn.",
+    "when": "Tăng khi thành viên dán mã hoặc tên bị từ chối vì quá dài; hiếm khi cần giảm.",
+    "example": "Với mặc định 120 ký tự, bằng giới hạn của ô tìm trong danh bạ khách hàng, một đoạn văn dán vào sẽ bị từ chối."
+   }
+  },
+  "crm.search.results_per_kind": {
+   "en": {
+    "what": "The most results one search shows for each kind of record (clients, trips, bookings, suppliers and the others). Each kind runs one bounded query, so this also bounds the work of a search.",
+    "raise": "More results per kind help an agency with many similar records find the right one without refining the term, at the cost of a longer list and more client names decrypted and logged per search.",
+    "lower": "Fewer results keep the box short and each search light; members refine the term more often.",
+    "when": "Raise it when agencies report that the record they want is often just below the list; lower it if search load shows up in the database metrics.",
+    "example": "With the default of 5, a search for a common word shows at most five trips, five suppliers and so on."
+   },
+   "vi": {
+    "what": "Số kết quả tối đa một lượt tìm hiện cho mỗi loại hồ sơ (khách hàng, chuyến đi, đặt chỗ, nhà cung cấp và các loại khác). Mỗi loại chạy một truy vấn có giới hạn, nên số này cũng giới hạn khối lượng việc của một lượt tìm.",
+    "raise": "Nhiều kết quả hơn giúp đại lý có nhiều hồ sơ giống nhau tìm đúng hồ sơ mà không phải gõ lại, đổi lại danh sách dài hơn và mỗi lượt tìm giải mã cùng ghi log nhiều tên khách hơn.",
+    "lower": "Ít kết quả hơn giữ danh sách ngắn và mỗi lượt tìm nhẹ; thành viên phải gõ cụ thể hơn thường xuyên hơn.",
+    "when": "Tăng khi đại lý báo hồ sơ cần tìm hay nằm ngay dưới danh sách; giảm nếu tải tìm kiếm hiện lên trong số liệu của cơ sở dữ liệu.",
+    "example": "Với mặc định 5, tìm một từ phổ biến hiện tối đa năm chuyến đi, năm nhà cung cấp, v.v."
+   }
   }
  }
 }
