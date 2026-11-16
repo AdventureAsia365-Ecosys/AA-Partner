@@ -162,7 +162,9 @@ export default function LegalPage({
           <a href={TERMS_PATH} style={{ color: BRAND.muted, textDecoration: "none" }}>{t("terms")}</a>
           <a href={DATA_PATH} style={{ color: BRAND.muted, textDecoration: "none" }}>{t("data")}</a>
           <a href={SUBPROCESSORS_PATH} style={{ color: BRAND.muted, textDecoration: "none" }}>{t("subprocessors")}</a>
-          <Link href="/portal/dashboard" style={{ color: BRAND.muted, textDecoration: "none" }}>{t("login")}</Link>
+          {/* S282: no prefetch. /portal/dashboard redirects a signed-out visitor to the sign-in host; a prefetch of it on a
+              short page (footer in view) made the browser resolve that host on page load (Visual, legal-data 1440). */}
+          <Link href="/portal/dashboard" prefetch={false} style={{ color: BRAND.muted, textDecoration: "none" }}>{t("login")}</Link>
         </nav>
       </article>
       </div>
