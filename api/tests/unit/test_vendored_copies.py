@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import urllib.error
 from pathlib import Path
 
@@ -75,18 +76,83 @@ def test_github_fetch_retries_then_reports(monkeypatch: pytest.MonkeyPatch) -> N
     assert len(calls) == 2 and calls[0].endswith("/contents/shared/jobs/job_table_shape.py?ref=main")
 
 
+def _annex_text(data: dict) -> str:
+    """A root annex whose public summary gives ``data`` (front matter, a section, the marked block)."""
+    return (
+        f'---\nid: SEC-04-dpa-annex3\ntitle: "DPA Annex 3: sub-processors ({data["version"]})"\n'
+        f"last_reviewed: {data['updated']}\n---\n\n# Annex\n\n## 5. Public summary\n\n"
+        f"<!-- public-summary:begin -->\n{data['markdown']}<!-- public-summary:end -->\n"
+    )
+
+
+def _root_annex(path: str) -> bytes | None:
+    """The root file as it would have to be for the committed JSON (an offline stand-in for AA-Ecosys master)."""
+    assert path == "docs/legal/dpa-annex-3-subprocessors.md"
+    data = json.loads((check.WEB_DIR / "lib/legal/annex3.generated.json").read_text(encoding="utf-8"))
+    return _annex_text(data).encode()
+
+
+def test_the_annex_summary_is_compared_with_the_root_master_file(tmp_path: Path) -> None:
+    """AA-970: the agency app's annex 3 JSON must equal what gen_legal_annex.py makes of the root annex on master."""
+    data = {"version": "draft v9.1", "updated": "2030-01-02", "markdown": "### How we handle your data\n\nInvented.\n"}
+    root = _annex_text(data).encode()
+    gen = check._annex_module()
+    local = tmp_path / "annex3.generated.json"
+    local.write_text(gen.render(gen.extract(root.decode())), encoding="utf-8")
+    out = io.StringIO()
+    assert (
+        check.check_annex(lambda _p: root, out, local) == 0
+        and "ok    web/lib/legal/annex3.generated.json" in out.getvalue()
+    )
+    drifted = root.replace(b"Invented.", b"Invented, then changed.")
+    out = io.StringIO()
+    assert (
+        check.check_annex(lambda _p: drifted, out, local) == 1 and "differs from the public summary" in out.getvalue()
+    )
+    out = io.StringIO()
+    assert check.check_annex(lambda _p: None, out, local) == 1 and "merge the root change first" in out.getvalue()
+
+    def offline(_p: str) -> bytes | None:
+        raise check.FetchError("HTTP 500")
+
+    out = io.StringIO()
+    assert check.check_annex(offline, out, local) == 1 and "cannot compare" in out.getvalue()
+    out = io.StringIO()
+    no_markers = root.replace(b"<!-- public-summary:begin -->", b"")
+    assert check.check_annex(lambda _p: no_markers, out, local) == 1 and "no usable public summary" in out.getvalue()
+
+
+def test_the_root_fetch_reads_the_root_repo_on_master(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    def boom(req, timeout: float):
+        calls.append(req.full_url)
+        raise urllib.error.URLError("offline")
+
+    monkeypatch.setattr(check.urllib.request, "urlopen", boom)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    with pytest.raises(check.FetchError, match="AA-Ecosys:docs/legal"):
+        check.github_fetch("docs/legal/x.md", attempts=1, sleep=lambda _s: None, repo="AA-Ecosys", branch="master")
+    assert calls == [
+        "https://api.github.com/repos/AdventureAsia365-Ecosys/AA-Ecosys/contents/docs/legal/x.md?ref=master"
+    ]
+    assert check.root_fetch.keywords == {"repo": "AA-Ecosys", "branch": "master"}
+
+
 def test_web_lib_copies_exist_and_main_checks_every_set() -> None:
     assert all((check.WEB_DIR / name).is_file() for name in check.WEB_COPIES)
     assert check.WEB_COPIES["lib/bffPath.ts"] == "frontend/lib/bffPath.ts"
     by_source = {src: (check.API_DIR / name).read_bytes() for name, src in check.COPIES.items()}
     by_source |= {src: (check.WEB_DIR / name).read_bytes() for name, src in check.WEB_COPIES.items()}
     out = io.StringIO()
-    assert check.main(by_source.get, out) == 0
+    assert check.main(by_source.get, out, _root_annex) == 0
     assert f"{len(check.WEB_COPIES)} file(s) checked, 0 failed" in out.getvalue()
     assert "ok    web/lib/bffPath.ts" in out.getvalue()
+    assert "ok    web/lib/legal/annex3.generated.json" in out.getvalue()
     by_source["frontend/lib/bffPath.ts"] = b"drifted"
     out = io.StringIO()
-    assert check.main(by_source.get, out) == 1
+    assert check.main(by_source.get, out, _root_annex) == 1
     assert "FAIL  web/lib/bffPath.ts" in out.getvalue()
 
 

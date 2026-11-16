@@ -16,6 +16,8 @@ export const LEGAL_MESSAGES = defineMessages(
     nav: "Legal",
     privacy: "Privacy notice",
     terms: "Partner terms",
+    data: "How we handle your data",
+    subprocessors: "Sub-processors",
     login: "Partner login",
   },
   {
@@ -31,6 +33,8 @@ export const LEGAL_MESSAGES = defineMessages(
     nav: "Pháp lý",
     privacy: "Thông báo quyền riêng tư",
     terms: "Điều khoản đối tác",
+    data: "Cách chúng tôi xử lý dữ liệu",
+    subprocessors: "Bên xử lý phụ",
     login: "Đăng nhập đối tác",
   },
 );

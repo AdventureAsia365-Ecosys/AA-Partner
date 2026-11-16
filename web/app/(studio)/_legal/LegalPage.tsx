@@ -6,13 +6,15 @@
 // AA-1036 (R3): the page renders a structured document (legalDoc.ts) in the UI language (the app's one setting, read
 // per request); the frame's words are legal.messages.ts. The Vietnamese document is a translation for reading and says
 // so; the English one applies.
+// AA-970: the public data and sub-processor pages (rendered from the root DPA Annex 3) use this frame too, with the
+// annex's own version line, row cards for the sub-processor list and both pages in the footer links.
 import Link from "next/link";
 import type { CSSProperties, ReactNode } from "react";
 import { BRAND, FONT_DISPLAY, FONT_SANS, LOGO_SRC, SUPPORT_EMAIL } from "@/app/_kit/core/brand";
 import { translator, type Lang } from "@/app/_kit/core/i18n";
 import { PageFrame } from "@/app/_kit/core/PageFrame";
-import { PRIVACY_PATH, TERMS_PATH } from "@/lib/studio/legal";
-import type { Block, Inline, LegalDoc, ListItem } from "./legalDoc";
+import { DATA_PATH, PRIVACY_PATH, SUBPROCESSORS_PATH, TERMS_PATH } from "@/lib/studio/legal";
+import type { Block, Inline, LegalDoc, ListItem, RowCard } from "./legalDoc";
 import { LEGAL_MESSAGES } from "./legal.messages";
 
 const linkStyle: CSSProperties = { color: BRAND.ink, fontWeight: 600, textDecoration: "underline", textUnderlineOffset: 2 };
@@ -48,8 +50,25 @@ function Item({ item }: { item: ListItem }) {
   );
 }
 
+function Card({ card }: { card: RowCard }) {
+  return (
+    <div data-testid="legal-row-card" style={{ border: "1px solid var(--border)", borderRadius: 12, padding: "12px 14px", margin: "0 0 10px" }}>
+      <h3 style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 15, color: BRAND.ink, margin: "0 0 6px" }}><Runs runs={card.title} /></h3>
+      <dl style={{ margin: 0, display: "grid", gap: 6 }}>
+        {card.fields.map((f, i) => (
+          <div key={i}>
+            <dt style={{ fontSize: 12, fontWeight: 600, color: BRAND.muted }}>{f.label}</dt>
+            <dd style={{ margin: 0 }}><Runs runs={f.value} /></dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 function BlockView({ block }: { block: Block }) {
   if ("p" in block) return <p><Runs runs={block.p} /></p>;
+  if ("rows" in block) return <div>{block.rows.map((c, i) => <Card key={i} card={c} />)}</div>;
   return <ul>{block.ul.map((x, i) => <Item key={i} item={x} />)}</ul>;
 }
 
@@ -95,7 +114,16 @@ export function LegalSection({ id, title, children }: { id: string; title: strin
   );
 }
 
-export default function LegalPage({ doc, lang }: { doc: LegalDoc; lang: Lang }) {
+export default function LegalPage({
+  doc,
+  lang,
+  version,
+}: {
+  doc: LegalDoc;
+  lang: Lang;
+  /** AA-970: the version line of a page rendered from another document (the annex's version and review date). */
+  version?: { label: string; version: string; updated: string };
+}) {
   const t = translator(LEGAL_MESSAGES, lang);
   return (
     // The page frame is the kit PageFrame (the one <main>, AA-1008 S6f), restyled as the light page ground; the card is
@@ -109,21 +137,34 @@ export default function LegalPage({ doc, lang }: { doc: LegalDoc; lang: Lang }) 
         <img src={LOGO_SRC} alt={t("logoAlt")} width={52} height={33} style={{ width: 52, height: "auto", display: "block", marginBottom: 16 }} />
         <h1 style={{ fontFamily: FONT_DISPLAY, fontWeight: 600, fontSize: 24, color: BRAND.ink, margin: "0 0 4px" }}>{doc.title}</h1>
         <p style={{ fontSize: 12, color: BRAND.muted, margin: "0 0 16px" }}>
-          {t("versionLine", t("version"), t("updated"))}
+          {version ? `${version.label} · ${version.version} · ${version.updated}` : t("versionLine", t("version"), t("updated"))}
         </p>
         <DraftBanner lang={lang} />
         <div style={{ fontSize: 14, lineHeight: 1.65, color: BRAND.body, marginTop: 16 }}>
           <p style={{ margin: 0 }}><Runs runs={doc.intro} /></p>
         </div>
-        {doc.sections.map((s) => (
-          <LegalSection key={s.id} id={s.id} title={s.title}>
-            {s.blocks.map((b, i) => <BlockView key={i} block={b} />)}
-          </LegalSection>
-        ))}
+        {doc.sections.map((s) =>
+          s.title ? (
+            <LegalSection key={s.id} id={s.id} title={s.title}>
+              {s.blocks.map((b, i) => <BlockView key={i} block={b} />)}
+            </LegalSection>
+          ) : (
+            // AA-970: an untitled section (the page title names it already) has no heading of its own.
+            <section key={s.id} id={s.id} style={{ paddingTop: 16 }}>
+              <div data-legal-body="" style={{ fontSize: 14, lineHeight: 1.65, color: BRAND.body }}>
+                {s.blocks.map((b, i) => <BlockView key={i} block={b} />)}
+              </div>
+            </section>
+          ),
+        )}
         <nav aria-label={t("nav")} style={{ display: "flex", flexWrap: "wrap", gap: 16, fontSize: 12, marginTop: 28, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
           <a href={PRIVACY_PATH} style={{ color: BRAND.muted, textDecoration: "none" }}>{t("privacy")}</a>
           <a href={TERMS_PATH} style={{ color: BRAND.muted, textDecoration: "none" }}>{t("terms")}</a>
-          <Link href="/portal/dashboard" style={{ color: BRAND.muted, textDecoration: "none" }}>{t("login")}</Link>
+          <a href={DATA_PATH} style={{ color: BRAND.muted, textDecoration: "none" }}>{t("data")}</a>
+          <a href={SUBPROCESSORS_PATH} style={{ color: BRAND.muted, textDecoration: "none" }}>{t("subprocessors")}</a>
+          {/* S282: no prefetch. /portal/dashboard redirects a signed-out visitor to the sign-in host; a prefetch of it on a
+              short page (footer in view) made the browser resolve that host on page load (Visual, legal-data 1440). */}
+          <Link href="/portal/dashboard" prefetch={false} style={{ color: BRAND.muted, textDecoration: "none" }}>{t("login")}</Link>
         </nav>
       </article>
       </div>
