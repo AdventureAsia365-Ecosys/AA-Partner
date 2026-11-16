@@ -426,6 +426,14 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "DELETE", pattern: new RegExp(`^(trips|travelers)/${UUID}/tags/${UUID}$`), tenant: true, card: "AA-960" },
   { method: "GET", pattern: /^workflows\/coverage$/, tenant: true, card: "AA-960" },
   { method: "GET", pattern: /^marketing\/ready-to-travel$/, tenant: true, card: "AA-960" },
+  // AA-968 (CRM-36): Marketing > Campaigns (owner / agent; every write needs the campaigns feature, the API checks).
+  { method: "GET", pattern: /^campaigns(\/options|\/tours)?$/, tenant: true, card: "AA-968" },
+  { method: "GET", pattern: new RegExp(`^campaigns/blocks/${UUID}$`), tenant: true, card: "AA-968" },
+  { method: "POST", pattern: /^campaigns$/, tenant: true, card: "AA-968" },
+  { method: "GET", pattern: new RegExp(`^campaigns/${UUID}$`), tenant: true, card: "AA-968" },
+  { method: "PATCH", pattern: new RegExp(`^campaigns/${UUID}$`), tenant: true, card: "AA-968" },
+  { method: "DELETE", pattern: new RegExp(`^campaigns/${UUID}$`), tenant: true, card: "AA-968" },
+  { method: "POST", pattern: new RegExp(`^campaigns/${UUID}/(preview|schedule|cancel)$`), tenant: true, card: "AA-968" },
   // AA-1071 (crm-056): sales partners (every member lists them for the trip's picker; the owner manages them, their
   // links and their commissions; owner / agent read the commissions and the statement CSV), the trip's partner.
   { method: "GET", pattern: /^sales-partners$/, tenant: true, card: "AA-1071" },

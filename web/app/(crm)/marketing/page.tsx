@@ -2,11 +2,14 @@
 // again" from GET /crm/v1/marketing/ready-to-travel: past clients home for long enough with no open trip, each row with
 // its reasons (card E "the list explains its reasons"), their last trip, and the state of their marketing consent
 // (sending to them is marketing: it needs a yes, and the send gate checks it again). The list is the agency's own; the
-// page says Adventure Asia never reads it. Campaigns (AA-968) arrive later: their place says so. Filters and pages are
-// links (a server render); the names are opened by the API and the view is audited there.
+// page says Adventure Asia never reads it. Campaigns (AA-968, card CRM-36): the agency's campaigns and their editor
+// (components/campaigns/CampaignsPanel.tsx). Filters and pages are links (a server render); the names are opened by
+// the API and the view is audited there.
 import Link from "next/link";
 import { Badge, EmptyState, ErrorState, K } from "@/app/_kit";
+import { CampaignsPanel } from "@/components/campaigns/CampaignsPanel";
 import { Panel, PageTitle } from "@/components/PageTitle";
+import type { CampaignList, CampaignOptions } from "@/lib/campaigns";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { formatDate } from "@/lib/dates";
@@ -44,7 +47,11 @@ export default async function MarketingPage({ searchParams }: { searchParams: Pr
   const owner = sp.owner === "me" ? "me" : "anyone";
   const page = Math.min(Math.max(Number.parseInt(String(sp.page ?? "1"), 10) || 1, 1), 200);
   const query = new URLSearchParams({ owner, page: String(page) });
-  const res = await crmCall<ReadyList>(ctx.cfg, session, "GET", "marketing/ready-to-travel", { query });
+  const [res, campaigns, options] = await Promise.all([
+    crmCall<ReadyList>(ctx.cfg, session, "GET", "marketing/ready-to-travel", { query }),
+    crmCall<CampaignList>(ctx.cfg, session, "GET", "campaigns"),
+    crmCall<CampaignOptions>(ctx.cfg, session, "GET", "campaigns/options"),
+  ]);
   const chip = (active: boolean): React.CSSProperties => ({
     fontSize: 12.5,
     padding: "4px 10px",
@@ -115,7 +122,11 @@ export default async function MarketingPage({ searchParams }: { searchParams: Pr
         )}
       </Panel>
       <Panel title={t(lang, "tag.marketing.campaigns")} testId="marketing-campaigns">
-        <p style={{ margin: 0, fontSize: 13, color: K.muted }}>{t(lang, "tag.marketing.campaignsSoon")}</p>
+        {campaigns.ok && options.ok ? (
+          <CampaignsPanel lang={lang} initial={campaigns.data} options={options.data} />
+        ) : (
+          <ErrorState message={t(lang, "error.api")} />
+        )}
       </Panel>
     </div>
   );

@@ -40,6 +40,7 @@ import { partnersEn, partnersVi } from "./i18nPartners";
 import { bookNowEn, bookNowVi } from "./i18nBookNow";
 import { inclusionsEn, inclusionsVi } from "./i18nInclusions";
 import { tagsEn, tagsVi } from "./i18nTags";
+import { campaignsEn, campaignsVi } from "./i18nCampaigns";
 import { settingsUxEn, settingsUxVi } from "./i18nSettingsUx";
 
 export type Lang = "en" | "vi";
@@ -94,6 +95,7 @@ const en = {
   ...bookNowEn, // AA-1072: Book now on the tour page, Pay online, Settings > online payment and booking
   ...inclusionsEn, // AA-1070 crm-35: Settings > Proposal lines, the builder picker, the client lists (lib/i18nInclusions.ts)
   ...tagsEn, // AA-960: tags, system tags, bulk tagging, Settings > Tags, coverage, ready to travel again (lib/i18nTags.ts)
+  ...campaignsEn, // AA-968: Marketing > Campaigns (lib/i18nCampaigns.ts)
   ...settingsUxEn, // AA-1096 S280: per-form fields and quota, refund limit, markup / price-check notes (lib/i18nSettingsUx.ts)
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
@@ -2834,6 +2836,7 @@ const vi: Record<MessageKey, string> = {
   ...bookNowVi,
   ...inclusionsVi,
   ...tagsVi,
+  ...campaignsVi, // AA-968
   ...settingsUxVi,
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",

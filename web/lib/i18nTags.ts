@@ -129,7 +129,6 @@ export const tagsEn = {
   "tag.ready.count": "{n} clients",
   "tag.ready.ownersOnly": "Only the agency's own team sees this list. Adventure Asia never reads it.",
   "tag.marketing.campaigns": "Campaigns",
-  "tag.marketing.campaignsSoon": "Campaigns to past clients arrive in a later release.",
 } as const;
 
 export const tagsVi: Record<keyof typeof tagsEn, string> = {
@@ -257,5 +256,4 @@ export const tagsVi: Record<keyof typeof tagsEn, string> = {
   "tag.ready.count": "{n} khách",
   "tag.ready.ownersOnly": "Chỉ đội của công ty bạn thấy danh sách này. Adventure Asia không bao giờ đọc nó.",
   "tag.marketing.campaigns": "Chiến dịch",
-  "tag.marketing.campaignsSoon": "Chiến dịch cho khách cũ sẽ có ở bản sau.",
 };
