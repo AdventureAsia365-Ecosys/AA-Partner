@@ -65,6 +65,9 @@ AI_NOTES_OPTIONS_MAX_CHARS = "crm.ai.notes_options_max_chars"
 AI_NOTES_OPTIONS_MAX_CANDIDATES = "crm.ai.notes_options_max_candidates"
 AI_NOTES_OPTIONS_MAX_SUGGESTIONS = "crm.ai.notes_options_max_suggestions"
 AI_VOICES_PER_MEMBER_MAX = "crm.ai.voice_profiles_per_member_max"
+# AA-968 (crm-074): the campaigns (card CRM-36): the mailbox daily send limit and the clients per campaign.
+CAMPAIGN_MAILBOX_DAILY_LIMIT = "crm.campaign.mailbox_daily_limit"
+CAMPAIGN_MAX_RECIPIENTS = "crm.campaign.max_recipients"
 # AA-963 (crm-071): the global search (R35): the per-agency switch (off until the independent review) and its bounds.
 SEARCH_ENABLED = "crm.search.enabled"
 SEARCH_RESULTS_PER_KIND = "crm.search.results_per_kind"

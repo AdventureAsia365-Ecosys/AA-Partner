@@ -37,6 +37,7 @@ from app.booking.checker import BookingChecker
 from app.booking.client import BookingClient, BookingConfig
 from app.booking.products import ProductCache
 from app.booking.tariff import TariffCurrencies, TariffReader
+from app.campaigns.audience import links_from
 from app.catalog.client import CatalogConfig
 from app.cis.activation import ActivationConfig
 from app.cis.m2m import TokenProvider
@@ -71,6 +72,7 @@ from app.routers import (
     audit,
     builder,
     calendar,
+    campaigns,
     catalogue,
     ci,
     client_pages,
@@ -213,6 +215,7 @@ def create_app(
                     tenant_erasure=build_membership_feed(settings, tokens),
                     tenant_erase_apply_enabled=settings.tenant_erase_apply_enabled,
                     environment=settings.environment,
+                    campaign_links=links_from(settings),  # AA-968: the campaign gate and unsubscribe links
                     catalog=build_catalog(settings, tokens),
                     directory=app.state.directory,
                     mail_runtime=app.state.mail_runtime,
@@ -380,6 +383,7 @@ def create_app(
     app.include_router(catalogue.router)  # AA-1069: the agency service catalogue
     app.include_router(workflows.router)
     app.include_router(tags.router)  # AA-960: tags, system tags, ready to travel again
+    app.include_router(campaigns.router)  # AA-968: campaigns (R14), sent from the agency's own mailbox
     app.include_router(search.router)  # AA-963: global search (R35), off per agency until reviewed
     return app
 

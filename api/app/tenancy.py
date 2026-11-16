@@ -284,10 +284,9 @@ def _system_actor_kind(actor: str) -> str:
         return "aa_ops"
     if actor.startswith("invitation:"):
         return "user"  # the invited person accepting (AA-939)
-    if actor.startswith("client_link:"):
-        return "traveler"  # a client filling a form from a signed link (AA-943)
-    if actor.startswith("sales_partner_link:"):
-        return "traveler"  # AA-1071: a sales partner (an outside party) on its own signed link
+    if actor.startswith(("client_link:", "sales_partner_link:", "campaign_unsubscribe:")):
+        # a client on a signed link (AA-943), a sales partner on its own link (AA-1071), a client's unsubscribe (AA-968)
+        return "traveler"
     if actor.startswith("calendar_feed:"):
         return "user"  # a member's own calendar subscription (AA-961)
     if actor.startswith("support:"):

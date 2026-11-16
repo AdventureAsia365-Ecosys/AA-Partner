@@ -14,7 +14,9 @@
   the id the CRM stored even when the provider replaced the Message-ID (:mod:`app.mail.threads` rule 1). Our own id
   last (not first) keeps the chain in order for JWZ-style threading: a self-reference is a loop it skips, and the
   client's mail stays this message's parent;
-- one text/plain part (UTF-8). No HTML from the composer in v1: the agent writes text.
+- one text/plain part (UTF-8). No HTML from the composer in v1: the agent writes text;
+- AA-968: a campaign mail carries ``List-Unsubscribe`` (its one-click address) and
+  ``List-Unsubscribe-Post: List-Unsubscribe=One-Click`` (RFC 8058), so the client's mail program offers the opt-out.
 """
 
 from __future__ import annotations
@@ -52,6 +54,7 @@ def build(
     text: str,
     mail_token: str | None,
     in_reply_to: str | None = None,
+    list_unsubscribe: str | None = None,
 ) -> Built:
     domain = from_address.rpartition("@")[2] or "localhost"
     message_id = email.utils.make_msgid(domain=domain)
@@ -67,5 +70,8 @@ def build(
         msg["In-Reply-To"] = ref
         references.insert(0, ref)
     msg["References"] = " ".join(references)
+    if list_unsubscribe:
+        msg["List-Unsubscribe"] = f"<{list_unsubscribe}>"
+        msg["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
     msg.set_content(text[:MAX_BODY])
     return Built(raw=msg.as_bytes(), message_id=message_id.strip("<>"))

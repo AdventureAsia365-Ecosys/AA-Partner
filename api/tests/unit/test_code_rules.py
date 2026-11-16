@@ -66,6 +66,9 @@ DB_MODULES = frozenset(
         # AA-1093 stage 2 (crm-066 / crm-067): the CIS erasure saga's record (platform tables, no tenant rows) and the
         # one call that counts or deletes a CIS tenant's studio invitations
         "app/lifecycle/saga_store.py",
+        # AA-968 (crm-073): the campaign unsubscribe link's context (the token picks the agency; app.tenancy's own pool
+        # gate, status read and audit writer)
+        "app/campaigns/link_tx.py",
     }
 )
 # The only modules that may open the platform context provisioning_tx() (no membership check): agency creation and the
@@ -132,6 +135,8 @@ SYSTEM_MODULES = frozenset(
         "app/tripplanner/leads.py",
         # AA-1093: an AA tour's retirement fanned out (one agency per transaction, actor job:crm_tour_retired_fanout).
         "app/catalog/retired.py",
+        # AA-968: the hourly campaign send pass (one agency per transaction, actor job:crm_campaign_tick).
+        "app/campaigns/send.py",
     }
 )
 # AA-1072: the "Book now" routes of the public tour page decide the agency by the same form key.
@@ -158,6 +163,8 @@ PARTNER_LINK_MODULES = frozenset({"app/partners/public.py"})
 INGEST_MODULES = frozenset({"app/mail/ingest.py"})
 # AA-961: a member's ICS calendar feed fetched by its token (the token picks the agency and the member): the feed only.
 CALENDAR_FEED_MODULES = frozenset({"app/calendar/public.py"})
+# AA-968: a client's campaign unsubscribe link (the token picks the agency and the recipient): the unsubscribe module.
+CAMPAIGN_UNSUBSCRIBE_MODULES = frozenset({"app/campaigns/unsubscribe.py"})
 # AA-958: a Twilio webhook (the hook id picks the agency; the signature is checked inside): the webhook module only.
 MESSAGING_HOOK_MODULES = frozenset({"app/messaging/webhook.py"})
 # AA-1072: a payment gateway's webhook (the merchant reference picks the agency; the signature is checked inside).
@@ -248,6 +255,7 @@ CONTEXT_FACTORIES = frozenset(
         "entitlement_feed_tx",
         "ingest_tx",
         "calendar_feed_tx",
+        "campaign_unsubscribe_tx",
         "messaging_hook_tx",
         "payment_session_tx",
         "studio_platform_tx",
@@ -585,6 +593,10 @@ def test_ingest_tx_is_used_only_by_the_mail_ingest_job() -> None:
 
 def test_calendar_feed_tx_is_used_only_by_the_public_feed_module() -> None:
     assert _users_of("calendar_feed_tx", CALENDAR_FEED_MODULES) == []
+
+
+def test_campaign_unsubscribe_tx_is_used_only_by_the_unsubscribe_module() -> None:
+    assert _users_of("campaign_unsubscribe_tx", CAMPAIGN_UNSUBSCRIBE_MODULES) == []
 
 
 def test_messaging_hook_tx_is_used_only_by_the_webhook_module() -> None:

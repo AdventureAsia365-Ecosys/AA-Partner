@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from app.campaigns import send as campaign_send
 from app.catalog import retired, sync
 from app.catalog.client import TourAnswer
 from app.jobs.kinds import EXPECTED_SECONDS, TOUR_RETIRED_FANOUT
@@ -144,6 +145,9 @@ class _Conn:
         self.cleared: list[dict[str, Any]] = []
         self.note_trips: list[dict[str, Any]] = []
         self.view: list[dict[str, Any]] = []
+        self.campaigns: list[str] = []
+        self.held: list[str] = []
+        self.withdrawn: list[str] = []
 
     async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
         if sql == retired.ITEMS_SQL:
@@ -156,6 +160,13 @@ class _Conn:
             return [{"trip_id": t} for t in args[0] if t in {"trip-a"}]
         if sql == retired.VIEW_SQL:
             return self.view
+        if sql == campaign_send.RETIRED_SQL:  # AA-968: the scheduled campaigns that name the tour are held
+            newly = [c for c in self.campaigns if c not in self.held]
+            self.held += newly
+            return [{"campaign_id": c} for c in newly]
+        if sql == campaign_send.WITHDRAW_SQL:  # the held campaign's unsent mails (none here: nothing queued yet)
+            self.withdrawn.append(args[0])
+            return []
         raise AssertionError(sql)
 
     async def fetchval(self, sql: str, *args: Any) -> Any:
@@ -309,6 +320,24 @@ async def test_the_handler_walks_every_agency(monkeypatch: pytest.MonkeyPatch) -
     check_payload(out, what="result")
     assert out == {"status": "done", "purpose": "retired", "agency_count": 2, "skipped_count": 1, "flag_count": 3,
                    "task_count": 2, "trip_count": 2}  # fmt: skip
+
+
+@pytest.mark.asyncio
+async def test_a_retirement_holds_the_campaigns_that_name_the_tour(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AA-968 (card CRM-36): the fan-out pulls the agency's scheduled campaigns on the tour; the same run again holds
+    nothing new, and an agency without such a campaign reports no campaign count."""
+    us = retired.changed_us(AT)
+    gone = {"title": "Pine ridge 2 days", "served_state": "retired", "state_changed_at": AT}
+    with_campaigns = _Conn([], tour=gone)
+    with_campaigns.campaigns = ["camp-1", "camp-2"]
+    _patch_agencies(monkeypatch, {"a": with_campaigns, "b": _Conn([], tour=gone)})
+    handler = retired.build_handler(None)
+    payload = {"source_id": TOUR, "purpose": "retired", "changed_at": us}
+    out = await handler(object(), Job("j", retired.KIND, payload, 1, 3))  # type: ignore[arg-type]
+    assert out["campaign_held_count"] == 2 and with_campaigns.held == ["camp-1", "camp-2"]
+    assert with_campaigns.withdrawn == ["camp-1", "camp-2"]
+    again = await handler(object(), Job("j", retired.KIND, payload, 2, 3))  # type: ignore[arg-type]
+    assert "campaign_held_count" not in again
 
 
 @pytest.mark.asyncio

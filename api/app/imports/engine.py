@@ -26,7 +26,10 @@ Rules kept from the rest of the CRM: values are cleaned like the API's own forms
 agency's vault DEK and indexed (e-mail, phone, name, name tokens) like ``app.travellers.service.create_traveler``;
 imported clients get ``lead_source = 'import'`` and belong to the member who started the import (R8); a marketing
 consent column writes one ``crm.consent`` row (``source = 'import'``) for a **new** client only, so a re-import never
-turns an unsubscribed client back on. Trips arrive closed (``completed`` / ``cancelled`` / ``lost``, reason ``other``)
+turns an unsubscribed client back on. AA-968 (card CRM-36 R): a new client whose e-mail is on the agency's campaign
+suppression list (``crm.campaign_suppression``, the address unsubscribed, bounced or complained, even as a client since
+deleted) gets no marketing yes from the file: no consent row, ``marketing_ok`` false, warning code
+``marketing_suppressed``. Trips arrive closed (``completed`` / ``cancelled`` / ``lost``, reason ``other``)
 or as an open Inquiry, with their lead and companions as party twins (``trip_traveler`` + ``trip_party``) and one
 ``trip_stage_history`` row (reason ``import``). Notes are ``internal`` notes under the vault DEK.
 
@@ -78,6 +81,8 @@ SELECT k.k AS k, t.traveler_id AS id
 TRAVELER_BY_EMAIL_SQL = """
 SELECT email_bidx AS k, traveler_id AS id FROM crm.traveler WHERE email_bidx = ANY($1::bytea[]) AND deleted_at IS NULL
 """
+# AA-968: the agency's do-not-mail list by e-mail blind index (the address, not a client: it outlives a client erase).
+SUPPRESSED_SQL = "SELECT email_bidx AS k FROM crm.campaign_suppression WHERE email_bidx = ANY($1::bytea[])"
 TRAVELER_BY_PHONE_SQL = """
 SELECT phone_bidx AS k, traveler_id AS id FROM crm.traveler WHERE phone_bidx = ANY($1::bytea[]) AND deleted_at IS NULL
 """
@@ -307,6 +312,7 @@ async def _clients(
         bytes(r["k"])
         for r in (await ctx.conn.fetch(TRAVELER_BY_NAME_SQL, list({v["name_idx"] for v in ok})) if ok else [])
     }
+    suppressed = {bytes(r["k"]) for r in (await ctx.conn.fetch(SUPPRESSED_SQL, emails) if emails else [])}
 
     results: list[Result] = []
     for row, v, codes in prepared:
@@ -339,6 +345,7 @@ async def _clients(
             results.append(Result(row.number, "match", ("duplicate_contact",), earlier))
             continue
         warn = ("possible_duplicate",) if v["name_idx"] in names or v["name_idx"] in state.names else ()
+        v, warn = _suppressed_marketing(v, suppressed, warn)
         state.refs.add(v["ref_idx"])
         state.names.add(v["name_idx"])
         traveler_id = await _insert_client(ctx, vault, v, member_id) if apply else None
@@ -348,6 +355,16 @@ async def _clients(
             state.phones[v["phone_idx"]] = traveler_id
         results.append(Result(row.number, "create", warn, traveler_id))
     return results
+
+
+def _suppressed_marketing(
+    v: dict[str, Any], suppressed: set[bytes], warn: tuple[str, ...]
+) -> tuple[dict[str, Any], tuple[str, ...]]:
+    """AA-968 (card CRM-36 R): an address on the agency's campaign suppression list imported again stays suppressed:
+    the file's marketing yes is not recorded (no consent row, ``marketing_ok`` false) and the row says why."""
+    if v["marketing"] and v["email_idx"] in suppressed:
+        return {**v, "marketing": None}, (*warn, "marketing_suppressed")
+    return v, warn
 
 
 async def _insert_client(ctx: AnyContext, vault: Vault, v: dict[str, Any], member_id: uuid.UUID | None) -> uuid.UUID:

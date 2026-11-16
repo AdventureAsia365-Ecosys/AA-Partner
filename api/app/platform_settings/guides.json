@@ -577,6 +577,38 @@
     "example": "Với mặc định 4 giọng văn, một thành viên giữ được giọng tiếng Anh và tiếng Việt cho cả e-mail và WhatsApp."
    }
   },
+  "crm.campaign.mailbox_daily_limit": {
+   "en": {
+    "what": "The most campaign e-mails one of an agency's own mailboxes sends in one day (in the agency's timezone), all of its campaigns together. A campaign whose list is longer is spread over the next days, so the mailbox provider does not block the agency's address.",
+    "raise": "Large lists go out in fewer days. A mailbox that sends more than its provider allows may be paused or blocked by the provider, and the agency's own mail stops too.",
+    "lower": "Each mailbox stays well inside its provider's daily limit, but a large list takes more days to go out.",
+    "when": "Raise it for an agency whose mailbox allows more (a Google Workspace or Microsoft 365 account) by giving that agency its own value; lower it if agencies report that their provider paused their mailbox.",
+    "example": "With the default of 400 e-mails a day, a campaign to 1,000 clients goes out over three days: 400, 400, then 200."
+   },
+   "vi": {
+    "what": "Số e-mail chiến dịch tối đa mà một hộp thư của đại lý gửi trong một ngày (theo múi giờ của đại lý), cộng mọi chiến dịch của đại lý. Chiến dịch có danh sách dài hơn được chia sang các ngày sau, để nhà cung cấp hộp thư không chặn địa chỉ của đại lý.",
+    "raise": "Danh sách lớn gửi xong trong ít ngày hơn. Hộp thư gửi vượt mức nhà cung cấp cho phép có thể bị tạm dừng hoặc chặn, và thư thường của đại lý cũng ngừng theo.",
+    "lower": "Mỗi hộp thư nằm an toàn dưới giới hạn ngày của nhà cung cấp, nhưng danh sách lớn cần nhiều ngày hơn để gửi hết.",
+    "when": "Tăng cho đại lý có hộp thư cho phép gửi nhiều hơn (tài khoản Google Workspace hoặc Microsoft 365) bằng giá trị riêng của đại lý đó; giảm nếu đại lý báo nhà cung cấp đã tạm dừng hộp thư.",
+    "example": "Với mặc định 400 e-mail một ngày, chiến dịch gửi 1.000 khách đi trong ba ngày: 400, 400, rồi 200."
+   }
+  },
+  "crm.campaign.max_recipients": {
+   "en": {
+    "what": "The most clients one campaign may go to. Scheduling a campaign whose audience is larger is refused until the agency narrows it with client tags.",
+    "raise": "Agencies can mail more of their clients in one campaign. A large campaign takes many days to send and a mistake in it reaches more people.",
+    "lower": "Each campaign stays small and targeted, but an agency with many clients must split one message into several campaigns.",
+    "when": "Raise it for an agency with a large, well-kept client list (its own value); lower it if campaigns go to people who did not expect them.",
+    "example": "With the default of 2,000 clients, an agency with 5,000 consenting clients picks a tag (for example repeat clients) to send one campaign."
+   },
+   "vi": {
+    "what": "Số khách tối đa mà một chiến dịch được gửi tới. Lên lịch một chiến dịch có danh sách lớn hơn bị từ chối tới khi đại lý thu hẹp bằng thẻ khách.",
+    "raise": "Đại lý gửi được cho nhiều khách hơn trong một chiến dịch. Chiến dịch lớn cần nhiều ngày để gửi và một lỗi trong đó tới nhiều người hơn.",
+    "lower": "Mỗi chiến dịch nhỏ và đúng đối tượng, nhưng đại lý có nhiều khách phải tách một nội dung thành nhiều chiến dịch.",
+    "when": "Tăng cho đại lý có danh sách khách lớn và sạch (giá trị riêng); giảm nếu chiến dịch tới tay người không mong nhận.",
+    "example": "Với mặc định 2.000 khách, đại lý có 5.000 khách đồng ý nhận tin chọn một thẻ (ví dụ khách quay lại) để gửi một chiến dịch."
+   }
+  },
   "crm.search.enabled": {
    "en": {
     "what": "Whether one agency's app shows the global search box (Ctrl K). Clients are found only by a whole e-mail, a whole international phone number or whole name words, through the blind indexes; trips, bookings, suppliers, services, templates, workflows, inclusions and tags by their names.",

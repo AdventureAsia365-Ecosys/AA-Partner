@@ -180,6 +180,7 @@ export const onboardingEn = {
   "onb.code.duplicate_trip_ref": "the same trip_ref is on an earlier row",
   "onb.code.duplicate_note": "the same note is on an earlier row",
   "onb.code.possible_duplicate": "same name as another client",
+  "onb.code.marketing_suppressed": "this email unsubscribed from the agency's campaigns before: the marketing yes is not recorded",
   "onb.code.other": "check this row",
 
   "onb.err.import_too_large": "The file is larger than 5 MB: split it into smaller files.",
@@ -456,6 +457,7 @@ export const onboardingVi: Record<OnboardingKey, string> = {
   "onb.code.duplicate_trip_ref": "trip_ref này đã có ở dòng trước",
   "onb.code.duplicate_note": "ghi chú này đã có ở dòng trước",
   "onb.code.possible_duplicate": "trùng tên với khách khác",
+  "onb.code.marketing_suppressed": "email này đã huỷ nhận tin chiến dịch của đại lý trước đây: không ghi nhận đồng ý nhận tin",
   "onb.code.other": "hãy kiểm tra dòng này",
 
   "onb.err.import_too_large": "File lớn hơn 5 MB: hãy chia thành các file nhỏ hơn.",

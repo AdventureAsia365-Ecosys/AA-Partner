@@ -119,6 +119,10 @@ TOUR_RETIRED_FANOUT = "crm_tour_retired_fanout"
 # once per 2-minute slot by a maintenance hook. Not deploy-gate or DB Migrate exempt: a row exists only while due or
 # running (an apply holds one transaction for the agency).
 TENANT_ERASE = "crm_tenant_erase"
+# AA-968 (CRM-36): the hourly campaign send pass (app.campaigns.send): per agency, the live campaigns' gates and today's
+# clients up to the mailbox daily limit, queued due-now once per UTC hour. Not deploy-gate exempt (exists only while
+# due / running); each client is one crm_dispatch row, so a released run sends nothing twice.
+CAMPAIGN_TICK = "crm_campaign_tick"
 
 DEFAULT_EXPECTED_SECONDS = 300
 OVERDUE_FACTOR = 2
@@ -171,6 +175,7 @@ EXPECTED_SECONDS: dict[str, int] = {
     PDF_RENDER: 60,
     TOUR_RETIRED_FANOUT: 120,
     TENANT_ERASE: 600,
+    CAMPAIGN_TICK: 300,
 }
 
 

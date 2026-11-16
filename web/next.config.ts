@@ -64,6 +64,8 @@ const nextConfig: NextConfig = {
       // AA-1071: a sales partner's inquiry link and its page link carry their token in the path too.
       { source: "/c/r/:token*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }] },
       { source: "/c/a/:token*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }] },
+      // AA-968: a campaign mail's unsubscribe page carries its token in the path too.
+      { source: "/c/u/:token*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }] },
     ];
   },
 };

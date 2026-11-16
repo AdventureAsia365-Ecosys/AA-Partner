@@ -30,6 +30,9 @@ partner's contact e-mail (``crm.sales_partner.contact_email_enc``, decrypted her
 inactive or trashed -> ``failed`` (``no_partner_address``). Its code waits on ``crm.sales_partner_otp.code_enc`` like
 a traveller's on ``otp_challenge`` and is cleared once sent.
 
+AA-968: a campaign mail (a ``crm.campaign_recipient`` row names the message) gets the RFC 8058 List-Unsubscribe
+headers with its one-click address (``unsubscribe_url_enc``, opened here at send time).
+
 AA-1014: a client address in the reserved ``.invalid`` top-level domain (:mod:`app.mail.recipients`; synthetic
 agencies, every environment) is never handed to the provider: the message ends ``failed`` (``invalid_tld``) and the
 dispatch row ``dropped`` / ``send_failed``. The action that queued the mail (proposal sent, portal code issued) is
@@ -86,6 +89,11 @@ SELECT message_id, rfc_message_id_enc FROM crm.message
  ORDER BY occurred_at DESC LIMIT 1
 """
 AGENCY_SQL = "SELECT display_name FROM crm.tenant WHERE tenant_id = $1"
+# AA-968: the one-click unsubscribe address of a campaign mail.
+UNSUBSCRIBE_SQL = """
+SELECT campaign_recipient_id, unsubscribe_url_enc FROM crm.campaign_recipient
+ WHERE message_id = $1 AND unsubscribe_url_enc IS NOT NULL
+"""
 HOLD_SQL = """
 UPDATE crm.message SET status = 'held_reconnect', failure_code = $2 WHERE message_id = $1 AND status = 'queued'
 """
@@ -220,6 +228,18 @@ class MailSender:
             if reply
             else None
         )
+        campaign = await ctx.conn.fetchrow(UNSUBSCRIBE_SQL, message_id)
+        list_unsubscribe = (
+            await vault.decrypt(
+                "campaign_recipient",
+                "unsubscribe_url_enc",
+                campaign["campaign_recipient_id"],
+                campaign["unsubscribe_url_enc"],
+                purpose=PURPOSE,
+            )  # fmt: skip
+            if campaign is not None
+            else None
+        )
         built = compose.build(
             from_address=from_address,
             from_name=await ctx.conn.fetchval(AGENCY_SQL, ctx.tenant_id),
@@ -228,6 +248,7 @@ class MailSender:
             text=text,
             mail_token=row["mail_token"],
             in_reply_to=in_reply_to,
+            list_unsubscribe=list_unsubscribe,
         )
         secret = await load_secret(vault, mailbox["credential_id"], mailbox["secret_enc"])
         try:

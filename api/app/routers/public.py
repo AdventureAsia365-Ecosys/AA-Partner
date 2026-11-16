@@ -88,6 +88,7 @@ from fastapi import APIRouter, Header, HTTPException, Path, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from app.calendar import public as calendar_public
+from app.campaigns import unsubscribe as campaign_unsubscribe
 from app.db import request_pool
 from app.errors import NotFound
 from app.intake import booking as public_booking
@@ -224,6 +225,34 @@ async def get_calendar_feed(request: Request, token: LinkToken, _: PublicRateLim
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+@router.get("/unsubscribe/{token}")
+async def get_unsubscribe(request: Request, token: LinkToken, _: PublicRateLimit) -> JSONResponse:
+    """AA-968: the client's preferences page of one campaign mail (the agency's name, subscribed or not)."""
+    pool = await request_pool(request)
+    found = await campaign_unsubscribe.state(pool, token)
+    return JSONResponse(found, headers={**NO_STORE, "Referrer-Policy": "no-referrer"})
+
+
+@router.post("/unsubscribe/{token}")
+async def post_unsubscribe(request: Request, token: LinkToken) -> JSONResponse:
+    """AA-968: unsubscribe (the page's button and the mail program's RFC 8058 one-click POST, body
+    ``List-Unsubscribe=One-Click``, which is not read). Not under the per-address public limit: mail providers post
+    every one-click from shared addresses and a 429 would lose an opt-out; an unknown token is 404 before any write."""
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    done = await campaign_unsubscribe.unsubscribe(pool, keys, token)
+    return JSONResponse(done, headers=NO_STORE)
+
+
+@router.post("/unsubscribe/{token}/resubscribe")
+async def post_resubscribe(request: Request, token: LinkToken, _: PublicRateLimit) -> JSONResponse:
+    """AA-968: the client's own "subscribe again" on the preferences page (lifts the agency's suppression)."""
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    done = await campaign_unsubscribe.resubscribe(pool, keys, token)
+    return JSONResponse(done, headers=NO_STORE)
 
 
 async def _hook(request: Request, hook_id: str, kind: str, signature: str | None) -> Response:

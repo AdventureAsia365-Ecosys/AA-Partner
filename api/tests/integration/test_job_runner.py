@@ -18,6 +18,7 @@ from app.jobs.kinds import (
     AUDIT_EXPORT,
     AUDIT_RETENTION,
     BOOKING_SYNC,
+    CAMPAIGN_TICK,
     CATALOG_SYNC,
     DEPLOY_BLOCKING_HORIZON_SECONDS,
     DEPLOY_BLOCKING_KINDS,
@@ -227,6 +228,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         (AUDIT_EXPORT, True),
         (AUDIT_RETENTION, True),
         (BOOKING_SYNC, False),  # AA-947: Recurring every minute, its next slot queued ahead (exempt)
+        (CAMPAIGN_TICK, True),  # AA-968: the hourly campaign send pass, due now
         (CATALOG_SYNC, True),  # AA-947: the hourly AA tour cache, due now
         (ENTITLEMENT_PULL, True),  # AA-1028: the CIS account feed, one run per 2-minute slot, due now
         (FX_FETCH, True),  # AA-944: the daily FX rates, queued due now from 00:00 UTC
@@ -264,6 +266,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         PILOT_BACKUP: 1,
         TP_LEAD_PULL: 1,
         TENANT_ERASE: 1,
+        CAMPAIGN_TICK: 1,
     }
     while await worker.run_once():
         pass

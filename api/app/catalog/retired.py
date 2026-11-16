@@ -18,6 +18,8 @@ others):
   unique keys); each trip that got a new flag gets one task ``aa_tour_discontinued`` (root plan D10: the trip owner
   while an active member, else the agency's first active owner; urgent unless only booked lines are hit). The job
   **never** writes a booking line, an option or a proposal: Booking keeps every booking and hold, the agent decides.
+- **retired**, AA-968 (card CRM-36): every scheduled or sending campaign of the agency that names the tour is held
+  ``aa_tour_retired`` (:func:`app.campaigns.send.pull_retired`); the agency edits it and schedules it again.
 - **reinstated**: the tour's open flags are cleared; a trip whose last open flag this cleared and that still has the
   open task gets an internal note saying so (in the agency's language), the task stays for the agent to close.
 
@@ -41,6 +43,7 @@ from typing import Any
 import asyncpg
 
 from app.audit_export import registry
+from app.campaigns import send as campaign_send
 from app.errors import Forbidden, NotFound, ServiceError
 from app.jobs.kinds import TOUR_RETIRED_FANOUT
 from app.jobs.queue import Job
@@ -282,7 +285,12 @@ async def _agency(ctx: SystemContext, keys: KeyProvider | None, source_id: str, 
     if not _current(tour, made, us):
         return Counter({"stale": 1})
     if made == RETIRED:
-        return await raise_flags(ctx, source_id, us)
+        counts = await raise_flags(ctx, source_id, us)
+        # AA-968 (card CRM-36): a scheduled or sending campaign that names the tour is held before its next send day.
+        held = await campaign_send.pull_retired(ctx, source_id)
+        if held:
+            counts["campaign_held"] += held
+        return counts
     vault = Vault(keys, ctx) if keys is not None else None
     return await clear_flags(ctx, source_id, us, vault, tour["title"])
 
