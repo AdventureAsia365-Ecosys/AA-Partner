@@ -436,7 +436,8 @@ async def cancel(ctx: TenantContext, campaign_id: uuid.UUID, version: int) -> di
         raise Conflict("version_conflict", "the campaign changed: reload it")
     if row["state"] not in model.CANCELLABLE:
         raise Conflict("campaign_not_cancellable", "a sent or cancelled campaign stays as it is")
-    skipped = int((await ctx.conn.execute(SKIP_PLANNED_SQL, campaign_id)).split()[-1])
+    status = await ctx.conn.execute(SKIP_PLANNED_SQL, campaign_id)  # "UPDATE <n>"
+    skipped = int(status.split()[-1]) if status.split()[-1].isdigit() else 0
     undone = 0
     for r in await ctx.conn.fetch(QUEUED_DISPATCH_SQL, campaign_id):
         try:
