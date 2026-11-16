@@ -6,6 +6,8 @@
 // whole e-mail, phone or name words only. A refusal (a partial e-mail or phone, a wildcard) is explained, not hidden.
 // Content pieces (CIS) come from the studio BFF the person already uses, only when CIS lists this agency among their
 // studios (`contentEnabled`) and the studio token is this agency's (`tenantId`), filtered with the API's accent fold.
+// Every answer names the term it belongs to (AA-963 review): while the debounce has not sent the term typed now, the
+// previous term's results are not shown, so Enter never opens a record that does not match the visible term.
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -15,18 +17,20 @@ import { bffSend } from "@/lib/bffClient";
 import { fmt, type MessageKey } from "@/lib/i18n";
 import {
   matchContentPieces,
+  noticeOf,
   paletteGroups,
   refusalOf,
   shouldSearch,
+  statusFor,
   type ContentPieceHit,
   type PaletteRow,
   type SearchConfig,
   type SearchResult,
+  type SearchStatus,
 } from "@/lib/search";
 import { loadContentPieces } from "@/lib/searchContent";
 
 type Dict = Record<MessageKey, string>;
-type Status = { kind: "idle" } | { kind: "loading" } | { kind: "done"; result: SearchResult } | { kind: "error"; key: MessageKey };
 
 const DEBOUNCE_MS = 250;
 
@@ -43,22 +47,20 @@ export function SearchPalette(props: {
   return <Palette {...props} />;
 }
 
-function useSearch(term: string, config: SearchConfig): Status {
-  const [status, setStatus] = useState<Status>({ kind: "idle" });
+/** The search status of the term typed now (:func:`statusFor`: an earlier term's answer is never returned). */
+function useSearch(term: string, config: SearchConfig): SearchStatus {
+  const [status, setStatus] = useState<SearchStatus>({ kind: "idle" });
   useEffect(() => {
-    if (!shouldSearch(term, config)) {
-      const id = window.setTimeout(() => setStatus({ kind: "idle" }), 0);
-      return () => window.clearTimeout(id);
-    }
+    if (!shouldSearch(term, config)) return;
+    const q = term.trim();
     let live = true;
     const id = window.setTimeout(async () => {
-      setStatus({ kind: "loading" });
-      const res = await bffSend<SearchResult>("POST", "search", { q: term.trim() });
+      const res = await bffSend<SearchResult>("POST", "search", { q });
       if (!live) return;
-      if (res.ok) setStatus({ kind: "done", result: res.data });
+      if (res.ok) setStatus({ kind: "done", term: q, result: res.data });
       else if (!res.redirecting) {
         const refusal = refusalOf(res.detail);
-        setStatus({ kind: "error", key: refusal ? (`search.refusal.${refusal}` as MessageKey) : "search.error" });
+        setStatus({ kind: "error", term: q, key: refusal ? `search.refusal.${refusal}` : "search.error" });
       }
     }, DEBOUNCE_MS);
     return () => {
@@ -66,15 +68,16 @@ function useSearch(term: string, config: SearchConfig): Status {
       window.clearTimeout(id);
     };
   }, [term, config]);
-  return status;
+  return statusFor(status, term, config);
 }
 
 function useContentPieces(enabled: boolean, tenantId: string, lang: "en" | "vi"): ContentPieceHit[] {
   const [pieces, setPieces] = useState<ContentPieceHit[]>([]);
+  const session = useRef<object>({}); // one per palette open: the pieces are read again at the next open
   useEffect(() => {
     if (!enabled) return;
     let live = true;
-    void loadContentPieces(tenantId, lang).then((list) => {
+    void loadContentPieces(tenantId, lang, session.current).then((list) => {
       if (live) setPieces(list);
     });
     return () => {
@@ -98,11 +101,12 @@ function Palette({ onClose, dict, config, contentEnabled, tenantId, lang }: Para
     return () => window.clearTimeout(id);
   }, []);
 
+  const result = status.kind === "done" ? status.result : null;
   const groups = useMemo(() => {
-    const result = status.kind === "done" ? status.result : null;
     const content = wantsContent ? matchContentPieces(pieces, term, config.results_per_kind) : [];
     return paletteGroups(result, content, dict["search.archived"]);
-  }, [status, pieces, term, wantsContent, config.results_per_kind, dict]);
+  }, [result, pieces, term, wantsContent, config.results_per_kind, dict]);
+  const notice = noticeOf(result);
   const flat = useMemo(() => groups.flatMap((g) => g.rows), [groups]);
   const safeSelected = flat.length === 0 ? 0 : Math.min(selected, flat.length - 1);
   const position = useMemo(() => new Map(flat.map((row, i) => [row.key, i])), [flat]);
@@ -151,6 +155,11 @@ function Palette({ onClose, dict, config, contentEnabled, tenantId, lang }: Para
         </div>
         <div id="crm-search-results" role="listbox" aria-label={dict["search.results"]} style={{ maxHeight: "min(440px, 60vh)", overflowY: "auto", padding: 6 }}>
           <StatusLine status={status} term={term} config={config} dict={dict} empty={flat.length === 0} />
+          {notice && (
+            <div role="note" data-testid="crm-search-notice" style={{ padding: "8px 12px", fontSize: 12, color: K.muted }}>
+              {dict[`search.notice.${notice}` as MessageKey]}
+            </div>
+          )}
           {groups.map((g) => (
             <div key={g.kind} role="group" aria-label={dict[`search.kind.${g.kind}` as MessageKey]} style={{ marginBottom: 4 }}>
               <div style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted2, padding: "8px 10px 4px" }}>
@@ -192,16 +201,16 @@ function Palette({ onClose, dict, config, contentEnabled, tenantId, lang }: Para
   );
 }
 
-function StatusLine({ status, term, config, dict, empty }: { status: Status; term: string; config: SearchConfig; dict: Dict; empty: boolean }) {
+function StatusLine({ status, term, config, dict, empty }: { status: SearchStatus; term: string; config: SearchConfig; dict: Dict; empty: boolean }) {
   const style = { padding: "10px 12px", fontSize: 12.5, color: K.muted } as const;
   if (status.kind === "error") {
     return (
       <div role="alert" data-testid="crm-search-refusal" style={{ ...style, color: K.ink }}>
-        {dict[status.key]}
+        {dict[status.key as MessageKey]}
       </div>
     );
   }
-  if (status.kind === "loading") return <div role="status" style={style}>{dict["search.searching"]}</div>;
+  if (status.kind === "loading") return <div role="status" data-testid="crm-search-loading" style={style}>{dict["search.searching"]}</div>;
   if (!term.trim()) return <div style={style}>{dict["search.hint"]}</div>;
   if (status.kind === "idle" && !shouldSearch(term, config)) {
     return <div style={style}>{fmt(dict["search.tooShort"], { n: Math.max(1, config.min_text_chars) })}</div>;
