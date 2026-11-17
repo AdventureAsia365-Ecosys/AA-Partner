@@ -246,7 +246,7 @@
    "app": "crm",
    "area": "ai",
    "label": "AI budget ceiling per agency",
-   "description": "The highest monthly AI budget an agency owner may set on Settings > AI when the agency's CRM plan gives no AI budget (the plan's crm.ai_budget_usd_monthly is the ceiling when set). An administrator may give one agency its own ceiling. Seeded at 2 USD (the old code default).",
+   "description": "The highest monthly AI budget an agency owner may set on Settings > AI. An administrator may give one agency its own ceiling here, and it wins over the agency's CRM plan. Without one, the plan's crm.ai_budget_usd_monthly (CIS Plans page, Tenant 360) is the ceiling when set, and this platform value when the plan gives none. Seeded at 2 USD (the old code default).",
    "value_type": "usd",
    "unit": "USD/month",
    "min_value": 0,

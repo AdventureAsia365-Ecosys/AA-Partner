@@ -23,7 +23,9 @@
 --          spend that cannot be read lets the draft go on with a warning; the agency's own monthly budget stays hard.
 --        The CIS admin page (Platform > Settings, CRM tab) edits it.
 --   3. settings-edit of the two existing budget keys' descriptions: they are now the fallback when the plan gives no
---      AI budget (the guides say the same).
+--      AI budget (the guides say the same), except an administrator's per-agency value of crm.ai.budget_max_usd,
+--      which wins over the agency's plan (the code PR's app/llm/budget_limits.ceiling; so the CIS Platform › Settings
+--      CRM tab never lists an agency value the gateway does not apply).
 --   4. Register crm-076.
 --
 -- Behaviour on apply: none for running code (the new column is NULL for every agency until the code PR's projection
@@ -98,7 +100,7 @@ INSERT INTO m076_edit (key, doc)
 SELECT e.doc ->> 'key', e.doc
   FROM jsonb_array_elements($edit$[
 {"key": "crm.ai.budget_default_usd", "description": "The monthly AI budget of an agency whose CRM plan gives no AI budget (CIS feature crm.ai_budget_usd_monthly on the Plans page wins when set), and of an agency with no settings row yet. Never above the agency's ceiling (the lower of the two applies)."},
-{"key": "crm.ai.budget_max_usd", "description": "The highest monthly AI budget an agency owner may set on Settings > AI when the agency's CRM plan gives no AI budget (the plan's crm.ai_budget_usd_monthly is the ceiling when set). An administrator may give one agency its own ceiling. Seeded at 2 USD (the old code default)."}
+{"key": "crm.ai.budget_max_usd", "description": "The highest monthly AI budget an agency owner may set on Settings > AI. An administrator may give one agency its own ceiling here, and it wins over the agency's CRM plan. Without one, the plan's crm.ai_budget_usd_monthly (CIS Plans page, Tenant 360) is the ceiling when set, and this platform value when the plan gives none. Seeded at 2 USD (the old code default)."}
 ]$edit$::jsonb) AS e (doc)
 ON CONFLICT (key) DO UPDATE SET doc = EXCLUDED.doc;
 -- settings-edit:end
