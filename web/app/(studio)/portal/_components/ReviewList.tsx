@@ -45,6 +45,7 @@ import {
   type ReviewItem,
 } from "./reviewListApi";
 import { activePollInterval, pieceWorkStatus } from "./workStatus";
+import { AllowanceRefusalBanner, useAllowanceRefusal } from "./AllowanceHeld";
 import {
   builtInViews,
   bulkPublishPlan,
@@ -242,6 +243,7 @@ function ReviewListInner() {
     },
   });
 
+  const allowance = useAllowanceRefusal();
   const regenerateM = useMutation({
     mutationFn: (row: ReviewItem) => regeneratePiece(row.request_id),
     onSuccess: () => {
@@ -250,7 +252,8 @@ function ReviewListInner() {
       setConfirm(null);
     },
     onError: (e) => {
-      toast.error(plainError(e, t("rewriteFailed"), lang));
+      // AA-1126 L1: 402 (allowance used up) = the reason + Upgrade banner, not "failed"
+      if (!allowance.take(e)) toast.error(plainError(e, t("rewriteFailed"), lang));
       setConfirm(null);
     },
   });
@@ -410,6 +413,7 @@ function ReviewListInner() {
 
   return (
     <>
+      <AllowanceRefusalBanner refusal={allowance.refusal} onClose={allowance.clear} />
       <DataTable<ReviewItem>
         data={visible}
         columns={columns}

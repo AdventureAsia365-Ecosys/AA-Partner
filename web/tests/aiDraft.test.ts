@@ -9,7 +9,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { aiNoticeText } from "@/app/_kit";
-import type { AiSettings } from "@/lib/ai";
+import { planUpgradeHref, type AiSettings } from "@/lib/ai";
 import {
   FEEDBACK_CODES,
   draftAvailability,
@@ -281,9 +281,10 @@ describe("the draft drawer", () => {
     );
     const c = await mount(SETTINGS);
     await openAndWrite(c);
-    // AA-1126 L3: the reason, then the Upgrade link to the CRM's Add-ons page
+    // AA-1126 L3: the reason, then the Upgrade link: a plan upgrade request (the Add-ons page has no plan to change)
     expect(q(c, "ai-draft-fallback")!.textContent).toBe(`${MESSAGES.en["aiDraft.fallback.budget"]} ${MESSAGES.en["aiDraft.upgrade"]}`);
-    expect(q(c, "ai-draft-upgrade")!.getAttribute("href")).toBe("/settings/add-ons");
+    expect(q(c, "ai-draft-upgrade")!.getAttribute("href")).toBe(planUpgradeHref());
+    expect(planUpgradeHref()).toMatch(/^mailto:.+\?subject=CRM%20plan%20upgrade/);
     expect(q(c, "ai-draft-result")).toBeNull();
   });
 

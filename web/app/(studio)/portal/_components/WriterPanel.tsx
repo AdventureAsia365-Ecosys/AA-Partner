@@ -246,7 +246,7 @@ function ResultActions({ piece, target, confirmPublish, setConfirmPublish }: {
 // since S239: each watched item brings its own status check and messages (a T9 piece here, a T2
 // tour version in TourRewritePanel.tsx).
 
-export type WatchOutcome = "running" | "ready" | "failed";
+export type WatchOutcome = "running" | "ready" | "failed" | "held";
 
 export interface WatchItem {
   /** What is polled (piece id, tour version id). */
@@ -259,6 +259,8 @@ export interface WatchItem {
   readyText: string;
   failedText: string;
   slowText: string;
+  /** AA-1126 L1: the toast when the job waits for AI writing allowance ("held"); failedText when absent. */
+  heldText?: string;
 }
 
 interface Watched extends WatchItem { since: number }
@@ -319,6 +321,7 @@ export function useWriteWatcher() {
             if (!o || o === "running" || settled.current.has(w.id)) return;
             drop(w.id);
             if (o === "ready") toast.success(w.readyText, 8000);
+            else if (o === "held") toast.info(w.heldText ?? w.failedText, 8000);
             else toast.error(w.failedText, 8000);
           })
           .catch(() => { /* transient — next tick */ });

@@ -14,15 +14,39 @@ export class StudioError extends Error {
   readonly status: number;
   /** The API's own sentence (its `detail`), shown unchanged; "" when the API sent none. */
   readonly detail: string;
+  /** AA-1126 L1: the day the plan's AI allowance resets (a 402 ai_quota_exhausted), else null. */
+  readonly resetsAt: string | null;
 
-  constructor(code: StudioErrorCode, status = 0, detail = "") {
+  constructor(code: StudioErrorCode, status = 0, detail = "", resetsAt: string | null = null) {
     // The message is for logs and developers; the UI reads code/status/detail.
     super(detail || `${code}${status ? ` ${status}` : ""}`);
     this.name = "StudioError";
     this.code = code;
     this.status = status;
     this.detail = detail;
+    this.resetsAt = resetsAt;
   }
+}
+
+/** AA-1126 L1: the CIS code of a request refused because the plan's AI writing allowance is used up (HTTP 402, body
+ *  `{detail: {code, message, resets_at}}`, CIS api/core/ai_allowance.py). */
+export const AI_QUOTA_EXHAUSTED = "ai_quota_exhausted";
+const PAYMENT_REQUIRED = 402;
+
+/** The StudioError of a refusal for a used-up AI allowance (a 402, or any status whose detail carries the code), with
+ *  the reset day when the API sent one; null for any other answer. The UI shows its own sentence in the UI language
+ *  and the Upgrade link (AllowanceHeld.tsx), never the API's object. */
+export function allowanceError(status: number, body: unknown): StudioError | null {
+  const d = (body as { detail?: unknown } | null)?.detail;
+  const obj = d && typeof d === "object" ? (d as { code?: unknown; resets_at?: unknown }) : null;
+  if (status !== PAYMENT_REQUIRED && obj?.code !== AI_QUOTA_EXHAUSTED) return null;
+  const resetsAt = typeof obj?.resets_at === "string" ? obj.resets_at : null;
+  return new StudioError("aiAllowanceUsed", status, "", resetsAt);
+}
+
+/** True for the error of a used-up AI allowance (allowanceError). */
+export function isAllowanceError(e: unknown): e is StudioError {
+  return e instanceof StudioError && e.code === "aiAllowanceUsed";
 }
 
 /** The `detail` of an API error body when it is a sentence (a FastAPI 422 sends a list: not shown). */

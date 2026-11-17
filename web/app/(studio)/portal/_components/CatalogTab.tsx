@@ -27,7 +27,7 @@ import { CatalogDrawer } from "./CatalogDrawer";
 import { TourRewritePanel, watchTourRewrite, type TourRewriteTarget } from "./TourRewritePanel";
 import { WorkStatusBadge, activePollInterval, latestVersionByTour, tourWorkStatus } from "./workStatus";
 import { ServedBadge } from "./ServedBadge";
-import { AllowanceHeldActions } from "./AllowanceHeld";
+import { AllowanceHeldActions, AllowanceRefusalBanner, useAllowanceRefusal } from "./AllowanceHeld";
 import { plainError } from "./studioError";
 import { MasterNewerBadge } from "./MasterNewerNotice";
 import { showMasterNotice } from "@/lib/studio/masterNotice";
@@ -99,6 +99,8 @@ function CatalogInner() {
   const [rewrite, setRewrite] = useState<TourRewriteTarget | null>(null);
   const [retries, setRetries] = useState(0);
   const { watch, unwatch } = useWriteWatcher();
+  // AA-1126 L1: a rewrite / Retry refused with 402 (allowance used up) shows the reason + Upgrade, not a toast.
+  const allowance = useAllowanceRefusal();
 
   // ── Query: my versions. Poll (5s) only while a tour is still being written; stop automatically
   //    once nothing is writing — read the live result in the interval fn so no effect is needed. ──
@@ -124,7 +126,7 @@ function CatalogInner() {
   // (A finished version never turns writing again, so this guard only filters a stale id.)
   const openGroup = useMemo(() => {
     const g = openVersionId ? list.find((v) => v.id === openVersionId) ?? null : null;
-    return g && !isAiWriting(g) && !isRewriteFailed(g) ? g : null;
+    return g && !isAiWriting(g) && !isRewriteFailed(g) && !isAllowanceHeld(g) ? g : null;
   }, [list, openVersionId]);
 
   const rewriteVersion = useMemo(
@@ -140,7 +142,8 @@ function CatalogInner() {
   }, [unwatch, t]);
 
   function openRow(v: Version) {
-    if (isAiWriting(v) || isRewriteFailed(v)) openRewritePanel(v);
+    // AA-1126 L1: a held version opens the panel's held state (the reason + Upgrade), checked first
+    if (isAllowanceHeld(v) || isAiWriting(v) || isRewriteFailed(v)) openRewritePanel(v);
     else setOpenVersionId(v.id);
   }
 
@@ -157,7 +160,7 @@ function CatalogInner() {
       setRetries((n) => n + 1);
       invalidate();
     },
-    onError: (e) => toast.error(plainError(e, t("retryFailed"), lang)),
+    onError: (e) => allowance.take(e) || toast.error(plainError(e, t("retryFailed"), lang)),
   });
 
   const saveM = useMutation({
@@ -186,7 +189,7 @@ function CatalogInner() {
       setRewrite({ versionId: r.version_id, publishedTourId: vars.publishedTourId, title: vars.title, language: vars.lang });
       invalidate();
     },
-    onError: (e) => toast.error(plainError(e, t("rewriteRequestFailed"), lang)),
+    onError: (e) => allowance.take(e) || toast.error(plainError(e, t("rewriteRequestFailed"), lang)),
   });
 
   // ── DOCX export (unchanged endpoint/trigger) ──
@@ -340,6 +343,7 @@ function CatalogInner() {
 
   return (
     <>
+      <AllowanceRefusalBanner refusal={allowance.refusal} onClose={allowance.clear} />
       {tourIdFilter && (
         <div
           style={{

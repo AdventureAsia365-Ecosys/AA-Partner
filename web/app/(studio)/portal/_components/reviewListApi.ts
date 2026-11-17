@@ -6,7 +6,7 @@
 import { apiGet } from "@/app/_kit";
 import type { ServedFields } from "./ServedBadge";
 import { exportFileStem, withDocumentTitle, type AtomReplacement } from "@/lib/studio/myContent";
-import { StudioError, detailOf } from "./studioError";
+import { StudioError, allowanceError, detailOf } from "./studioError";
 import { finalCheckRefusal, publishRequestInit } from "@/lib/studio/publishCheck";
 
 export interface ReviewGoal { key: string; label: string }
@@ -151,7 +151,9 @@ export async function regeneratePiece(requestId: string): Promise<{ piece_id: st
   });
   if (!r.ok) {
     if (r.status === 422) throw new StudioError("ctaMissing", r.status);
-    throw new StudioError("rewriteStartFailed", r.status, detailOf(await r.json().catch(() => null)));
+    const body = await r.json().catch(() => null);
+    // AA-1126 L1: 402 ai_quota_exhausted (the plan's AI allowance is used up): the reason + Upgrade, not "failed"
+    throw allowanceError(r.status, body) ?? new StudioError("rewriteStartFailed", r.status, detailOf(body));
   }
   return r.json();
 }

@@ -20,7 +20,15 @@ import { BELL_MESSAGES } from "@/app/(studio)/portal/_components/account.message
 import { ERROR_MESSAGES } from "@/app/(studio)/portal/_components/errors.messages";
 import { StudioError } from "@/app/(studio)/portal/_components/studioError";
 import { tourWorkStatus, activityState } from "@/app/(studio)/portal/_components/workStatus";
-import { PLAN_PATH } from "@/lib/apps";
+import { ADD_ONS_PATH, PLAN_PATH } from "@/lib/apps";
+import { readFileSync } from "node:fs";
+import { AllowanceRefusalBanner } from "@/app/(studio)/portal/_components/AllowanceHeld";
+import { regeneratePiece } from "@/app/(studio)/portal/_components/reviewListApi";
+import { allowanceError, isAllowanceError, plainError } from "@/app/(studio)/portal/_components/studioError";
+import { rewriteState, watchTourRewrite } from "@/app/(studio)/portal/_components/TourRewritePanel";
+import { REWRITE_MESSAGES } from "@/app/(studio)/portal/_components/tours.messages";
+import { WizardRefusal, refusalFromResponse, refusalOf } from "@/app/(studio)/portal/_components/wizardRefusal";
+import { allowanceHref } from "@/app/(studio)/portal/_components/NotificationsBell";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 window.matchMedia ??= ((query: string) => ({
@@ -98,11 +106,12 @@ describe("a version held by the AI allowance", () => {
   });
 });
 
+const REFUSAL_BODY = {
+  detail: { code: "ai_quota_exhausted", message: "Zz plain message from the API.", resets_at: "2026-12-01" },
+};
+
 describe("a request refused with 402 ai_quota_exhausted", () => {
-  const refuse = () => vi.stubGlobal("fetch", vi.fn(async () => Response.json(
-    { detail: { code: "ai_quota_exhausted", message: "Your plan's AI writing allowance for this month is used up." } },
-    { status: 402 },
-  )));
+  const refuse = () => vi.stubGlobal("fetch", vi.fn(async () => Response.json(REFUSAL_BODY, { status: 402 })));
 
   it("a rewrite says the real reason", async () => {
     refuse();
@@ -115,6 +124,87 @@ describe("a request refused with 402 ai_quota_exhausted", () => {
     refuse();
     const err = await retryRewrite("v-1").catch((e) => e);
     expect((err as StudioError).code).toBe("aiAllowanceUsed");
+    expect((err as StudioError).resetsAt).toBe("2026-12-01");
+  });
+
+  it("a My Content rewrite (regeneratePiece) says the real reason, not 'rewrite start failed'", async () => {
+    refuse();
+    const err = await regeneratePiece("req-1").catch((e) => e);
+    expect(isAllowanceError(err)).toBe(true);
+    expect(plainError(err, "fallback", "en")).toBe(ERROR_MESSAGES.en.aiAllowanceUsed);
+  });
+
+  it("the object detail is never a sentence: only the code and the reset day are read", () => {
+    expect(allowanceError(402, REFUSAL_BODY)?.resetsAt).toBe("2026-12-01");
+    expect(allowanceError(402, null)?.code).toBe("aiAllowanceUsed");             // a 402 with no body
+    expect(allowanceError(409, REFUSAL_BODY)?.code).toBe("aiAllowanceUsed");     // the code on another status
+    expect(allowanceError(409, { detail: "busy" })).toBeNull();
+    expect(allowanceError(500, { detail: { code: "other" } })).toBeNull();
+  });
+});
+
+describe("the Create wizard's goal and write steps (AngleGateWizard)", () => {
+  it("a 402 on the goal or the write step becomes the allowance banner, never the object", async () => {
+    for (const path of ["goal", "write"]) {
+      const e = await refusalFromResponse(Response.json(REFUSAL_BODY, { status: 402 }));
+      const refusal = refusalOf(e, `${path} failed`, "en");
+      expect(typeof refusal).not.toBe("string");
+      const c = await mount(createElement(WizardRefusal, { refusal }));
+      expect(c.querySelector("[data-testid=wizard-allowance]")).not.toBeNull();
+      expect(c.querySelector("a")!.getAttribute("href")).toBe(PLAN_PATH);
+      expect(c.textContent).toContain("1 December 2026");
+      expect(c.textContent).not.toContain("[object Object]");
+    }
+  });
+
+  it("any other refusal is a string: the API's sentence, or the step's own when the detail is not one", async () => {
+    const sentence = refusalOf(await refusalFromResponse(Response.json({ detail: "Zz the tour is paused" },
+      { status: 409 })), "fallback", "en");
+    expect(sentence).toBe("Zz the tour is paused");
+    const objectDetail = refusalOf(await refusalFromResponse(Response.json({ detail: { code: "zz" } },
+      { status: 500 })), "Could not write", "en");
+    expect(objectDetail).toBe("Could not write");
+    const c = await mount(createElement(WizardRefusal, { refusal: objectDetail }));
+    expect(c.querySelector("[data-testid=wizard-error]")!.textContent).toBe("Could not write");
+    expect((await mount(createElement(WizardRefusal, { refusal: "x", hidden: true }))).innerHTML).toBe("");
+  });
+
+  it("the goal and the write calls go through refusalFromResponse", () => {
+    const src = readFileSync("app/(studio)/portal/_components/AngleGateWizard.tsx", "utf8");
+    expect(src.match(/refusalFromResponse\(r\)/g)?.length).toBe(2);
+    expect(src).not.toMatch(/e\.detail \?\?/);
+    expect(src).not.toMatch(/err\.detail/);
+  });
+});
+
+describe("the page banner of a refused rewrite (My Content, My Catalog)", () => {
+  it("shows the reason and the Upgrade link, and nothing without a refusal", async () => {
+    const err = allowanceError(402, REFUSAL_BODY)!;
+    const c = await mount(createElement(AllowanceRefusalBanner, { refusal: err, onClose: () => {} }));
+    expect(c.querySelector("[data-testid=allowance-refused] a")!.getAttribute("href")).toBe(PLAN_PATH);
+    const none = await mount(createElement(AllowanceRefusalBanner, { refusal: null, onClose: () => {} }));
+    expect(none.innerHTML).toBe("");
+  });
+});
+
+describe("a held version opened from My Catalog (TourRewritePanel)", () => {
+  it("is held, not a live writing view, and its background watch settles", async () => {
+    expect(rewriteState(HELD)).toBe("held");
+    expect(rewriteState(FAILED)).toBe("failed");
+    expect(rewriteState(null)).toBe("starting");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ id: "v-1", ...HELD })));
+    const w = watchTourRewrite({ versionId: "v-1", publishedTourId: "pt-1", title: "Zz Tour", language: "en-US" });
+    expect(await w.check()).toBe("held");
+    expect(w.heldText).toBe(REWRITE_MESSAGES.en.heldText("Zz Tour"));
+  });
+
+  it("My Catalog opens a held row in the panel, never the finished-version drawer", () => {
+    const src = readFileSync("app/(studio)/portal/_components/CatalogTab.tsx", "utf8");
+    expect(src).toMatch(/if \(isAllowanceHeld\(v\) \|\| isAiWriting\(v\) \|\| isRewriteFailed\(v\)\) openRewritePanel\(v\)/);
+    expect(src).toMatch(/!isRewriteFailed\(g\) && !isAllowanceHeld\(g\)/);
+    const panel = readFileSync("app/(studio)/portal/_components/TourRewritePanel.tsx", "utf8");
+    expect(panel).toMatch(/<HeldView target=\{target\} state=\{state\} version=\{version\} \/>/);
+    expect(panel).toMatch(/return state !== "failed" && state !== "held";/);   // no LiveWriter for a held version
   });
 });
 
@@ -136,6 +226,10 @@ describe("the bell's allowance rows", () => {
   it("the trip planner row says the planner keeps working without AI-written days", async () => {
     const c = await mount(createElement(AllowanceNote, { note: note("tripplanner.ai_allowance_used"), onNavigate: () => {} }));
     expect(c.textContent).toContain(BELL_MESSAGES.en.plannerAllowanceTitle);
+    // the Trip planner's plan lives on the Add-ons page, not on the content plans' billing page
+    expect(c.querySelector("[data-testid=bell-allowance]")!.getAttribute("href")).toBe(ADD_ONS_PATH);
+    expect(allowanceHref("tripplanner.ai_allowance_used")).toBe(ADD_ONS_PATH);
+    expect(allowanceHref("ai.allowance_used")).toBe(PLAN_PATH);
     expect(c.textContent).not.toContain("English text from the API");
   });
 });

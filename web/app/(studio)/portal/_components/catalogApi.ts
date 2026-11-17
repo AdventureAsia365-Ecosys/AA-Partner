@@ -6,7 +6,7 @@
 import { apiGet } from "@/app/_kit";
 
 import type { ServedFields } from "./ServedBadge";
-import { StudioError } from "./studioError";
+import { AI_QUOTA_EXHAUSTED, StudioError, allowanceError } from "./studioError";
 
 export interface Version extends ServedFields {
   id: string;
@@ -76,14 +76,13 @@ export function fetchVersionDetail(id: string): Promise<Version> {
   return apiGet<Version>(`/api/tenant/v1/tours/versions/${id}`);
 }
 
-/** AA-1126 L1: the CIS code of a request refused because the plan's AI writing allowance is used up (HTTP 402). */
-export const AI_QUOTA_EXHAUSTED = "ai_quota_exhausted";
-const PAYMENT_REQUIRED = 402;
+export { AI_QUOTA_EXHAUSTED };
 
 export async function retryRewrite(versionId: string): Promise<void> {
   const r = await fetch(`/api/tenant/v1/tours/versions/${versionId}/retry`, { method: "POST" });
-  if (r.status === PAYMENT_REQUIRED) throw new StudioError("aiAllowanceUsed", r.status);
-  if (!r.ok) throw new StudioError("retryFailed", r.status);
+  if (!r.ok) {
+    throw allowanceError(r.status, await r.json().catch(() => null)) ?? new StudioError("retryFailed", r.status);
+  }
 }
 
 export async function saveVersionEdit(
@@ -111,8 +110,9 @@ export async function requestRewrite(
     body: JSON.stringify({ rewrite_language: rewriteLanguage || "en-US" }),
   });
   if (r.status === 409) throw new StudioError("rewriteBusy", r.status);
-  if (r.status === PAYMENT_REQUIRED) throw new StudioError("aiAllowanceUsed", r.status);
-  if (!r.ok) throw new StudioError("rewriteRequestFailed", r.status);
+  if (!r.ok) {
+    throw allowanceError(r.status, await r.json().catch(() => null)) ?? new StudioError("rewriteRequestFailed", r.status);
+  }
   return r.json();
 }
 

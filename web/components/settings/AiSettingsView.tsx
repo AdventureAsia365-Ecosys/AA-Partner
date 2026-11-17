@@ -9,9 +9,11 @@ import { useState } from "react";
 import Link from "next/link";
 import { AiNotice, Badge, Button, Checkbox, Field, Input, K, useHydrated } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
-import { aiErrorKey, budgetError, meterTone, meterWidth, notOnPlan, rateLimitLine, testModeNote, usd, type AiSettings } from "@/lib/ai";
+import {
+  aiErrorKey, budgetError, meterTone, meterWidth, notOnPlan, planUpgradeHref, rateLimitLine, testModeNote, usd,
+  type AiSettings,
+} from "@/lib/ai";
 import { bffSend } from "@/lib/bffClient";
-import { CRM_ADD_ONS_PATH } from "@/lib/addOns";
 import type { DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { CRM_TERMS_AI_HREF } from "@/lib/legal";
@@ -163,7 +165,7 @@ export function AiSettingsView({ settings, lang, locale }: { settings: AiSetting
   );
 }
 
-/** The month's 75 / 90 / 100 % alert; at 100 % (AA-1126 L3) the Upgrade link to Settings > Add-ons. */
+/** The month's 75 / 90 / 100 % alert; at 100 % (AA-1126 L3) the Upgrade link (a plan upgrade request, lib/ai.ts). */
 function AiBudgetAlert({ level, tr }: { level: 75 | 90 | 100; tr: (key: string) => string }) {
   return (
     <p role="status" data-testid="ai-alert" style={{ margin: 0, fontSize: 13, color: level === 100 ? K.danger : K.amber }}>
@@ -171,9 +173,9 @@ function AiBudgetAlert({ level, tr }: { level: 75 | 90 | 100; tr: (key: string) 
       {level === 100 && (
         <>
           {" "}
-          <Link href={CRM_ADD_ONS_PATH} data-testid="ai-upgrade" style={{ fontWeight: 600 }}>
+          <a href={planUpgradeHref()} data-testid="ai-upgrade" style={{ fontWeight: 600 }}>
             {tr("ai.upgrade")}
-          </Link>
+          </a>
         </>
       )}
     </p>

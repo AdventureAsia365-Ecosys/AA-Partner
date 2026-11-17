@@ -31,7 +31,7 @@ import {
   type FeedbackCode,
 } from "@/lib/aiDraft";
 import { bffSend } from "@/lib/bffClient";
-import { CRM_ADD_ONS_PATH } from "@/lib/addOns";
+import { planUpgradeHref } from "@/lib/ai";
 import { t, type Lang, type MessageKey } from "@/lib/i18n";
 
 type Done = { decision: "accepted" | "discarded"; copied: boolean };
@@ -259,9 +259,9 @@ function DraftFallback({ draft, tr }: { draft: DraftResult; tr: (key: string) =>
       {upgradeOffered(draft) && (
         <>
           {" "}
-          <Link href={CRM_ADD_ONS_PATH} data-testid="ai-draft-upgrade" style={{ fontWeight: 600 }}>
+          <a href={planUpgradeHref()} data-testid="ai-draft-upgrade" style={{ fontWeight: 600 }}>
             {tr("aiDraft.upgrade")}
-          </Link>
+          </a>
         </>
       )}
     </p>

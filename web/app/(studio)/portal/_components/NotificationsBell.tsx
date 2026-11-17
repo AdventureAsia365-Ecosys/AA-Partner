@@ -27,7 +27,7 @@ import { RETIRED_PAGES_MESSAGES } from "./retiredPages.messages";
 import { RETIRED_PAGES_ANCHOR, RETIRED_PAGES_QUERY_KEY, moveOutcomeText, moveToDraft } from "./retiredPagesApi";
 import { plainError } from "./studioError";
 import { fmtDateTime } from "@/lib/studio/format";
-import { PLAN_PATH } from "@/lib/apps";
+import { ADD_ONS_PATH, PLAN_PATH } from "@/lib/apps";
 import { resetsOnLabel } from "./AllowanceHeld";
 import type { ShellActivityView } from "./PortalShellContext";
 
@@ -81,14 +81,19 @@ const describe = (a: Activity, t: Translator<typeof BELL_MESSAGES.en>) => {
 const PAGES_TO_PUT_BACK = "tour.pages_to_put_back";
 const PLANNER_ALLOWANCE = "tripplanner.ai_allowance_used";
 
-/** AA-1126 L1 / L2: a "plan's AI allowance used up" row, in the UI language, linking to the plan page. */
+/** AA-1126 L1 / L2: a "plan's AI allowance used up" row, in the UI language. The Content studio row links to the plan
+ *  page (the content plans); the Trip planner row to the Add-ons page, where the Trip planner and its plan live. */
+export function allowanceHref(eventType: string): string {
+  return eventType === PLANNER_ALLOWANCE ? ADD_ONS_PATH : PLAN_PATH;
+}
+
 export function AllowanceNote({ note, onNavigate }: { note: TenantNotification; onNavigate: () => void }) {
   const t = useT(BELL_MESSAGES);
   const lang = useLang();
   const planner = note.event_type === PLANNER_ALLOWANCE;
   const resetsOn = resetsOnLabel(note.resets_at, lang);
   return (
-    <Link href={PLAN_PATH} onClick={onNavigate} data-testid="bell-allowance" style={{
+    <Link href={allowanceHref(note.event_type)} onClick={onNavigate} data-testid="bell-allowance" style={{
       display: "grid", gridTemplateColumns: "30px minmax(0,1fr)", gap: 10, padding: "11px 16px",
       textDecoration: "none", borderBottom: `1px solid ${K.line2}`,
       background: note.is_read ? "transparent" : K.accentTint,

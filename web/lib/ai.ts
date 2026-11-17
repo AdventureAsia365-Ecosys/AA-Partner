@@ -3,6 +3,8 @@
 // small pure helpers the settings page uses: the meter tone at the 75 / 90 / 100 % alert levels (design R5), budget
 // input checks, and the wording key of an API refusal.
 
+import { SUPPORT_EMAIL } from "@/app/_kit/core/brand";
+
 export interface AiSettings {
   ai_enabled: boolean;
   ai_budget_usd: string;
@@ -83,4 +85,14 @@ export function notOnPlan(settings: AiSettings): boolean {
 /** AA-1096 S280: the per-minute line of Settings > AI; 0 turns the limit off (crm.rate.ai_per_minute), never "up to 0". */
 export function rateLimitLine(n: number): { key: "ai.limit" | "ai.limitOff"; n: number } {
   return { key: n > 0 ? "ai.limit" : "ai.limitOff", n };
+}
+
+/** AA-1126 L3 (S283 review fix): where "Upgrade your plan" leads in the CRM. The CRM plan (and its AI budget) changes on
+ *  the CIS Plans page / Tenant 360, which an agency cannot open, and the CRM's Settings > Add-ons page only lists the
+ *  add-ons (an agency with the CRM sees "Your agency has this add-on"). So the link is a request to Adventure Asia by
+ *  e-mail, as the studio's own "Change plan" is (PlaceholderTabs ContactModal). */
+export const PLAN_UPGRADE_SUBJECT = "CRM plan upgrade: more AI drafting budget";
+
+export function planUpgradeHref(): string {
+  return `mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent(PLAN_UPGRADE_SUBJECT)}`;
 }
