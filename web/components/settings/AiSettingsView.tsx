@@ -70,23 +70,7 @@ export function AiSettingsView({ settings, lang, locale }: { settings: AiSetting
           {settings.can_edit && <> {tr("ai.noPlanSwitch")}</>}
         </p>
       )}
-      {settings.alert_level && (
-        <p
-          role="status"
-          data-testid="ai-alert"
-          style={{ margin: 0, fontSize: 13, color: settings.alert_level === 100 ? K.danger : K.amber }}
-        >
-          {tr(`ai.alert.${settings.alert_level}`)}
-          {settings.alert_level === 100 && (
-            <>
-              {" "}
-              <Link href={CRM_ADD_ONS_PATH} data-testid="ai-upgrade" style={{ fontWeight: 600 }}>
-                {tr("ai.upgrade")}
-              </Link>
-            </>
-          )}
-        </p>
-      )}
+      {settings.alert_level && <AiBudgetAlert level={settings.alert_level} tr={tr} />}
 
       <Panel title={tr("ai.meter")} testId="ai-meter">
         <div style={{ display: "grid", gap: 8 }}>
@@ -176,5 +160,22 @@ export function AiSettingsView({ settings, lang, locale }: { settings: AiSetting
         </p>
       </Panel>
     </div>
+  );
+}
+
+/** The month's 75 / 90 / 100 % alert; at 100 % (AA-1126 L3) the Upgrade link to Settings > Add-ons. */
+function AiBudgetAlert({ level, tr }: { level: 75 | 90 | 100; tr: (key: string) => string }) {
+  return (
+    <p role="status" data-testid="ai-alert" style={{ margin: 0, fontSize: 13, color: level === 100 ? K.danger : K.amber }}>
+      {tr(`ai.alert.${level}`)}
+      {level === 100 && (
+        <>
+          {" "}
+          <Link href={CRM_ADD_ONS_PATH} data-testid="ai-upgrade" style={{ fontWeight: 600 }}>
+            {tr("ai.upgrade")}
+          </Link>
+        </>
+      )}
+    </p>
   );
 }

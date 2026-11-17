@@ -14,7 +14,7 @@ import pytest
 
 from app import platform_settings as ps
 from app.cis import entitlement_feed as feed
-from app.llm import budget_limits, spend_environment
+from app.llm import budget_limits, spend_environment, spend_rules
 from app.llm import gateway as gw
 from tests.unit.fakes import ScriptedConn
 from tests.unit.slice_fakes import tenant_ctx
@@ -164,20 +164,13 @@ async def test_the_app_daily_budget_stops_on_dev_and_alerts_on_prod(
 @pytest.mark.asyncio
 async def test_an_unreadable_month_degrades_on_prod_only(monkeypatch: pytest.MonkeyPatch) -> None:
     g = gw.LlmGateway.__new__(gw.LlmGateway)
-    logged: list[str] = []
-
-    async def log(ctx: Any, stage: str, role: str, status: str, **kw: Any) -> str:
-        logged.append(kw.get("refusal"))
-        return "refused"
-
-    monkeypatch.setattr(g, "_log", log, raising=False)
+    conn = ScriptedConn().on(gw.MONTH_SPEND_SQL, RuntimeError("zz db down"))
+    ctx = tenant_ctx(conn)
     monkeypatch.setattr(spend_environment, "spend_environment", lambda: "dev")
-    ctx = tenant_ctx(ScriptedConn())
-    assert await g._budget_refusal(ctx, "crm_draft_reply", "writer", None, None, Decimal("2"), None, None) == "refused"
-    assert logged == [gw.SPEND_UNREADABLE]
+    assert await g._month_spend(ctx) is None  # dev: the decision then refuses (spend_unreadable)
     monkeypatch.setattr(spend_environment, "spend_environment", lambda: "prod")
-    assert await g._budget_refusal(ctx, "crm_draft_reply", "writer", None, None, Decimal("2"), None, None) is None
-    assert gw._degraded(None) == Decimal(0) and gw._degraded(Decimal("1.5")) == Decimal("1.5")
+    assert await g._month_spend(ctx) == Decimal(0)  # prod: degrade, the call goes on
+    assert spend_rules.unreadable_month() == Decimal(0)
 
 
 @pytest.mark.asyncio

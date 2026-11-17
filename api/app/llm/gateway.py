@@ -95,7 +95,7 @@ from app.aa_llm import budget as llm_budget
 from app.aa_llm import errors as llm_errors
 from app.aa_llm import ledger
 from app.audit import AuditEvent, current_request_id
-from app.llm import app_profile, budget_limits, spend_environment, stage_caps
+from app.llm import app_profile, budget_limits, spend_rules, stage_caps
 from app.llm.profiles import DbProfileSource, RouteEntry, StageProfile, fixed_profile
 from app.privacy.guardrails import GUARD_OPERATION, GUARD_STAGE, GuardCall, collect_guard_calls
 from app.privacy.placeholder_store import SealedMap, check_scrubber_version, seal_map, store_map
@@ -356,8 +356,7 @@ class LlmGateway:
         refused = await self._budget_refusal(ctx, stage, role, first, spent, budget, settings, meta)
         if refused is not None:
             return refused
-        spent = _degraded(spent)  # AA-1126 L4: an unreadable month only gets here under the prod spend rules
-        pct = _pct(spent, budget)
+        pct = _pct(spent, budget)  # type: ignore[arg-type] — readable: checked by _budget_refusal
         if not enabled:
             return await self._log(ctx, stage, role, REFUSED, who=first, refusal="ai_disabled", pct=pct, meta=meta)
         # 2. scrub receipt (every guardrail attempt it makes is its own ledger row)
@@ -383,8 +382,7 @@ class LlmGateway:
             refused = await self._budget_refusal(ctx, stage, role, first, spent, budget, settings, meta, receipt)
             if refused is not None:
                 return refused
-            spent = _degraded(spent)
-            pct = _pct(spent, budget)
+            pct = _pct(spent, budget)  # type: ignore[arg-type]
         # 3b. seal the placeholder map before paying for the call
         sealed: SealedMap | None = None
         if placeholders:
@@ -451,12 +449,7 @@ class LlmGateway:
             return None, None
         spent = await app_profile.day_spend(ctx.conn)
         decision = llm_budget.decide(float(spent) if spent is not None else None, float(app.default_daily_budget_usd))
-        if decision.allowed:
-            return None, None
-        if spend_environment.is_prod():
-            # AA-1126 G3 / L4 (crm.spend.environment prod): the app-wide daily budget only alerts, and an unreadable
-            # day spend lets the call go on; the agency's own monthly budget below stays hard.
-            log.error("crm_llm_app_budget_alert_only reason=%s", decision.reason)
+        if decision.allowed or spend_rules.app_cap_alert_only(decision.reason):  # AA-1126 G3 / L4 (prod rules)
             return None, None
         if decision.reason == llm_budget.REASON_CAP:
             log.warning("crm_llm_app_budget_refused")
@@ -477,7 +470,7 @@ class LlmGateway:
             return Decimal(value)
         except Exception as exc:  # noqa: BLE001 — class only
             log.warning("crm_llm_spend_unreadable error=%s", type(exc).__name__)
-            return None
+            return spend_rules.unreadable_month()  # None (dev: fail closed); 0 under the prod rules (AA-1126 L4)
 
     async def _budget_refusal(
         self,
@@ -494,10 +487,6 @@ class LlmGateway:
         """The refused result when ``budget.decide`` says no (cap reached, or the month unreadable), else None."""
         decision = llm_budget.decide(float(spent) if spent is not None else None, float(budget))
         if decision.allowed:
-            return None
-        if decision.reason != llm_budget.REASON_CAP and spend_environment.is_prod():
-            # AA-1126 L4 (crm.spend.environment prod): a month that cannot be read degrades with an error line.
-            log.error("crm_llm_spend_unreadable_degraded stage=%s", stage)
             return None
         if decision.reason != llm_budget.REASON_CAP:
             return await self._log(
@@ -777,11 +766,6 @@ class LlmGateway:
             budget_used_pct=round(pct, 1) if pct is not None else None,
             receipt=receipt,
         )
-
-
-def _degraded(spent: Decimal | None) -> Decimal:
-    """The month's spend, or 0 when it could not be read and the prod spend rules let the call go on (AA-1126 L4)."""
-    return spent if spent is not None else Decimal(0)
 
 
 def _pct(spent: Decimal, budget: Decimal) -> float:

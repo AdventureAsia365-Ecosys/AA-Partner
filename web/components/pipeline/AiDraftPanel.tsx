@@ -191,19 +191,7 @@ export function AiDraftPanel({
               {error}
             </p>
           )}
-          {draft && !usable && (
-            <p role="status" data-testid="ai-draft-fallback" style={{ margin: 0, fontSize: 13, color: K.amber }}>
-              {tr(fallbackKey(draft))}
-              {upgradeOffered(draft) && (
-                <>
-                  {" "}
-                  <Link href={CRM_ADD_ONS_PATH} data-testid="ai-draft-upgrade" style={{ fontWeight: 600 }}>
-                    {tr("aiDraft.upgrade")}
-                  </Link>
-                </>
-              )}
-            </p>
-          )}
+          {draft && !usable && <DraftFallback draft={draft} tr={tr} />}
           {usable && (
             <section data-testid="ai-draft-result" style={{ display: "grid", gap: 8, minWidth: 0 }}>
               <h3 style={{ margin: 0, fontSize: 13, fontWeight: 600, color: K.ink }}>{tr("aiDraft.result")}</h3>
@@ -259,5 +247,23 @@ export function AiDraftPanel({
         </div>
       </Drawer>
     </Panel>
+  );
+}
+
+/** A draft the gateway did not write: the reason, and (AA-1126 L3) the Upgrade link when the agency's own plan budget
+ *  is used up. */
+function DraftFallback({ draft, tr }: { draft: DraftResult; tr: (key: string) => string }) {
+  return (
+    <p role="status" data-testid="ai-draft-fallback" style={{ margin: 0, fontSize: 13, color: K.amber }}>
+      {tr(fallbackKey(draft))}
+      {upgradeOffered(draft) && (
+        <>
+          {" "}
+          <Link href={CRM_ADD_ONS_PATH} data-testid="ai-draft-upgrade" style={{ fontWeight: 600 }}>
+            {tr("aiDraft.upgrade")}
+          </Link>
+        </>
+      )}
+    </p>
   );
 }
