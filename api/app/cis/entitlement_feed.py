@@ -33,6 +33,11 @@ The projection (:func:`projection`, one :func:`app.tenancy.entitlement_feed_tx` 
   the owner still switches an allowed feature on in Settings);
 - ``member_limit``: the ``crm.seats`` limit, at most ``crm.members.max_limit`` (500, AA-1116 crm-075), kept as it is
   when CIS gives none; a new row with no seats from CIS gets ``crm.members.default_limit`` (3);
+- ``ai_budget_usd`` (crm-076, AA-1126 L3): the ``crm.ai_budget_usd_monthly`` limit of the agency's CRM plan (or its
+  Tenant 360 override), at most 10000 (the column CHECK); None when CIS gives none or no limit (the platform settings
+  ``crm.ai.budget_default_usd`` / ``budget_max_usd`` apply, :mod:`app.llm.budget_limits`). When it changes, an owner
+  budget that still equals the previous plan budget (or the platform default, before the first projection) follows the
+  new one (audit ``ai_budget_follows_plan``); a budget the owner chose otherwise stays (the new ceiling still caps it);
 - ``tp_crm_leads`` (crm-047, AA-1038): both ``tp.hosted`` and ``crm.core`` are entitled, the two keys CIS 390 resolves
   a TripPlanner tenant's ``lead_channel`` crm from; ``crm_tp_lead_pull`` calls TripPlanner only for these agencies;
 - ``projected_at`` = now; an unchanged projection writes nothing;
@@ -82,6 +87,7 @@ from app.entitlements import FEATURES
 from app.jobs import queue
 from app.jobs.kinds import ENTITLEMENT_PULL
 from app.jobs.queue import Job
+from app.llm import budget_limits
 from app.members import team
 from app.tenancy import SystemContext, entitlement_feed_tx
 
@@ -106,19 +112,26 @@ SEATS_KEY = "crm.seats"
 # AA-1038 (crm-047): TripPlanner sends a tenant's leads to its CRM when both keys are entitled (CIS 390
 # lead_channel crm).
 TP_CRM_LEAD_KEYS = ("tp.hosted", "crm.core")
+# AA-1126 L3 (CIS 447, crm-076): the agency's monthly AI budget from its CRM plan.
+PLAN_AI_BUDGET_KEY = "crm.ai_budget_usd_monthly"
+AI_BUDGET_CEILING = Decimal("10000")  # technical-constant: the crm-076 column CHECK (tenant_entitlement_ai_budget_chk)
 HELD = frozenset({"active", "locked"})
 
 ENTITLEMENT_SQL = (
-    "SELECT plan, member_limit, allowed_features, projected_at, tp_crm_leads FROM crm.tenant_entitlement"
+    "SELECT plan, member_limit, allowed_features, projected_at, tp_crm_leads, ai_budget_usd FROM crm.tenant_entitlement"
     " WHERE deleted_at IS NULL"
 )
 UPSERT_SQL = """
-INSERT INTO crm.tenant_entitlement (plan, member_limit, allowed_features, projected_at, tp_crm_leads)
-VALUES ($1, $2, $3::text[], now(), $4)
+INSERT INTO crm.tenant_entitlement (plan, member_limit, allowed_features, projected_at, tp_crm_leads, ai_budget_usd)
+VALUES ($1, $2, $3::text[], now(), $4, $5)
 ON CONFLICT (tenant_id) DO UPDATE
    SET plan = EXCLUDED.plan, member_limit = EXCLUDED.member_limit, allowed_features = EXCLUDED.allowed_features,
-       projected_at = EXCLUDED.projected_at, tp_crm_leads = EXCLUDED.tp_crm_leads
+       projected_at = EXCLUDED.projected_at, tp_crm_leads = EXCLUDED.tp_crm_leads, ai_budget_usd = EXCLUDED.ai_budget_usd
 """
+# AA-1126 L3: the owner's budget follows the plan while it still equals the previous plan budget (or the default).
+FOLLOW_PLAN_SQL = (
+    "UPDATE crm.tenant_settings SET ai_budget_usd = $1 WHERE deleted_at IS NULL AND ai_budget_usd = $2 RETURNING 1"
+)
 TENANT_LOCK_SQL = "SELECT status, lock_source, is_pilot, is_synthetic FROM crm.tenant WHERE tenant_id = $1 FOR UPDATE"
 SET_PILOT_SQL = "UPDATE crm.tenant SET is_pilot = $2 WHERE tenant_id = $1"
 # AA-1086 G9: one way only, never back to true (the seeder and the console refuse to flip it, app.agencies).
@@ -140,6 +153,7 @@ class Projection:
     crm_subscribed: bool = True  # the CIS account has a crm subscription in any status (the adoption guard)
     is_pilot: bool | None = None  # AA-969 d16: the CIS pilot marker (crm-044); None = absent, keep the current one
     tp_crm_leads: bool = False  # AA-1038 (crm-047): tp.hosted and crm.core entitled, TripPlanner leads come here
+    ai_budget_usd: Decimal | None = None  # AA-1126 L3 (crm-076): the plan's monthly AI budget, None = none
 
 
 @dataclass
@@ -247,6 +261,7 @@ def projection(account: dict[str, Any]) -> Projection:
     features = tuple(code for code in FEATURES if f"crm.{code}" in ents)
     seats = ents.get(SEATS_KEY)
     member_limit = None if seats is None else max(1, min(int(seats), team.max_member_limit()))
+    ai_budget = ents.get(PLAN_AI_BUDGET_KEY)
     return Projection(
         plan,
         member_limit,
@@ -255,6 +270,7 @@ def projection(account: dict[str, Any]) -> Projection:
         crm is not None,
         account.get("is_pilot"),
         all(key in ents for key in TP_CRM_LEAD_KEYS),
+        None if ai_budget is None else min(ai_budget, AI_BUDGET_CEILING).quantize(Decimal("0.01")),
     )
 
 
@@ -333,13 +349,17 @@ async def _apply_in(ctx: SystemContext, wanted: Projection, counts: RunCounts) -
         or int(row["member_limit"]) != member_limit
         or sorted(row["allowed_features"] or []) != features
         or bool(row["tp_crm_leads"]) != wanted.tp_crm_leads
+        or _decimal(row["ai_budget_usd"]) != wanted.ai_budget_usd
     )
     if changed:
-        await ctx.conn.execute(UPSERT_SQL, wanted.plan, member_limit, features, wanted.tp_crm_leads)
+        await ctx.conn.execute(
+            UPSERT_SQL, wanted.plan, member_limit, features, wanted.tp_crm_leads, wanted.ai_budget_usd
+        )
         ctx.audit(
             "entitlements_projected", "allowed", "tenant_entitlement", str(ctx.tenant_id),
-            fields=("plan", "member_limit", "allowed_features", "tp_crm_leads"), reason="cis_account",
+            fields=("plan", "member_limit", "allowed_features", "tp_crm_leads", "ai_budget_usd"), reason="cis_account",
         )  # fmt: skip
+        await _follow_plan_budget(ctx, row, wanted.ai_budget_usd)
     tenant = await ctx.conn.fetchrow(TENANT_LOCK_SQL, ctx.tenant_id)
     change = status_change(wanted.in_service, tenant["status"], tenant["lock_source"])
     if change == "lock":
@@ -369,6 +389,24 @@ async def _apply_in(ctx: SystemContext, wanted: Projection, counts: RunCounts) -
     if changed or change or pilot or real:
         return "applied"
     return "awaiting_cis" if awaiting else "unchanged"
+
+
+def _decimal(value: Any) -> Decimal | None:
+    return None if value is None else Decimal(value)
+
+
+async def _follow_plan_budget(ctx: SystemContext, row: Any, new: Decimal | None) -> None:
+    """AA-1126 L3: a new plan budget moves the owner's budget that still equals the previous one (the previous plan
+    budget, or the platform default before the agency's first plan budget). A budget the owner chose stays."""
+    old = _decimal(row["ai_budget_usd"]) if row is not None else None
+    if new is None or new == old:
+        return
+    previous = old if old is not None else budget_limits.default_budget_usd()
+    if await ctx.conn.fetchval(FOLLOW_PLAN_SQL, new, previous):
+        ctx.audit(
+            "ai_budget_follows_plan", "allowed", "tenant_settings", str(ctx.tenant_id),
+            fields=("ai_budget_usd",), reason="cis_account",
+        )  # fmt: skip
 
 
 # ── the job ─────────────────────────────────────────────────────────────────────────────────────────────────────────

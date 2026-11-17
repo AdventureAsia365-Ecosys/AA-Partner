@@ -33,7 +33,7 @@ from typing import Any
 
 from app.errors import Conflict, Invalid, NotFound
 from app.llm import ai_drafts, voices
-from app.llm.budget_limits import agency_budget, default_budget_usd
+from app.llm.budget_limits import agency_budget, budget_source, new_agency_budget, plan_budget
 from app.llm.gateway import (
     MONTH_SPEND_SQL,
     CallMeta,
@@ -118,6 +118,9 @@ async def ai_settings(
         "model_test_mode": provider == "stub",
         "scrub_billed": scrub_billed,
         "rate_limit_per_minute": rate_per_minute,
+        # AA-1126 L3: the budget comes from the agency's CRM plan ("plan") or the platform settings ("settings"); the
+        # page links to the plan page (Upgrade) instead of "contact AA support".
+        "budget_source": budget_source(await plan_budget(ctx)),
         "can_edit": ctx.member_role == "owner",
         "ai_assist_allowed": await ai_drafts.ai_assist_allowed(ctx),
     }
@@ -134,7 +137,7 @@ async def update_ai_settings(
 ) -> dict:
     row = await ctx.conn.fetchrow(SETTINGS_SQL)
     enabled = bool(row["ai_enabled"]) if row else False
-    budget = Decimal(row["ai_budget_usd"]) if row else default_budget_usd()
+    budget = Decimal(row["ai_budget_usd"]) if row else await new_agency_budget(ctx)
     if changes.get("ai_enabled") is not None:
         enabled = bool(changes["ai_enabled"])
     if changes.get("ai_budget_usd") is not None:
