@@ -287,6 +287,7 @@ async def test_an_agency_with_a_year_of_history_compares_with_last_year(app_pool
 
 async def test_outstanding_counts_each_amount_once_and_matches_receivables(app_pool: asyncpg.Pool) -> None:
     s = await _accepted(app_pool)  # proposal 1000 USD: deposit row 300, balance row 700, both due
+    await allow_export(app_pool, s["tenant"])  # AA-1116: the CSV export is the plan's insights_export
     draft = await _as(app_pool, s, "agent", lambda ctx: invoices.create_from_schedule(ctx, s["trip"], s["deposit"]))
     deposit = uuid.UUID(draft["invoice_id"])
     await _as(app_pool, s, "agent", lambda ctx: invoices.issue(ctx, deposit))
