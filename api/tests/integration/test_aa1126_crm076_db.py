@@ -17,7 +17,8 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 async def test_the_plan_budget_column_and_its_check(admin: asyncpg.Connection) -> None:
     col = await admin.fetchrow(
-        "SELECT data_type, numeric_precision, numeric_scale, is_nullable, column_default FROM information_schema.columns"
+        "SELECT data_type, numeric_precision, numeric_scale, is_nullable, column_default"
+        " FROM information_schema.columns"
         " WHERE table_schema = 'crm' AND table_name = 'tenant_entitlement' AND column_name = 'ai_budget_usd'"
     )
     assert (col["data_type"], col["numeric_precision"], col["numeric_scale"]) == ("numeric", 10, 2)

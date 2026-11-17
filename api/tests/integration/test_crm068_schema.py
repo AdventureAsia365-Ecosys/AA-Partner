@@ -16,8 +16,8 @@ API = Path(__file__).resolve().parents[2]
 M070 = API / "migrations" / "068_crm_retire_settings_env_overrides.sql"
 DEFAULTS = API / "app" / "platform_settings" / "compiled_defaults.json"
 RETIRED = API / "tests" / "unit" / "snapshots" / "aa1096_retired_env_overrides.json"
-# The later files that edit a description crm-068 also edits (AA-1126 crm-076: crm.ai.budget_max_usd): replayed after it,
-# in number order, so the re-run below compares the chain's end state.
+# The later files that edit a description crm-068 also edits (AA-1126 crm-076: crm.ai.budget_max_usd): replayed
+# after it, in number order, so the re-run below compares the chain's end state.
 LATER_EDITS = (API / "migrations" / "076_crm_plan_ai_budget_and_spend_rules.sql",)
 
 
