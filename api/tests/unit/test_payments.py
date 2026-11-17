@@ -95,9 +95,11 @@ async def test_providers() -> None:
         providers.provider("stripe")
     with _raises(Conflict, "unknown_provider"):
         providers.provider("paypal")
-    assert providers.available() == [{"provider": "manual", "available": True},
-                                     {"provider": "stripe", "available": False},
-                                     {"provider": "vn_gateway", "available": True}]  # fmt: skip
+    assert providers.available() == [{"provider": "manual", "available": True, "on_plan": True},
+                                     {"provider": "stripe", "available": False, "on_plan": True},
+                                     {"provider": "vn_gateway", "available": True, "on_plan": True}]  # fmt: skip
+    # AA-1116: a provider whose CRM feature is not on the agency's plan
+    assert [p["on_plan"] for p in providers.available(frozenset({"stripe"}))] == [True, False, True]
 
 
 # ── record a payment ──────────────────────────────────────────────────────────────────────────────

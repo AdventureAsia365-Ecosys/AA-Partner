@@ -145,6 +145,22 @@ async def test_payment_methods_and_the_printed_instructions(app_pool: asyncpg.Po
     again = await _as(app_pool, s, "owner", lambda ctx: payments.save_manual(
         ctx, display_name="Bank transfer (VCB)", instructions="Account 0000 3333"))  # fmt: skip
     assert len(again["accounts"]) == 1 and again["accounts"][0]["instructions"] == "Account 0000 3333"
+    # AA-1116: connecting Stripe needs the plan's stripe_connect (403 first); on the plan it is still paused (409).
+    assert {p["provider"]: p["on_plan"] for p in out["providers"]} == {"manual": True, "stripe": False,
+                                                                       "vn_gateway": True}  # fmt: skip
+    with pytest.raises(Forbidden) as refused:
+        await _as(app_pool, s, "owner", lambda ctx: payments.connect(ctx, "stripe"))
+    assert refused.value.code == "feature_not_allowed"
+    async with app_pool.acquire() as conn, conn.transaction():
+        await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(s["tenant"]))
+        await conn.execute("SELECT set_config('app.actor', 'seed:test', true)")
+        await conn.execute(
+            "INSERT INTO crm.tenant_entitlement (plan, member_limit, allowed_features) "
+            "VALUES ('pro', 3, ARRAY['stripe_connect']) "
+            "ON CONFLICT (tenant_id) DO UPDATE SET allowed_features = EXCLUDED.allowed_features"
+        )
+    listed = await _as(app_pool, s, "owner", payments.payment_methods)
+    assert {p["provider"]: p["on_plan"] for p in listed["providers"]}["stripe"] is True
     with pytest.raises(Conflict) as err:
         await _as(app_pool, s, "owner", lambda ctx: payments.connect(ctx, "stripe"))
     assert err.value.code == "provider_not_available"

@@ -23,6 +23,7 @@ import {
   PERIODS,
   codeText,
   countText,
+  exportLocked,
   pageHref,
   parseFilters,
   pctText,
@@ -96,7 +97,13 @@ export default async function ReportsPage({
             </a>
           ))}
         </nav>
-        <ExportMenu lang={lang} period={filters.period} owner={filters.owner} moneyVisible={r.money_visible} />
+        <ExportMenu
+          lang={lang}
+          period={filters.period}
+          owner={filters.owner}
+          moneyVisible={r.money_visible}
+          allowed={!exportLocked(r)}
+        />
       </div>
       <nav aria-label={tr("reports.owner")} style={{ display: "flex", flexWrap: "wrap", gap: 10, fontSize: 12.5 }}>
         <span style={{ color: K.muted }}>{tr("reports.owner")}:</span>
@@ -381,6 +388,7 @@ export default async function ReportsPage({
           members={members}
           lang={lang}
           locale={locale}
+          exportAllowed={!exportLocked(r)}
         />
       )}
 

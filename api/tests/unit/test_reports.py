@@ -224,6 +224,7 @@ def report_conn(first_day: dt.date | None = dt.date(2029, 1, 5)) -> ScriptedConn
             ("AS mixed", {"trips": 2, "mixed": 1}),
             ("'report_export'", 2),
             ("crm.export_job", 1),
+            ("ANY (allowed_features)", True),  # AA-1116: the plan has insights_export (the CSV export)
         ]
     )  # fmt: skip
 

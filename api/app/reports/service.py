@@ -29,6 +29,7 @@ from decimal import Decimal
 from statistics import median
 from typing import Any
 
+from app import entitlements
 from app.errors import Invalid
 from app.margin import sees_margin
 from app.reports import period as periods
@@ -37,6 +38,7 @@ from app.tenancy import TenantContext
 
 DEFAULT_TZ = "Asia/Ho_Chi_Minh"  # as app.duty.service: an agency without settings is a Dev seed in Viet Nam
 TOP_PRODUCTS = 10
+EXPORT_FEATURE = "insights_export"  # AA-1116: the CRM feature code (app.entitlements) the CSV export needs
 CENT = Decimal("0.01")
 
 
@@ -609,6 +611,8 @@ async def summary(ctx: TenantContext, period: str, owner: str | None) -> dict[st
         "team": await team(ctx, sc, rows, reply_rows),
         "success": await success_metrics(ctx, sc, rows, picks_, lines, reply_rows),
         "insights_included": bool(await ctx.conn.fetchval(q.INSIGHTS_INCLUDED_SQL)),
+        # AA-1116: whether the plan has the CSV export (``insights_export``); the page locks the export without it
+        "export_allowed": await entitlements.feature_allowed(ctx, EXPORT_FEATURE),
     }
 
 

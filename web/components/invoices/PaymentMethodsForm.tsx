@@ -3,13 +3,14 @@
 // design v3 §6.3, BYO): the agency's own manual method (its name and the pay-by instructions printed on every invoice,
 // e.g. the agency's own bank details or its office for cash) and the providers that are not available yet. Money always
 // goes to the agency's own account; the CRM only records what arrived. Owner only (the page shows other roles why).
+// AA-1116: a provider whose CRM feature is not on the agency's plan (Stripe: stripe_connect) shows "Not on your plan".
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, Field, Input, K, Textarea, useHydrated } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { t, type Lang, type MessageKey } from "@/lib/i18n";
-import { invoiceErrorKey, type PaymentMethodsView } from "@/lib/invoices";
+import { invoiceErrorKey, providerBadge, type PaymentMethodsView } from "@/lib/invoices";
 
 export function PaymentMethodsForm({ view, lang }: { view: PaymentMethodsView; lang: Lang }) {
   const router = useRouter();
@@ -74,9 +75,11 @@ export function PaymentMethodsForm({ view, lang }: { view: PaymentMethodsView; l
           {view.providers
             .filter((p) => p.provider !== "manual")
             .map((p) => (
-              <div key={p.provider} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+              // AA-1116: a provider the agency's plan lacks (Stripe without stripe_connect) says so, with the ask
+              <div key={p.provider} data-testid={`payment-provider-${p.provider}`} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", fontSize: 13 }}>
                 <span>{tr(`methods.provider.${p.provider}`)}</span>
-                <Badge tone="neutral">{tr(p.available ? "methods.available" : "methods.notYet")}</Badge>
+                <Badge tone={p.on_plan === false ? "warning" : "neutral"}>{tr(providerBadge(p))}</Badge>
+                {p.on_plan === false && <span style={{ color: K.muted, fontSize: 12.5 }}>{tr("methods.notOnPlanHint")}</span>}
               </div>
             ))}
         </div>

@@ -183,6 +183,28 @@ describe("Reports page", () => {
     expect(html).not.toContain('data-testid="reports-funnel"');
   });
 
+  it("locks both CSV downloads with the ask when the plan has no export", async () => {
+    // AA-1116: the plan's insights_export (CIS crm.insights_export); the page and its numbers stay open.
+    state.view = view({ export_allowed: false });
+    const html = await render();
+    expect(html).toContain('data-testid="reports-export-locked"');
+    expect(html).toContain('data-testid="profit-export-locked"');
+    expect(html).not.toContain('data-testid="reports-export"');
+    expect(html).not.toContain('data-testid="profit-export"');
+    expect(html).toContain("CSV export is not on your agency&#x27;s plan. Ask Adventure Asia to add it.");
+    expect(html).toContain('data-testid="reports-funnel"');
+  });
+
+  it("keeps the downloads open when the plan has the export or an older API does not say", async () => {
+    for (const allowed of [true, undefined]) {
+      state.view = view({ export_allowed: allowed });
+      const html = await render();
+      expect(html, String(allowed)).toContain('data-testid="reports-export"');
+      expect(html, String(allowed)).toContain('data-testid="profit-export"');
+      expect(html, String(allowed)).not.toContain("export-locked");
+    }
+  });
+
   it("shows the API error state when the read fails", async () => {
     state.view = null;
     expect(await render()).toContain("not answering");

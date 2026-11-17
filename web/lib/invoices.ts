@@ -81,7 +81,14 @@ export interface PaymentAccount {
 
 export interface PaymentMethodsView {
   accounts: PaymentAccount[];
-  providers: { provider: string; available: boolean }[];
+  /** AA-1116: on_plan false = the provider needs a CRM feature the agency's plan lacks (Stripe: stripe_connect). */
+  providers: { provider: string; available: boolean; on_plan?: boolean }[];
+}
+
+/** AA-1116: the badge of a provider on Settings > Payments: off the plan first, then whether it exists yet. */
+export function providerBadge(p: { available: boolean; on_plan?: boolean }): "methods.notOnPlan" | "methods.available" | "methods.notYet" {
+  if (p.on_plan === false) return "methods.notOnPlan";
+  return p.available ? "methods.available" : "methods.notYet";
 }
 
 export const REFUND_TONE: Record<RefundStatus, "neutral" | "info" | "success" | "warning" | "danger"> = {

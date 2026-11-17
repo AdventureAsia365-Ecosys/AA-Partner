@@ -32,6 +32,7 @@ import uuid
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
+from app import entitlements
 from app import platform_settings as ps
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.invoices import service as invoices
@@ -525,7 +526,11 @@ def _account_view(r: Any) -> dict[str, Any]:
 
 async def payment_methods(ctx: TenantContext) -> dict[str, Any]:
     rows = await ctx.conn.fetch(ACCOUNTS_SQL)
-    return {"accounts": [_account_view(r) for r in rows], "providers": providers.available()}
+    # AA-1116: a provider whose CRM feature is not on the agency's plan reads on_plan false (the page locks it)
+    off = frozenset(
+        [name for name, code in providers.PLAN_FEATURES.items() if not await entitlements.feature_allowed(ctx, code)]
+    )
+    return {"accounts": [_account_view(r) for r in rows], "providers": providers.available(off)}
 
 
 async def save_manual(ctx: TenantContext, *, display_name: Any, instructions: Any) -> dict[str, Any]:
@@ -547,7 +552,13 @@ async def save_manual(ctx: TenantContext, *, display_name: Any, instructions: An
 async def connect(ctx: TenantContext, provider_name: str) -> dict[str, Any]:
     """A provider account of the agency's own (BYO): ``manual`` is saved with its instructions (:func:`save_manual`),
     ``vn_gateway`` with its merchant code and secret (``PUT /settings/payment-methods/vn-gateway``,
-    :func:`app.payments.gateway.connect`); a provider without code is 409 ``provider_not_available``."""
+    :func:`app.payments.gateway.connect`); a provider without code is 409 ``provider_not_available``. A provider whose
+    CRM feature is not on the agency's plan is 403 ``feature_not_allowed`` first (AA-1116, ``stripe``)."""
+    feature = providers.PLAN_FEATURES.get(provider_name)
+    if feature is not None:
+        await entitlements.require_feature(
+            ctx, feature, action="update", object_kind="payment_provider_account", object_id=None
+        )
     impl = providers.provider(provider_name)
     if not impl.needs_external_account:
         raise Conflict("use_manual_settings", "the manual method is saved with its instructions")

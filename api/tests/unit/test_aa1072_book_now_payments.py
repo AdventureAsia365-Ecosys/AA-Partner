@@ -1054,8 +1054,8 @@ async def test_the_vn_gateway_provider_records_a_refund_reference() -> None:
     assert {p["provider"]: p["available"] for p in providers.available()}["vn_gateway"] is True
     with _raises(Conflict, "use_gateway_settings"):
         await payments.connect(tenant_ctx(), "vn_gateway")
-    with _raises(Conflict, "provider_not_available"):
-        await payments.connect(tenant_ctx(), "stripe")
+    with _raises(Conflict, "provider_not_available"):  # on the plan (AA-1116: stripe_connect), Stripe stays paused
+        await payments.connect(tenant_ctx(ScriptedConn().on("ANY (allowed_features)", True)), "stripe")
 
 
 @pytest.mark.asyncio
