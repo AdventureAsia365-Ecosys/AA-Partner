@@ -35,6 +35,7 @@ from app.vault import Vault
 from tests.aa_fakes import FakeBooking, agency_invoice, agency_invoice_detail, booking_client, invoice_line
 from tests.integration.test_crm005_intake import _agency, _keys
 from tests.integration.test_crm051_schema import purge_actual_cost
+from tests.integration.test_reports_api import allow_export
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -49,6 +50,7 @@ async def _setup(pool: asyncpg.Pool) -> dict[str, Any]:
     tenant_id, people = await _agency(pool, "owner", "agent", "assistant")
     who = {role: people[i][0] for i, role in enumerate(("owner", "agent", "assistant"))}
     s: dict[str, Any] = {"tenant": tenant_id, "who": who, "keys": _keys()}
+    await allow_export(pool, tenant_id)  # AA-1116: the profit CSV is the plan's insights_export
     async with tenant_tx(pool, who["agent"], tenant_id) as ctx:
         own = await suppliers.create_supplier(
             ctx, Vault(s["keys"], ctx), {"name": "Pine Hill Lodge", "category": "accommodation"}

@@ -48,6 +48,17 @@ async def _seed(pool: asyncpg.Pool, tenant: uuid.UUID, sql: str, *args: Any) -> 
         return await conn.fetchval(sql, *args)
 
 
+async def allow_export(pool: asyncpg.Pool, tenant: uuid.UUID) -> None:
+    """The agency's plan has the CSV export (AA-1116: CRM feature ``insights_export``, written by AA as a seed)."""
+    await _seed(
+        pool,
+        tenant,
+        "INSERT INTO crm.tenant_entitlement (plan, member_limit, allowed_features) "
+        "VALUES ('pro', 3, ARRAY['insights_export']) "
+        "ON CONFLICT (tenant_id) DO UPDATE SET allowed_features = EXCLUDED.allowed_features",
+    )
+
+
 async def _trip(
     pool: asyncpg.Pool,
     tenant: uuid.UUID,
@@ -137,6 +148,7 @@ async def _setup(pool: asyncpg.Pool) -> dict[str, Any]:
         t["trashed"],
     )
     await _fx_today(pool)
+    await allow_export(pool, tenant)  # AA-1116: the CSV export is the plan's insights_export
     keys = _keys()
     async with tenant_tx(pool, who["agent"], tenant) as ctx:
         own = await suppliers.create_supplier(
@@ -232,6 +244,31 @@ async def test_the_reports_reconcile_with_the_rows(app_pool: asyncpg.Pool) -> No
     assert audited == 1  # the agent's download (the owner's own event is written when its block ends)
     assert {m["key"]: m["value"] for m in again["success"]}["report_exports"] == 1
     assert ["booked", "2"] in list(csv.reader(io.StringIO(body.decode("utf-8-sig"))))
+
+
+async def test_an_agency_without_insights_export_reads_reports_but_downloads_no_csv(app_pool: asyncpg.Pool) -> None:
+    """AA-1116: the CSV export is the plan's ``insights_export``; without it the page still reads, every section's
+    download is 403 ``feature_not_allowed`` with a committed ``denied`` audit event."""
+    tenant, people = await _agency(app_pool, "owner")
+    owner = people[0][0]
+    await _trip(app_pool, tenant, "inquiry", source="website_form")
+    async with tenant_tx(app_pool, owner, tenant) as ctx:
+        report = await service.summary(ctx, "30d", None)
+    assert report["export_allowed"] is False and report["funnel"]["created"] == 1
+    with pytest.raises(Forbidden) as refused:
+        async with tenant_tx(app_pool, owner, tenant) as ctx:
+            await export.export(ctx, "30d", None, "funnel")
+    assert refused.value.code == "feature_not_allowed"
+    async with tenant_tx(app_pool, owner, tenant) as ctx:
+        denied = await ctx.conn.fetch(
+            "SELECT action, outcome, object_id FROM crm.audit_event WHERE action = 'report_export' ORDER BY 1"
+        )
+    assert [(r["action"], r["outcome"], r["object_id"]) for r in denied] == [("report_export", "denied", "funnel")]
+    await allow_export(app_pool, tenant)
+    async with tenant_tx(app_pool, owner, tenant) as ctx:
+        assert (await service.summary(ctx, "30d", None))["export_allowed"] is True
+        _, count = await export.export(ctx, "30d", None, "funnel")
+    assert count > 0
 
 
 async def test_an_agency_with_a_year_of_history_compares_with_last_year(app_pool: asyncpg.Pool) -> None:

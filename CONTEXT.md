@@ -3350,8 +3350,14 @@ entitlements). `crm_entitlement_pull` (`app/cis/entitlement_feed.py`) makes `crm
   403 `feature_not_allowed` with a `denied` audit event. `whatsapp_sms` is also checked where no route is: a workflow
   `send_text` step is skipped `skipped_feature_not_allowed` (audited `denied`), and the dispatcher's text sender fails a
   queued SMS / WhatsApp `feature_not_allowed` at send time, so automations and texts queued before the feature was
-  taken away send nothing. `stripe_connect`, `campaigns`, `custom_domain` and
-  `insights_export` have no CRM feature yet; each gates its entry with the same call when it is built.
+  taken away send nothing. `campaigns` gates creating, editing and scheduling a campaign (AA-968). Since AA-1116:
+  `insights_export` gates every Reports CSV download (`GET /reports/export`, every section, the profit cube too),
+  checked before anything is read; `GET /reports/summary` returns `export_allowed` and the web locks both download
+  controls with the ask. `stripe_connect` gates connecting Stripe (`POST /settings/payment-methods` with provider
+  `stripe`; 403 before the paused provider's 409); `GET /settings/payment-methods` marks each provider `on_plan`
+  (`app.payments.providers.PLAN_FEATURES`; the VN gateway and the manual method need no feature). `custom_domain` has
+  no CRM feature yet (`entitlements.NOT_BUILT`); a unit test (`tests/unit/test_aa1116_feature_gates.py`) fails when a
+  feature code is neither checked in `app/` nor listed there.
 - Adoption guard: an agency never projected before (`projected_at` NULL, what the L1 console wrote) whose CIS account
   has no crm subscription in any status keeps its plan, seats and features (`awaiting_cis`, logged; CIS 355 created no
   crm subscription for the agencies that existed before). Once CIS holds a crm row the projection follows it (free with

@@ -12,6 +12,11 @@ client money, so no provider here is ever configured with an AA account.
   one (the gateway's refund API is a follow-up).
 - ``stripe`` (Connect Standard on the agency's own account) is a reserved name (the database knows it) and stays
   paused (root ADR 0019 b14): asking for it is 409 ``provider_not_available``.
+
+AA-1116: a provider may need a CRM feature on the agency's plan (:data:`PLAN_FEATURES`): ``stripe`` needs
+``stripe_connect`` (CIS ``crm.stripe_connect``, plan crm.pro; root catalogue INT-071). Connecting it without the
+feature is 403 ``feature_not_allowed`` before anything else (:func:`app.payments.service.connect`). The VN gateway and
+the manual method need no feature.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ from typing import Protocol
 from app.errors import Conflict
 
 KNOWN = ("manual", "stripe", "vn_gateway")
+PLAN_FEATURES = {"stripe": "stripe_connect"}  # provider -> the CRM feature code (app.entitlements) it needs
 
 
 @dataclass(frozen=True)
@@ -92,6 +98,7 @@ def provider(name: str) -> PaymentProvider:
     raise Conflict("unknown_provider", ", ".join(KNOWN))
 
 
-def available() -> list[dict[str, object]]:
-    """Every provider name with whether it can be used today (the Settings page lists them)."""
-    return [{"provider": name, "available": name in PROVIDERS} for name in KNOWN]
+def available(not_on_plan: frozenset[str] = frozenset()) -> list[dict[str, object]]:
+    """Every provider name with whether it can be used today and whether the agency's plan has it (``on_plan``,
+    AA-1116: false for a provider in ``not_on_plan``); the Settings page lists them."""
+    return [{"provider": name, "available": name in PROVIDERS, "on_plan": name not in not_on_plan} for name in KNOWN]

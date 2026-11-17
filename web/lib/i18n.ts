@@ -289,6 +289,7 @@ const en = {
   "reports.export.busy": "Preparing…",
   "reports.export.error": "The file could not be downloaded. Try again.",
   "reports.export.section": "Section to export",
+  "reports.export.locked": "CSV export is not on your agency's plan. Ask Adventure Asia to add it.",
   "reports.section.funnel": "Conversion",
   "reports.section.lead_sources": "Lead sources",
   "reports.section.outcomes": "Lost and cancelled",
@@ -2682,6 +2683,8 @@ const en = {
   "methods.provider.vn_gateway": "Vietnamese payment gateway",
   "methods.available": "Available",
   "methods.notYet": "Coming later",
+  "methods.notOnPlan": "Not on your plan",
+  "methods.notOnPlanHint": "Ask Adventure Asia to add it to your agency's plan.",
   "methods.error.required": "Enter a name and the instructions.",
   "proposal.error.invoice_issued_for_row": "This payment has an issued invoice. Record the payment on the invoice, or void the invoice first.",
   // AA-961 (CRM-30): Travelling now, the reach list and bulk reveal, AA incident flags, the calendar and ICS feed.
@@ -3030,6 +3033,7 @@ const vi: Record<MessageKey, string> = {
   "reports.export.busy": "Đang chuẩn bị…",
   "reports.export.error": "Không tải được tệp. Hãy thử lại.",
   "reports.export.section": "Phần cần xuất",
+  "reports.export.locked": "Gói của đại lý chưa có xuất CSV. Hãy nhờ Adventure Asia thêm vào.",
   "reports.section.funnel": "Tỉ lệ chốt",
   "reports.section.lead_sources": "Nguồn khách",
   "reports.section.outcomes": "Mất và huỷ",
@@ -5422,6 +5426,8 @@ const vi: Record<MessageKey, string> = {
   "methods.provider.vn_gateway": "Cổng thanh toán Việt Nam",
   "methods.available": "Có sẵn",
   "methods.notYet": "Sẽ có sau",
+  "methods.notOnPlan": "Gói chưa có",
+  "methods.notOnPlanHint": "Hãy nhờ Adventure Asia thêm vào gói của đại lý.",
   "methods.error.required": "Nhập tên và hướng dẫn.",
   "proposal.error.invoice_issued_for_row": "Khoản này đã có hoá đơn phát hành. Hãy ghi nhận thanh toán trên hoá đơn, hoặc huỷ hoá đơn trước.",
 

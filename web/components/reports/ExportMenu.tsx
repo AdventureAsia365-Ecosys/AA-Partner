@@ -2,7 +2,9 @@
 // web/components/reports/ExportMenu.tsx — A-14 "[Export CSV]" (AA-966): pick a section, download it as CSV through the
 // BFF (the API answers with the same numbers as the page, a spreadsheet formula guard on every text cell, and one
 // access-log event per download). The money sections are offered only to roles that see margins; the API refuses
-// them to anyone else anyway.
+// them to anyone else anyway. AA-1116: the CSV export is the plan's insights_export; without it the menu is locked
+// with a hint to ask AA (the API answers 403 feature_not_allowed anyway).
+import { Lock } from "lucide-react";
 import { useState } from "react";
 import { Button, K, Select } from "@/app/_kit";
 import { bffDownload } from "@/lib/bffClient";
@@ -14,11 +16,13 @@ export function ExportMenu({
   period,
   owner,
   moneyVisible,
+  allowed = true,
 }: {
   lang: Lang;
   period: Period;
   owner: string | null;
   moneyVisible: boolean;
+  allowed?: boolean;
 }) {
   const sections = exportableSections(moneyVisible);
   const [section, setSection] = useState<ExportSection>(sections[0]);
@@ -38,6 +42,8 @@ export function ExportMenu({
     }
   }
 
+  if (!allowed) return <ExportLocked lang={lang} testId="reports-export-locked" label={t(lang, "reports.export")} />;
+
   return (
     <div data-testid="reports-export" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
       <Select
@@ -55,6 +61,19 @@ export function ExportMenu({
           {error}
         </span>
       )}
+    </div>
+  );
+}
+
+/** AA-1116: a CSV download the agency's plan does not have: the button stays visible, disabled, with the hint. */
+export function ExportLocked({ lang, testId, label }: { lang: Lang; testId: string; label: string }) {
+  const hint = t(lang, "reports.export.locked");
+  return (
+    <div data-testid={testId} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, minWidth: 0 }}>
+      <Button type="button" size="sm" variant="secondary" disabled title={hint}>
+        <Lock size={13} aria-hidden="true" /> {label}
+      </Button>
+      <span style={{ color: K.muted, fontSize: 12.5 }}>{hint}</span>
     </div>
   );
 }

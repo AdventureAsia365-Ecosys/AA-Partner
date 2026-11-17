@@ -24,6 +24,7 @@ export function ProfitSection({
   members,
   lang,
   locale,
+  exportAllowed = true,
 }: {
   view: ProfitView;
   period: Period;
@@ -32,6 +33,7 @@ export function ProfitSection({
   members: Member[];
   lang: Lang;
   locale: DateLocale;
+  exportAllowed?: boolean;
 }) {
   const tr = (key: string) => t(lang, key as MessageKey);
   const money = (x: string) => formatMoney(x, v.base_currency, locale);
@@ -70,7 +72,7 @@ export function ProfitSection({
             </a>
           ))}
         </nav>
-        <ProfitExport lang={lang} period={period} owner={owner} dimension={dimension} />
+        <ProfitExport lang={lang} period={period} owner={owner} dimension={dimension} allowed={exportAllowed} />
       </div>
       <p style={{ margin: "0 0 8px", fontSize: 12.5, color: K.muted }}>{tr("profit.hint")}</p>
       <ReportTable

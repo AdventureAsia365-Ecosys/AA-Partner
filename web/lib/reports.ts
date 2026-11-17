@@ -139,6 +139,8 @@ export interface ReportView extends TilesView {
   };
   success: SuccessMetric[];
   insights_included: boolean;
+  /** AA-1116: whether the agency's plan has the CSV export (CRM feature insights_export); absent on an older API. */
+  export_allowed?: boolean;
 }
 
 export function isPeriod(value: unknown): value is Period {
@@ -171,6 +173,12 @@ export function exportPath(section: ExportSection, f: { period: Period; owner: s
 export function exportFilename(section: ExportSection, period: Period, now: Date = new Date()): string {
   const stamp = now.toISOString().slice(0, 10).replace(/-/g, "");
   return `report-${section.replace(/_/g, "-")}-${period}-${stamp}.csv`;
+}
+
+/** AA-1116: the CSV export is locked when the plan lacks it (an older API without the field keeps it open; the API
+ *  refuses a download with 403 feature_not_allowed anyway). */
+export function exportLocked(view: Pick<ReportView, "export_allowed">): boolean {
+  return view.export_allowed === false;
 }
 
 /** The sections a role may download (the money ones need view_margin: owner and agent). */

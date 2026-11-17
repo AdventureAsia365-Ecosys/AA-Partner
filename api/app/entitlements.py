@@ -6,6 +6,9 @@ features in the L1 console. "Allowed" is AA's side; the owner still switches a f
 feature has a switch (AI: ``crm.tenant_settings.ai_enabled``).
 
 - :data:`FEATURES`: the six codes the database CHECK ``tenant_entitlement_features_chk`` accepts.
+- :data:`NOT_BUILT`: the codes no CRM feature exists for yet (nothing to gate); a feature built later gates its entry
+  with :func:`require_feature` and leaves this list (``tests/unit/test_aa1116_feature_gates.py`` checks that every
+  other code is checked somewhere in ``app/``).
 - :func:`feature_allowed`: one read on the context's connection (RLS: the context's agency); no row = nothing allowed.
 - :func:`require_feature`: 403 ``feature_not_allowed`` with a ``denied`` audit event unless the feature is allowed.
 - :func:`crm_entitled`: whether the agency holds the CRM add-on itself (``crm.core`` in CIS), for the agency app's app
@@ -18,6 +21,9 @@ from app.errors import Forbidden
 from app.tenancy import SystemContext, TenantContext
 
 FEATURES = ("ai_assist", "whatsapp_sms", "stripe_connect", "campaigns", "custom_domain", "insights_export")
+# AA-1116: ``custom_domain`` (the client pages on the agency's own domain, CIS ``crm.custom_domain``) is not built: the
+# client pages live on the CRM's own client host only.
+NOT_BUILT = ("custom_domain",)
 LABELS = {
     "ai_assist": "the AI assistant",
     "whatsapp_sms": "SMS and WhatsApp",

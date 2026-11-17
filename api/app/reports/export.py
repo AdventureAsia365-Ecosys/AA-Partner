@@ -7,6 +7,9 @@
 - **Money**: the margin serializer (:mod:`app.margin`) filters JSON only, so this module checks ``view_margin`` itself:
   a money section for the assistant is 403 ``role_forbidden`` (and a ``denied`` audit event); the team and outstanding
   sections carry no margin column.
+- **Plan** (AA-1116): the CSV export is the CRM ``insights_export`` feature (CIS ``crm.insights_export``, plan crm.pro;
+  root catalogue CRM-F020). Without it every section is 403 ``feature_not_allowed`` with a ``denied`` audit event
+  (:func:`app.entitlements.require_feature`), checked before anything is read; the Reports page itself stays open.
 - Every download writes one ``report_export`` audit event (reason = the section), which is also the module 16
   success metric "the agency uses its reports".
 """
@@ -18,6 +21,7 @@ import io
 from decimal import Decimal
 from typing import Any
 
+from app import entitlements
 from app.finance import pnl
 from app.permissions import Action, require
 from app.reports import service
@@ -36,6 +40,7 @@ SECTIONS = (
     "profit",  # AA-1068: the profit cube by one dimension (app.finance.pnl)
 )
 MONEY_SECTIONS = frozenset({"money_by_month", "profit"})
+FEATURE = service.EXPORT_FEATURE  # the CRM feature code (app.entitlements) every CSV download needs
 _DANGEROUS = ("=", "+", "-", "@", "\t", "\r")
 
 
@@ -151,7 +156,9 @@ async def export(
     ctx: TenantContext, period: str, owner: str | None, section: str, *, dimension: str = "lead_source"
 ) -> tuple[bytes, int]:
     """The section as CSV bytes and its row count; audited as ``report_export``. ``dimension``: the ``profit``
-    section's grouping (AA-1068, :mod:`app.finance.pnl`)."""
+    section's grouping (AA-1068, :mod:`app.finance.pnl`). 403 ``feature_not_allowed`` without the plan's
+    ``insights_export`` (AA-1116)."""
+    await entitlements.require_feature(ctx, FEATURE, action="report_export", object_kind="report", object_id=section)
     if section in MONEY_SECTIONS:
         require(ctx, Action.VIEW_MARGIN, object_kind="report", object_id=section)
     if section == "profit":
