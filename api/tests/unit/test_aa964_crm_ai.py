@@ -480,11 +480,17 @@ async def test_a_role_arn_is_accepted_and_names_its_connection() -> None:
 
 
 def ai_conn(
-    enabled: bool = False, budget: str = "2", spent: str = "0.5", row: bool = True, entitled: bool = True
+    enabled: bool = False,
+    budget: str = "2",
+    spent: str = "0.5",
+    row: bool = True,
+    entitled: bool = True,
+    plan_budget: Decimal | None = None,
 ) -> ScriptedConn:
     return (
         ScriptedConn()
         .on("FROM crm.tenant_entitlement", entitled)  # AA-1027 F3: the plan's ai_assist
+        .on("SELECT ai_budget_usd FROM crm.tenant_entitlement", plan_budget)  # AA-1126 L3 (later rules win)
         .on(
             "SELECT ai_enabled, ai_budget_usd, ai_alert_month",
             {"ai_enabled": enabled, "ai_budget_usd": Decimal(budget), "ai_alert_month": None, "ai_alert_pct": None}
@@ -537,6 +543,7 @@ async def test_the_settings_view_defaults_to_off_and_shows_the_meter() -> None:
         "rate_limit_per_minute": 6,
         "can_edit": False,
         "ai_assist_allowed": False,
+        "budget_source": "settings",  # AA-1126 L3: no plan budget on this agency
     }
 
 

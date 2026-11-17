@@ -22,6 +22,8 @@ export interface AiSettings {
   can_edit: boolean;
   /** AA-1027 F3: the agency's plan has the AI assistant (crm.tenant_entitlement ai_assist); without it a draft is 403. */
   ai_assist_allowed?: boolean;
+  /** AA-1126 L3: the budget and its ceiling come from the agency's CRM plan ("plan") or the platform settings. */
+  budget_source?: "plan" | "settings";
 }
 
 export type MeterTone = "success" | "warning" | "danger";

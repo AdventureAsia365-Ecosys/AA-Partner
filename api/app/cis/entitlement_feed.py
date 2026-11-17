@@ -126,7 +126,8 @@ INSERT INTO crm.tenant_entitlement (plan, member_limit, allowed_features, projec
 VALUES ($1, $2, $3::text[], now(), $4, $5)
 ON CONFLICT (tenant_id) DO UPDATE
    SET plan = EXCLUDED.plan, member_limit = EXCLUDED.member_limit, allowed_features = EXCLUDED.allowed_features,
-       projected_at = EXCLUDED.projected_at, tp_crm_leads = EXCLUDED.tp_crm_leads, ai_budget_usd = EXCLUDED.ai_budget_usd
+       projected_at = EXCLUDED.projected_at, tp_crm_leads = EXCLUDED.tp_crm_leads,
+       ai_budget_usd = EXCLUDED.ai_budget_usd
 """
 # AA-1126 L3: the owner's budget follows the plan while it still equals the previous plan budget (or the default).
 FOLLOW_PLAN_SQL = (
@@ -349,7 +350,7 @@ async def _apply_in(ctx: SystemContext, wanted: Projection, counts: RunCounts) -
         or int(row["member_limit"]) != member_limit
         or sorted(row["allowed_features"] or []) != features
         or bool(row["tp_crm_leads"]) != wanted.tp_crm_leads
-        or _decimal(row["ai_budget_usd"]) != wanted.ai_budget_usd
+        or _decimal(row.get("ai_budget_usd")) != wanted.ai_budget_usd
     )
     if changed:
         await ctx.conn.execute(
@@ -398,7 +399,7 @@ def _decimal(value: Any) -> Decimal | None:
 async def _follow_plan_budget(ctx: SystemContext, row: Any, new: Decimal | None) -> None:
     """AA-1126 L3: a new plan budget moves the owner's budget that still equals the previous one (the previous plan
     budget, or the platform default before the agency's first plan budget). A budget the owner chose stays."""
-    old = _decimal(row["ai_budget_usd"]) if row is not None else None
+    old = _decimal(row.get("ai_budget_usd")) if row is not None else None
     if new is None or new == old:
         return
     previous = old if old is not None else budget_limits.default_budget_usd()
