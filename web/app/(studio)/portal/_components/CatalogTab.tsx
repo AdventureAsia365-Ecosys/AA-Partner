@@ -27,6 +27,7 @@ import { CatalogDrawer } from "./CatalogDrawer";
 import { TourRewritePanel, watchTourRewrite, type TourRewriteTarget } from "./TourRewritePanel";
 import { WorkStatusBadge, activePollInterval, latestVersionByTour, tourWorkStatus } from "./workStatus";
 import { ServedBadge } from "./ServedBadge";
+import { AllowanceHeldActions } from "./AllowanceHeld";
 import { plainError } from "./studioError";
 import { MasterNewerBadge } from "./MasterNewerNotice";
 import { showMasterNotice } from "@/lib/studio/masterNotice";
@@ -36,6 +37,7 @@ import {
   fetchMyVersions,
   fetchVersionDetail,
   isAiWriting,
+  isAllowanceHeld,
   isRewriteFailed,
   requestRewrite as apiRequestRewrite,
   retryRewrite as apiRetryRewrite,
@@ -313,7 +315,9 @@ function CatalogInner() {
           const v = c.row.original;
           return (
             <div onClick={(e) => e.stopPropagation()} style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-              {isRewriteFailed(v) ? (
+              {isAllowanceHeld(v) ? (
+                <AllowanceHeldActions resetsAt={v.allowance_resets_at} />
+              ) : isRewriteFailed(v) ? (
                 <Button variant="secondary" size="sm" disabled={retryM.isPending} onClick={() => retryM.mutate(v.id)}>
                   {retryM.isPending ? t("retrying") : t("retry")}
                 </Button>

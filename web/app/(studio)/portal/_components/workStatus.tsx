@@ -8,6 +8,8 @@
 //   done     — finished with content to use                 (tour: any finished version; piece: ready)
 //   failed   — the job ended without content → Retry        (tour: failed / job failed|cancelled|stopped_budget;
 //                                                            piece: not_ready)
+//   held     — AA-1126 L1: the job waits because the plan's AI writing allowance for the month is used up
+//              (tour: job_stop_code ai_quota_exhausted). It resumes on its own, so no Retry: the reason + Upgrade.
 //
 // The status always comes from what the API reads off the job (`shared.job`): a tour version's
 // `job_status` + `status` (v1 my-versions / versions/{id}), a piece's `ready_state` (the API maps
@@ -17,9 +19,9 @@
 
 import { SkeletonBar, SkeletonStyle, StatusBadge, useT } from "@/app/_kit";
 import { COMMON_MESSAGES } from "./common.messages";
-import { isAiWriting, isRewriteFailed, type Version } from "./catalogApi";
+import { isAiWriting, isAllowanceHeld, isRewriteFailed, type Version } from "./catalogApi";
 
-export type WorkStatus = "queued" | "writing" | "checking" | "done" | "failed";
+export type WorkStatus = "queued" | "writing" | "checking" | "done" | "failed" | "held";
 
 /** The label of each work state: a key of COMMON_MESSAGES (shown in the UI language). */
 export const WORK_STATUS_LABEL = {
@@ -28,6 +30,7 @@ export const WORK_STATUS_LABEL = {
   checking: "wsChecking",
   done: "wsDone",
   failed: "wsFailed",
+  held: "wsAllowanceUsed",
 } as const satisfies Record<WorkStatus, keyof typeof COMMON_MESSAGES.en>;
 
 /** Still moving: poll while any row is in one of these. */
@@ -36,7 +39,10 @@ export function isActiveWork(s: WorkStatus): boolean {
 }
 
 /** A tour version (T2 rewrite) — from its own status + the job status the API joins in. */
-export function tourWorkStatus(v: Pick<Version, "status" | "edit_source" | "job_status">): WorkStatus {
+export function tourWorkStatus(
+  v: Pick<Version, "status" | "edit_source" | "job_status"> & Partial<Pick<Version, "job_stop_code">>,
+): WorkStatus {
+  if (isAllowanceHeld(v)) return "held";
   if (isRewriteFailed(v)) return "failed";
   if (isAiWriting(v)) return v.job_status === "queued" ? "queued" : "writing";
   return "done";
@@ -67,6 +73,7 @@ const BADGE_STATUS: Record<WorkStatus, string> = {
   checking: "running",
   done: "approved",
   failed: "failed",
+  held: "stopped_budget",
 };
 
 export function WorkStatusBadge({ status, label }: { status: WorkStatus; label?: string }) {
@@ -107,7 +114,7 @@ export const ACTIVITY_LABEL = {
 
 export function activityState(
   a: { id: string; status: string; edit_source: string },
-  version: Pick<Version, "status" | "edit_source" | "job_status"> | undefined,
+  version: (Pick<Version, "status" | "edit_source" | "job_status"> & Partial<Pick<Version, "job_stop_code">>) | undefined,
 ): ActivityState | null {
   if (a.status === "approved") return "approved";
   if (a.status === "rejected") return "rejected";
@@ -121,7 +128,7 @@ export function activityState(
 /** Badge vocabulary per activity state (kit StatusBadge). */
 const ACTIVITY_BADGE: Record<ActivityState, string> = {
   queued: "queued", writing: "running", checking: "running", done: "pending",
-  failed: "failed", approved: "approved", rejected: "rejected", edited: "dismissed",
+  failed: "failed", approved: "approved", rejected: "rejected", edited: "dismissed", held: "stopped_budget",
 };
 
 /** AA-760 — while the state is unknown (versions not loaded yet) a neutral placeholder pill, not

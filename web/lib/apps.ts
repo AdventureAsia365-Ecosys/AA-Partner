@@ -34,6 +34,8 @@ export const UNKNOWN_ADD_ONS: AddOnStates = { crm: "unknown", planner: "unknown"
 
 /** The studio page where the owner asks for an add-on and everyone sees its state. */
 export const ADD_ONS_PATH = "/portal/account/add-ons";
+/** AA-1126 L1: where a used-up AI writing allowance points ("Upgrade plan"): the studio's plan and billing page. */
+export const PLAN_PATH = "/portal/account/billing";
 
 export interface AppEntry {
   key: AppKey;

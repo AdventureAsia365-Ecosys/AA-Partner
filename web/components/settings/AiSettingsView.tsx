@@ -11,6 +11,7 @@ import { AiNotice, Badge, Button, Checkbox, Field, Input, K, useHydrated } from 
 import { Panel } from "@/components/PageTitle";
 import { aiErrorKey, budgetError, meterTone, meterWidth, notOnPlan, rateLimitLine, testModeNote, usd, type AiSettings } from "@/lib/ai";
 import { bffSend } from "@/lib/bffClient";
+import { CRM_ADD_ONS_PATH } from "@/lib/addOns";
 import type { DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { CRM_TERMS_AI_HREF } from "@/lib/legal";
@@ -76,6 +77,14 @@ export function AiSettingsView({ settings, lang, locale }: { settings: AiSetting
           style={{ margin: 0, fontSize: 13, color: settings.alert_level === 100 ? K.danger : K.amber }}
         >
           {tr(`ai.alert.${settings.alert_level}`)}
+          {settings.alert_level === 100 && (
+            <>
+              {" "}
+              <Link href={CRM_ADD_ONS_PATH} data-testid="ai-upgrade" style={{ fontWeight: 600 }}>
+                {tr("ai.upgrade")}
+              </Link>
+            </>
+          )}
         </p>
       )}
 

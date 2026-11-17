@@ -16,6 +16,7 @@ import {
   draftErrorKey,
   draftInputError,
   fallbackKey,
+  upgradeOffered,
   unavailableKey,
   type DraftResult,
 } from "@/lib/aiDraft";
@@ -150,7 +151,12 @@ describe("AI draft rules", () => {
     expect(fallbackKey({ outcome: "refused", refusal_code: "budget_exhausted", truncated: false })).toBe("aiDraft.fallback.budget");
     expect(fallbackKey({ outcome: "refused", refusal_code: "stage_disabled", truncated: false })).toBe("aiDraft.fallback.paused");
     expect(fallbackKey({ outcome: "refused", refusal_code: "app_disabled", truncated: false })).toBe("aiDraft.fallback.paused");
-    expect(fallbackKey({ outcome: "refused", refusal_code: "app_budget_exhausted", truncated: false })).toBe("aiDraft.fallback.budget");
+    // AA-1126 L3: the CRM-wide daily budget and an unreadable spend are not the agency's own budget
+    expect(fallbackKey({ outcome: "refused", refusal_code: "app_budget_exhausted", truncated: false })).toBe("aiDraft.fallback.appBudget");
+    expect(fallbackKey({ outcome: "refused", refusal_code: "spend_unreadable", truncated: false })).toBe("aiDraft.fallback.unreadable");
+    expect(upgradeOffered({ refusal_code: "budget_exhausted" })).toBe(true);
+    expect(upgradeOffered({ refusal_code: "app_budget_exhausted" })).toBe(false);
+    expect(upgradeOffered({ refusal_code: "spend_unreadable" })).toBe(false);
     expect(fallbackKey({ outcome: "refused", refusal_code: "rate_limited", truncated: false })).toBe("aiDraft.fallback.rate_limited");
     expect(fallbackKey({ outcome: "error", refusal_code: null, truncated: true })).toBe("aiDraft.fallback.truncated");
     expect(fallbackKey({ outcome: "error", refusal_code: null, truncated: false })).toBe("aiDraft.fallback.generic");
@@ -275,7 +281,9 @@ describe("the draft drawer", () => {
     );
     const c = await mount(SETTINGS);
     await openAndWrite(c);
-    expect(q(c, "ai-draft-fallback")!.textContent).toBe(MESSAGES.en["aiDraft.fallback.budget"]);
+    // AA-1126 L3: the reason, then the Upgrade link to the CRM's Add-ons page
+    expect(q(c, "ai-draft-fallback")!.textContent).toBe(`${MESSAGES.en["aiDraft.fallback.budget"]} ${MESSAGES.en["aiDraft.upgrade"]}`);
+    expect(q(c, "ai-draft-upgrade")!.getAttribute("href")).toBe("/settings/add-ons");
     expect(q(c, "ai-draft-result")).toBeNull();
   });
 

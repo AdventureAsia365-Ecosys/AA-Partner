@@ -53,6 +53,14 @@ export const BELL_MESSAGES = defineMessages(
     viewAll: "View all →",
     caughtUp: "You’re all caught up.",
     aTour: "A tour",
+    // AA-1126 L1 / L2: the plan's AI allowance of the month is used up (ai.allowance_used / tripplanner.ai_allowance_used)
+    held: "waits for AI writing allowance — upgrade your plan or wait until it resets",
+    allowanceTitle: "AI writing allowance used up",
+    allowanceBody: (resetsOn: string) =>
+      `Your plan's AI writing allowance for this month is used up. New rewrites and posts wait until it resets${resetsOn ? ` on ${resetsOn}` : ""}. Upgrade your plan to keep writing now.`,
+    plannerAllowanceTitle: "Trip planner AI allowance used up",
+    plannerAllowanceBody: (resetsOn: string) =>
+      `Your plan's AI allowance for the trip planner is used up for this month. New visitors still get the planner, without AI-written trip days, until it resets${resetsOn ? ` on ${resetsOn}` : ""}. Upgrade your plan to keep the AI on for every visitor.`,
   },
   {
     approved: "đã được duyệt",
@@ -67,6 +75,13 @@ export const BELL_MESSAGES = defineMessages(
     viewAll: "Xem tất cả →",
     caughtUp: "Bạn đã xem hết thông báo.",
     aTour: "Một tour",
+    held: "đang chờ hạn mức viết bằng AI — hãy nâng cấp gói hoặc chờ hạn mức được làm mới",
+    allowanceTitle: "Đã hết hạn mức viết bằng AI",
+    allowanceBody: (resetsOn: string) =>
+      `Hạn mức viết bằng AI trong gói của bạn đã dùng hết cho tháng này. Các bài viết lại và bài đăng mới sẽ chờ đến khi hạn mức được làm mới${resetsOn ? ` vào ngày ${resetsOn}` : ""}. Nâng cấp gói để viết tiếp ngay.`,
+    plannerAllowanceTitle: "Đã hết hạn mức AI của trang lập kế hoạch",
+    plannerAllowanceBody: (resetsOn: string) =>
+      `Hạn mức AI cho trang lập kế hoạch chuyến đi trong gói của bạn đã dùng hết cho tháng này. Khách mới vẫn dùng được trang lập kế hoạch, nhưng không có các ngày lịch trình viết bằng AI, đến khi hạn mức được làm mới${resetsOn ? ` vào ngày ${resetsOn}` : ""}. Nâng cấp gói để bật lại AI cho mọi khách.`,
   },
 );
 

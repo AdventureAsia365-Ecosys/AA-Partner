@@ -23,6 +23,7 @@ import {
   draftErrorKey,
   draftInputError,
   fallbackKey,
+  upgradeOffered,
   unavailableKey,
   type DraftDecision,
   type DraftKind,
@@ -30,6 +31,7 @@ import {
   type FeedbackCode,
 } from "@/lib/aiDraft";
 import { bffSend } from "@/lib/bffClient";
+import { CRM_ADD_ONS_PATH } from "@/lib/addOns";
 import { t, type Lang, type MessageKey } from "@/lib/i18n";
 
 type Done = { decision: "accepted" | "discarded"; copied: boolean };
@@ -192,6 +194,14 @@ export function AiDraftPanel({
           {draft && !usable && (
             <p role="status" data-testid="ai-draft-fallback" style={{ margin: 0, fontSize: 13, color: K.amber }}>
               {tr(fallbackKey(draft))}
+              {upgradeOffered(draft) && (
+                <>
+                  {" "}
+                  <Link href={CRM_ADD_ONS_PATH} data-testid="ai-draft-upgrade" style={{ fontWeight: 600 }}>
+                    {tr("aiDraft.upgrade")}
+                  </Link>
+                </>
+              )}
             </p>
           )}
           {usable && (
