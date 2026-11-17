@@ -88,10 +88,13 @@ async def test_an_unchanged_or_removed_plan_budget_leaves_the_owner_budget() -> 
 # ── the limits ───────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-def _ctx(plan: Any = None, *, error: bool = False, ceiling: str = "2") -> Any:
+def _ctx(plan: Any = None, *, error: bool = False, own: str | None = None) -> Any:
+    """An agency context: its plan budget (or a read error) and, ``own``, an administrator's own ceiling for it."""
+    ps.forget_tenant()
     conn = ScriptedConn()
     conn.on(budget_limits.PLAN_BUDGET_SQL, RuntimeError("no grant") if error else plan)
-    conn.on("crm.setting_value", [])
+    rows = [{"key": ps.AI_BUDGET_MAX, "value_text": own, "version": 3}] if own is not None else []
+    conn.on("crm.setting_value", rows)
     return tenant_ctx(conn)
 
 
@@ -104,7 +107,35 @@ async def test_the_plan_budget_is_the_ceiling_and_the_no_row_budget(monkeypatch:
     assert await budget_limits.agency_budget(ctx, None) == Decimal("15.00")
     assert await budget_limits.agency_budget(ctx, {"ai_budget_usd": Decimal("40")}) == Decimal("15.00")  # capped
     assert await budget_limits.agency_budget(ctx, {"ai_budget_usd": Decimal("3")}) == Decimal("3")  # owner's lower
-    assert budget_limits.budget_source(Decimal("15.00")) == "plan" and budget_limits.budget_source(None) == "settings"
+    assert await budget_limits.budget_source(ctx) == "plan"
+    assert await budget_limits.ceiling(ctx) == (Decimal("15.00"), "plan")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "plan, own, enforced, source",
+    [
+        (Decimal("2.00"), "7", Decimal("7"), "agency"),  # an administrator's own ceiling wins over the plan
+        (Decimal("2.00"), "1", Decimal("1"), "agency"),  # lower too: the administrator's decision stands
+        (Decimal("12.00"), None, Decimal("12.00"), "plan"),  # no own value: the plan
+        (None, "5", Decimal("5"), "agency"),  # no plan budget: the own value
+    ],
+)
+async def test_the_admin_page_value_is_the_enforced_ceiling(
+    plan: Decimal | None, own: str | None, enforced: Decimal, source: str
+) -> None:
+    """S283 review fix (keep the admin threshold pages in sync): the per-agency value the CIS Platform › Settings CRM
+    tab lists under crm.ai.budget_max_usd (ps.resolve with the agency: source tenant) is the ceiling the gateway
+    enforces, with or without a plan budget; without an own value the plan's budget is (Tenant 360 / Plans page)."""
+    ctx = _ctx(plan, own=own)
+    assert await budget_limits.ceiling(ctx) == (enforced, source)
+    listed = ps.resolve(ps.AI_BUDGET_MAX, ctx.tenant_id)
+    assert (listed.source == "tenant") is (own is not None)
+    if own is not None:
+        assert ps.as_decimal(listed.value) == await budget_limits.budget_ceiling(ctx)
+    assert await budget_limits.agency_budget(ctx, {"ai_budget_usd": Decimal("100")}) == enforced
+    assert await budget_limits.budget_source(ctx) == ("plan" if source == "plan" else "settings")
+    ps.forget_tenant()
 
 
 @pytest.mark.asyncio

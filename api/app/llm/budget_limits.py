@@ -1,13 +1,19 @@
 """The AI budget limits of an agency (AA-1096 L4, crm-064; AA-1126 L3, crm-076), read by the gateway, the agency's
 Settings > AI, the L1 usage meter and the support reads.
 
-- **The plan's AI budget** (AA-1126 L3): ``crm.tenant_entitlement.ai_budget_usd``, the CIS plan feature
-  ``crm.ai_budget_usd_monthly`` of the agency's CRM plan (or its Tenant 360 override), projected by
-  ``crm_entitlement_pull`` (:mod:`app.cis.entitlement_feed`). When set it is both the agency's ceiling and the budget of
-  an agency with no settings row; the projection also moves the owner's budget with it (see the feed).
-- The platform settings, the fallback when the plan gives none (an agency not projected yet, a plan without the key):
-  ``crm.ai.budget_default_usd`` (the budget of an agency without a settings row) and ``crm.ai.budget_max_usd`` (the
-  highest budget an owner may set, a ``platform+tenant`` key read in the agency's own context).
+The ceiling, first match wins (:func:`ceiling`; the CIS Platform › Settings CRM tab and the support reads show the
+same order, so the admin page never lists a value the gateway does not apply):
+
+1. **The agency's own ceiling**: an administrator's per-agency value of ``crm.ai.budget_max_usd`` (a
+   ``platform+tenant`` key, read in the agency's own context). It wins over the plan (AA-1126 review fix, S283): an
+   administrator who gave one agency more (or less) keeps that decision when a plan budget arrives.
+2. **The plan's AI budget** (AA-1126 L3): ``crm.tenant_entitlement.ai_budget_usd``, the CIS plan feature
+   ``crm.ai_budget_usd_monthly`` of the agency's CRM plan (or its Tenant 360 override), projected by
+   ``crm_entitlement_pull`` (:mod:`app.cis.entitlement_feed`). It is also the budget of an agency with no settings
+   row; the projection moves the owner's budget with it (see the feed).
+3. **The platform value** of ``crm.ai.budget_max_usd`` (and ``crm.ai.budget_default_usd`` for the budget of an agency
+   without a settings row): the fallback when the plan gives none (an agency not projected yet, a plan without the
+   key).
 
 The gateway enforces ``min(agency budget, ceiling)``: lowering the ceiling (the plan or the setting) lowers every budget
 above it at once. A plan budget that cannot be read (a role without the column's grant, crm-076 not applied) falls back
@@ -52,13 +58,24 @@ async def new_agency_budget(ctx: AnyContext) -> Decimal:
     return plan if plan is not None else default_budget_usd()
 
 
-async def budget_ceiling(ctx: AnyContext) -> Decimal:
-    """The highest monthly AI budget of this agency: its plan's (AA-1126 L3), else ``crm.ai.budget_max_usd`` (the
-    platform value or the agency's own, read in its context)."""
+SOURCE_AGENCY, SOURCE_PLAN, SOURCE_SETTINGS = "agency", "plan", "settings"
+
+
+async def ceiling(ctx: AnyContext) -> tuple[Decimal, str]:
+    """The highest monthly AI budget of this agency and where it comes from (module docstring): ``agency`` (an
+    administrator's own value for it), ``plan`` (its CRM plan) or ``settings`` (the platform value)."""
+    own = await ps.tenant_get(ctx.conn, ps.AI_BUDGET_MAX, ctx.tenant_id)
+    if ps.resolve(ps.AI_BUDGET_MAX, ctx.tenant_id).source == "tenant":
+        return ps.as_decimal(own), SOURCE_AGENCY
     plan = await plan_budget(ctx)
     if plan is not None:
-        return plan
-    return ps.as_decimal(await ps.tenant_get(ctx.conn, ps.AI_BUDGET_MAX, ctx.tenant_id))
+        return plan, SOURCE_PLAN
+    return ps.as_decimal(own), SOURCE_SETTINGS
+
+
+async def budget_ceiling(ctx: AnyContext) -> Decimal:
+    """The highest monthly AI budget of this agency (:func:`ceiling`)."""
+    return (await ceiling(ctx))[0]
 
 
 async def agency_budget(ctx: AnyContext, row: Any) -> Decimal:
@@ -68,6 +85,7 @@ async def agency_budget(ctx: AnyContext, row: Any) -> Decimal:
     return min(stored, await budget_ceiling(ctx))
 
 
-def budget_source(plan: Decimal | None) -> str:
-    """``plan`` when the agency's plan gives its AI budget, else ``settings`` (Settings > AI says which)."""
-    return "plan" if plan is not None else "settings"
+async def budget_source(ctx: AnyContext) -> str:
+    """``plan`` when the agency's plan gives its AI budget ceiling, else ``settings`` (the platform value or an
+    administrator's own value for the agency): Settings > AI says which."""
+    return SOURCE_PLAN if (await ceiling(ctx))[1] == SOURCE_PLAN else SOURCE_SETTINGS
