@@ -168,3 +168,54 @@ describe("Account › Add-ons", () => {
     expect(refusalText(t, new Error("down"))).toBe(t("errSend"));
   });
 });
+
+describe("AA-1115: the Trip planner launcher", () => {
+  const HOSTED = "https://planner.example.invalid/lantern-bay/plan";
+  const activePlanner = (planner: unknown) => ({
+    product: "tripplanner", state: "active", subscription_status: "active", request: null, last_decision: null, planner,
+  }) as unknown as AddOn;
+
+  it("an active planner with the launcher shows the code to paste, the agency's own domain first", async () => {
+    stubApi([available("crm"), activePlanner({ url: HOSTED, domains: ["trip.lanternbay.example"], launcher: true })], "owner");
+    const { q } = await mount();
+    const code = (q("[data-testid=planner-launcher-code]") as HTMLTextAreaElement).value;
+    expect(code).toContain('href="https://trip.lanternbay.example/plan" target="_blank" rel="noopener"');
+    expect(code).toContain(">Plan your trip</a>");
+    expect(code).not.toMatch(/<iframe|<script/i);
+    expect(q("[data-testid=planner-launcher-preview]")?.getAttribute("href")).toBe("https://trip.lanternbay.example/plan");
+    expect(q("[data-testid=planner-launcher-target]")).not.toBeNull();
+  });
+
+  it("the copy button puts the code on the clipboard", async () => {
+    stubApi([available("crm"), activePlanner({ url: HOSTED, launcher: true })], "editor");
+    const writes: string[] = [];
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: async (v: string) => { writes.push(v); } } });
+    const { q } = await mount();
+    expect(q("[data-testid=planner-launcher-target]")).toBeNull();
+    const style = q("[data-testid=planner-launcher-style]") as HTMLSelectElement;
+    await act(async () => {
+      style.value = "link";
+      style.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      (q("[data-testid=planner-launcher-copy] button") as HTMLButtonElement).click();
+      await new Promise((r) => setTimeout(r, 10));
+    });
+    expect(writes).toEqual([`<a href="${HOSTED}" target="_blank" rel="noopener">Plan your trip</a>`]);
+    expect(q("[data-testid=planner-launcher-copy] button")?.textContent).toBe("Copied");
+  });
+
+  it("no launcher without the entitlement, without CIS's planner, or before the planner is on", async () => {
+    for (const addOns of [
+      [activePlanner({ url: HOSTED, launcher: false })],
+      [activePlanner(undefined)],
+      [{ ...available("tripplanner"), planner: { url: HOSTED, launcher: true } } as unknown as AddOn],
+    ]) {
+      stubApi(addOns, "owner");
+      const { q } = await mount();
+      expect(q("[data-testid=planner-launcher]")).toBeNull();
+      for (const r of roots.splice(0)) act(() => r.unmount());
+      document.body.innerHTML = "";
+    }
+  });
+});

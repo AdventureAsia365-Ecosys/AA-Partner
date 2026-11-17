@@ -9,17 +9,24 @@
 // ["studio-apps"] (the sidebar switcher, refreshed after a request; its crmMember says whether the person holds a CRM
 // role: only then does an active CRM show "Open CRM", else "Ask your owner for CRM access"). An approval whose setup
 // is still running or failed says so (CIS `setup`), never a bare "Approved".
+// AA-1115: an active Trip planner whose plan includes the launcher (CIS `planner.launcher`, entitlement tp.launcher)
+// shows the launcher snippet: a link or a button the agency pastes on its own site that opens its planner (its own
+// planner domain first, else the hosted /{slug}/plan) in a new tab. No iframe, no script (lib/plannerLauncher.ts). No
+// `planner` in the CIS answer (before CIS sends it) = no snippet.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink } from "lucide-react";
 import {
-  ApiError, Badge, Button, ErrorState, Field, K, PageHeader, Section, SkeletonBar, Textarea, apiGet, apiSend, sans, useFormat,
-  useLang, useT, type Translator,
+  ApiError, Badge, Button, ErrorState, Field, Input, K, PageHeader, Section, Select, SkeletonBar, Textarea, apiGet, apiSend,
+  mono, sans, useFormat, useLang, useT, type Translator,
 } from "@/app/_kit";
 import { useStudioRole } from "@/app/_kit/local/studio/useShellData";
 import { STUDIO_APPS_KEY, fetchStudioApps } from "@/app/_kit/local/studio/studioApps";
 import { CRM_HOME_PATH } from "@/lib/nav";
+import {
+  LAUNCHER_LABEL_MAX, launcherLabel, launcherSnippet, launcherTargets, type LauncherStyle, type PlannerSite,
+} from "@/lib/plannerLauncher";
 import { ADDONS_MESSAGES } from "./account.messages";
 import { usePortalShell } from "./PortalShellContext";
 import { plainError } from "./studioError";
@@ -36,6 +43,8 @@ interface AddOnRequest {
 interface AddOn {
   product: Product; state: "active" | "requested" | "available"; subscription_status: string | null;
   request: AddOnRequest | null; last_decision: AddOnRequest | null;
+  /** AA-1115: the tripplanner entry's site (CIS): its addresses and whether the plan includes the launcher. */
+  planner?: PlannerSite | null;
 }
 interface AddOnsBody { in_service: boolean; add_ons: AddOn[] }
 
@@ -72,6 +81,66 @@ function stateBadge(t: T, state: AddOn["state"]) {
 }
 
 const small = { margin: 0, fontSize: 12.5, color: K.muted, lineHeight: 1.55 } as const;
+
+/** AA-1115: the launcher snippet of an active Trip planner (only when the plan includes it and CIS sent an address). */
+export function PlannerLauncher({ site }: { site: PlannerSite | null | undefined }) {
+  const t = useT(ADDONS_MESSAGES);
+  const targets = launcherTargets(site);
+  const [target, setTarget] = useState("");
+  const [style, setStyle] = useState<LauncherStyle>("button");
+  const [label, setLabel] = useState("");
+  const [copied, setCopied] = useState<"" | "ok" | "failed">("");
+  if (targets.length === 0) return null;
+  const url = targets.includes(target) ? target : targets[0];
+  const code = launcherSnippet(url, launcherLabel(label, t("launcherLabelDefault")), style) ?? "";
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied("ok");
+    } catch {
+      setCopied("failed");
+    }
+  };
+  return (
+    <div data-testid="planner-launcher" style={{ display: "flex", flexDirection: "column", gap: 10, paddingTop: 12, borderTop: `1px solid ${K.line}` }}>
+      <div>
+        <p style={{ ...small, color: K.ink, fontWeight: 600 }}>{t("launcherTitle")}</p>
+        <p style={small}>{t("launcherAbout")}</p>
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+        {targets.length > 1 && (
+          <Field label={t("launcherAddress")}>
+            <Select value={url} onChange={(e) => { setCopied(""); setTarget(e.target.value); }}
+              options={targets.map((u) => ({ value: u, label: u }))} data-testid="planner-launcher-target" />
+          </Field>
+        )}
+        <Field label={t("launcherStyle")}>
+          <Select value={style} onChange={(e) => { setCopied(""); setStyle(e.target.value === "link" ? "link" : "button"); }}
+            options={[{ value: "button", label: t("launcherStyleButton") }, { value: "link", label: t("launcherStyleLink") }]}
+            data-testid="planner-launcher-style" />
+        </Field>
+        <Field label={t("launcherLabel")}>
+          <Input value={label} maxLength={LAUNCHER_LABEL_MAX} placeholder={t("launcherLabelDefault")}
+            onChange={(e) => { setCopied(""); setLabel(e.target.value); }} data-testid="planner-launcher-label" />
+        </Field>
+      </div>
+      <Field label={t("launcherCode")}>
+        <Textarea readOnly rows={3} value={code} data-testid="planner-launcher-code"
+          style={{ fontFamily: mono, fontSize: 12.5 }} onFocus={(e) => e.currentTarget.select()} />
+      </Field>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
+        <span data-testid="planner-launcher-copy">
+          <Button variant="secondary" onClick={() => void copy()}>{copied === "ok" ? t("launcherCopied") : t("launcherCopy")}</Button>
+        </span>
+        <a href={url} target="_blank" rel="noopener noreferrer" data-testid="planner-launcher-preview"
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: K.accentDeep }}>
+          {t("launcherPreview")} <ExternalLink size={12} aria-hidden />
+        </a>
+        {copied === "failed" && <span role="alert" style={{ fontSize: 12.5, color: K.danger }}>{t("launcherCopyFailed")}</span>}
+      </div>
+    </div>
+  );
+}
 
 function AddOnCard({ addOn, isOwner, inService, crmMember }: {
   addOn: AddOn; isOwner: boolean; inService: boolean; crmMember: boolean;
@@ -115,6 +184,7 @@ function AddOnCard({ addOn, isOwner, inService, crmMember }: {
             ))}
           </div>
         )}
+        {addOn.state === "active" && addOn.product === "tripplanner" && <PlannerLauncher site={addOn.planner} />}
         {addOn.state === "requested" && addOn.request && (
           <>
             <p style={small}>{t("requestedNote", formatDate(addOn.request.requested_at))}</p>

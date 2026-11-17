@@ -729,6 +729,14 @@ studio rules. Deploy Web Dev verifies the studio paths and runs the studio smoke
   vendor. An active CRM shows "Open CRM" only to a person with a CRM role (`crm_member`), else "Ask your owner for CRM
   access"; an approval whose setup still runs or failed says so (CIS `setup`); a refusal reads CIS's error code
   (`ApiError.code`: 409 `tenant_not_in_service` vs `already_subscribed`).
+- **Trip planner launcher** (AA-1115, root ADR 0019 d10, entitlement `tp.launcher`): an active Trip planner on the
+  studio's Add-ons page shows the code an agency pastes on its own website (`PlannerLauncher` in
+  `AccountAddOns.tsx`, `web/lib/plannerLauncher.ts`): one `<a target="_blank" rel="noopener">` (a text link, or a
+  link styled as a button with inline CSS) that opens the agency's planner in a new tab: its own planner domain's
+  `/plan` first, else the hosted `/{slug}/plan`. No iframe and no script (TripPlanner keeps `frame-ancestors 'none'`);
+  https addresses only, the label HTML-escaped. The addresses and the entitlement come from CIS: the tripplanner entry
+  of `GET /v1/account/add-ons` carries `planner: {url, domains, launcher}`; without it (a CIS that does not send it
+  yet, or a plan without the launcher) the snippet is not shown.
 - **CRM add-on requests** (AA-1036 R3, S269 live gap): an agency whose owner works in the CRM without a Content studio
   membership asks from the CRM's **Settings › Add-ons** (`web/app/(crm)/settings/add-ons`, kit Section / Badge / Field /
   Textarea / Button). The CRM API (`app/routers/addons.py`, owner only: `PLAN_VIEW` to read, `ADDON_REQUEST` to ask)
