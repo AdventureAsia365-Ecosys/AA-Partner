@@ -195,14 +195,14 @@
   },
   "crm.ai.budget_default_usd": {
    "en": {
-    "what": "The monthly AI budget, in US dollars, a new agency starts with. It never goes above the agency's ceiling: the lower of the two applies. A change applies to agencies created after it (and to the few older agencies that have no settings yet); an existing agency keeps the budget it started with until its owner changes it on Settings > AI.",
+    "what": "The monthly AI budget, in US dollars, a new agency starts with. It never goes above the agency's ceiling: the lower of the two applies. A change applies to agencies created after it (and to the few older agencies that have no settings yet); an existing agency keeps the budget it started with until its owner changes it on Settings > AI. When the agency's CRM plan gives an AI budget (the CIS Plans page, AI budget per month), the plan's value applies instead; this setting is the fallback.",
     "raise": "New agencies can use AI draft replies more each month before the calls stop. AA pays for the calls, so AA's monthly AI cost can grow.",
     "lower": "Caps AA's AI cost per new agency. Too low and agents see AI drafts stop early in the month and reply by hand.",
     "when": "Raise it when most agencies use up their budget early and the AI cost report allows it; lower it when AI spend grows faster than its value.",
     "example": "With the default of 2 USD a month, a new agency's AI calls are refused once it has used 2 USD in that month."
    },
    "vi": {
-    "what": "Ngân sách AI hằng tháng, tính bằng đô la Mỹ, mà một đại lý mới nhận lúc tạo. Không bao giờ vượt trần của đại lý: áp dụng giá trị thấp hơn trong hai giá trị. Thay đổi áp dụng cho đại lý tạo sau thay đổi (và vài đại lý cũ chưa có cài đặt nào); đại lý đang có giữ ngân sách đã nhận lúc tạo cho tới khi chủ đại lý tự đổi ở Settings > AI.",
+    "what": "Ngân sách AI hằng tháng, tính bằng đô la Mỹ, mà một đại lý mới nhận lúc tạo. Không bao giờ vượt trần của đại lý: áp dụng giá trị thấp hơn trong hai giá trị. Thay đổi áp dụng cho đại lý tạo sau thay đổi (và vài đại lý cũ chưa có cài đặt nào); đại lý đang có giữ ngân sách đã nhận lúc tạo cho tới khi chủ đại lý tự đổi ở Settings > AI. Khi gói CRM của đại lý có ngân sách AI (trang Plans của CIS, ngân sách AI mỗi tháng) thì giá trị của gói được dùng; thiết lập này chỉ là giá trị dự phòng.",
     "raise": "Đại lý mới dùng được bản nháp trả lời bằng AI nhiều hơn mỗi tháng trước khi bị dừng. AA trả tiền các lượt gọi, nên chi phí AI hằng tháng của AA có thể tăng.",
     "lower": "Giới hạn chi phí AI của AA cho mỗi đại lý mới. Quá thấp thì nhân viên thấy bản nháp AI dừng sớm trong tháng và phải tự trả lời.",
     "when": "Tăng khi phần lớn đại lý dùng hết ngân sách sớm và báo cáo chi phí AI cho phép; giảm khi chi phí AI tăng nhanh hơn giá trị mang lại.",
@@ -211,14 +211,14 @@
   },
   "crm.ai.budget_max_usd": {
    "en": {
-    "what": "The highest monthly AI budget, in US dollars, an agency owner may set on Settings > AI. AA pays for the calls. An administrator may give one agency its own ceiling.",
+    "what": "The highest monthly AI budget, in US dollars, an agency owner may set on Settings > AI. AA pays for the calls. An administrator may give one agency its own ceiling. When the agency's CRM plan gives an AI budget (the CIS Plans page, AI budget per month), the plan's value applies instead; this setting is the fallback.",
     "raise": "Owners may allow more AI use a month. Good for agencies that rely on AI drafts, but AA's AI bill per agency can grow up to the new ceiling.",
     "lower": "Caps the most any agency can spend on AI a month. An agency whose own budget is above the new ceiling is held to the ceiling (the lower of the two applies), except an agency an administrator gave its own higher ceiling.",
     "when": "Raise it, for one agency or for all, when an agency shows steady useful AI use and asks for more; lower it if AI cost needs a hard stop. The list under this setting names every agency with its own value; giving an agency its own value also creates its settings if it had none, which fixes its other new-agency values at today's defaults.",
     "example": "With the default of 2 USD a month, no owner can set an AI budget above 2 USD unless an administrator gives that agency its own ceiling."
    },
    "vi": {
-    "what": "Ngân sách AI hằng tháng cao nhất, tính bằng đô la Mỹ, mà chủ đại lý được đặt ở Settings > AI. AA trả tiền các lượt gọi. Quản trị viên có thể cho riêng một đại lý một mức trần khác.",
+    "what": "Ngân sách AI hằng tháng cao nhất, tính bằng đô la Mỹ, mà chủ đại lý được đặt ở Settings > AI. AA trả tiền các lượt gọi. Quản trị viên có thể cho riêng một đại lý một mức trần khác. Khi gói CRM của đại lý có ngân sách AI (trang Plans của CIS, ngân sách AI mỗi tháng) thì giá trị của gói được dùng; thiết lập này chỉ là giá trị dự phòng.",
     "raise": "Chủ đại lý được cho phép dùng AI nhiều hơn mỗi tháng. Tốt cho đại lý dựa nhiều vào bản nháp AI, nhưng hoá đơn AI của AA cho mỗi đại lý có thể tăng tới mức trần mới.",
     "lower": "Giới hạn số tiền AI tối đa mỗi đại lý dùng trong tháng. Đại lý có ngân sách riêng cao hơn trần mới sẽ bị giữ ở mức trần (áp dụng giá trị thấp hơn), trừ đại lý được quản trị viên cho mức trần riêng cao hơn.",
     "when": "Tăng, cho một đại lý hoặc tất cả, khi đại lý dùng AI đều đặn, có ích và xin thêm; giảm nếu chi phí AI cần một điểm dừng cứng. Danh sách dưới cài đặt này liệt kê mọi đại lý có giá trị riêng; đặt giá trị riêng cho một đại lý chưa có cài đặt nào cũng tạo cài đặt cho đại lý đó, nên các giá trị mặc định khác của đại lý được giữ cố định ở mức hôm nay.",
@@ -703,6 +703,22 @@
     "lower": "Ít kết quả hơn giữ danh sách ngắn và mỗi lượt tìm nhẹ; thành viên phải gõ cụ thể hơn thường xuyên hơn.",
     "when": "Tăng khi đại lý báo hồ sơ cần tìm hay nằm ngay dưới danh sách; giảm nếu tải tìm kiếm hiện lên trong số liệu của cơ sở dữ liệu.",
     "example": "Với mặc định 5, tìm một từ phổ biến hiện tối đa năm chuyến đi, năm nhà cung cấp, v.v."
+   }
+  },
+  "crm.spend.environment": {
+   "en": {
+    "what": "Which AI spend rules the CRM follows. dev keeps every hard stop, including the CRM app's daily AI budget for all agencies together. prod follows the pay-per-use rules: the app's daily budget only raises an alert, and a spend that cannot be read lets the AI draft go on with a warning. Each agency's own monthly AI budget from its plan always stops at its limit.",
+    "raise": "prod (the looser choice): one busy agency can no longer use up the AI drafts of every other agency; staff get alerts instead.",
+    "lower": "dev (the stricter choice): the app's daily budget stops the AI drafts of every agency once reached.",
+    "when": "Set prod on the production environment; keep dev on Dev and test environments. To check the prod behaviour on Dev, set prod, test, then set dev again.",
+    "example": "With the default dev: once the CRM's daily AI budget is reached, every agency is told to write replies by hand until the next day. With prod: the drafts go on and an alert is raised."
+   },
+   "vi": {
+    "what": "CRM áp dụng quy tắc chi tiêu AI nào. dev giữ mọi điểm chặn cứng, kể cả ngân sách AI theo ngày của cả app CRM cho mọi đại lý. prod theo quy tắc trả theo mức dùng: ngân sách ngày của app chỉ cảnh báo, và khi không đọc được chi tiêu thì bản nháp AI vẫn chạy kèm cảnh báo. Ngân sách AI theo tháng của từng đại lý (theo gói) luôn dừng khi chạm hạn.",
+    "raise": "prod (lựa chọn nới hơn): một đại lý dùng nhiều không còn làm cạn bản nháp AI của mọi đại lý khác; staff nhận cảnh báo.",
+    "lower": "dev (lựa chọn chặt hơn): chạm ngân sách ngày của app là bản nháp AI của mọi đại lý dừng.",
+    "when": "Đặt prod trên môi trường production; giữ dev trên Dev và môi trường test. Muốn xem hành vi prod trên Dev thì đặt prod, kiểm thử, rồi đặt lại dev.",
+    "example": "Với mặc định dev: chạm ngân sách AI ngày của CRM thì mọi đại lý được báo tự viết trả lời tới hôm sau. Với prod: bản nháp vẫn chạy và hệ thống phát cảnh báo."
    }
   }
  }
