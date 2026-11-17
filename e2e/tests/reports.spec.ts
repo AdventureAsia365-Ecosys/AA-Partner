@@ -1,6 +1,7 @@
 // e2e/tests/reports.spec.ts — AA-966, card CRM-34 on Dev (the web half of the live verify):
 //   1. Reports (A-14): the page renders for the owner with the tiles, the funnel, money and success metrics; the
-//      period links switch the window; the CSV export downloads a file whose first line is a header row.
+//      period links switch the window; the CSV export downloads a file whose first line is a header row (AA-1116: or,
+//      on a plan without insights_export, shows the locked control with the ask).
 //   2. Home (A-01, /home): the KPI tiles show and link to Reports.
 //   3. Screenshots at 1440 and 390 wide, light and dark (lessons: evidence per viewport and theme).
 // The reconcile checks (numbers = direct counts, RLS, assistant without money, formula guard) run against the API in
@@ -43,12 +44,22 @@ test.describe("CRM-34 reports on Dev", () => {
     await expect(page.getByTestId("reports-success")).toBeVisible();
     await expect(page.getByTestId("reports-insights")).toBeVisible();
 
-    const download = page.waitForEvent("download");
-    await page.getByTestId("reports-export").getByRole("button").click();
-    const file = await download;
-    expect(file.suggestedFilename()).toMatch(/^report-funnel-12m-\d{8}\.csv$/);
-    const body = fs.readFileSync(await file.path(), "utf-8").replace(/^﻿/, "");
-    expect(body.split("\r\n")[0]).toBe("stage,trips");
+    // AA-1116: the CSV export is the plan's insights_export (CIS crm.insights_export). On a plan without it the
+    // control is locked with the ask; otherwise the download runs.
+    const locked = page.getByTestId("reports-export-locked");
+    await expect(page.getByTestId("reports-export").or(locked)).toBeVisible();
+    if (await locked.isVisible()) {
+      await expect(locked).toContainText("Ask Adventure Asia");
+      await expect(locked.getByRole("button")).toBeDisabled();
+      test.info().annotations.push({ type: "plan", description: "insights_export not on the plan: export locked" });
+    } else {
+      const download = page.waitForEvent("download");
+      await page.getByTestId("reports-export").getByRole("button").click();
+      const file = await download;
+      expect(file.suggestedFilename()).toMatch(/^report-funnel-12m-\d{8}\.csv$/);
+      const body = fs.readFileSync(await file.path(), "utf-8").replace(/^﻿/, "");
+      expect(body.split("\r\n")[0]).toBe("stage,trips");
+    }
 
     for (const [w, h] of [[1440, 900], [390, 844]] as const) {
       await page.setViewportSize({ width: w, height: h });
