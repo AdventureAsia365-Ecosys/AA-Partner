@@ -82,10 +82,11 @@ function stateBadge(t: T, state: AddOn["state"]) {
 
 const small = { margin: 0, fontSize: 12.5, color: K.muted, lineHeight: 1.55 } as const;
 
-/** AA-1115: the launcher snippet of an active Trip planner (only when the plan includes it and CIS sent an address). */
-export function PlannerLauncher({ site }: { site: PlannerSite | null | undefined }) {
+/** AA-1115: the launcher snippet of an active Trip planner (only when the plan includes it and CIS sent an address);
+ *  nothing for any other add-on or state. */
+export function PlannerLauncher({ addOn }: { addOn: Pick<AddOn, "product" | "state" | "planner"> }) {
   const t = useT(ADDONS_MESSAGES);
-  const targets = launcherTargets(site);
+  const targets = launcherTargets(addOn.product === "tripplanner" && addOn.state === "active" ? addOn.planner : null);
   const [target, setTarget] = useState("");
   const [style, setStyle] = useState<LauncherStyle>("button");
   const [label, setLabel] = useState("");
@@ -184,7 +185,7 @@ function AddOnCard({ addOn, isOwner, inService, crmMember }: {
             ))}
           </div>
         )}
-        {addOn.state === "active" && addOn.product === "tripplanner" && <PlannerLauncher site={addOn.planner} />}
+        <PlannerLauncher addOn={addOn} />
         {addOn.state === "requested" && addOn.request && (
           <>
             <p style={small}>{t("requestedNote", formatDate(addOn.request.requested_at))}</p>

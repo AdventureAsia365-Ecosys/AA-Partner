@@ -37,15 +37,14 @@ export function safeHttpsUrl(raw: unknown): string | null {
  *  hosted planner. Empty when the plan has no launcher or CIS sent no usable address. */
 export function launcherTargets(site: PlannerSite | null | undefined): string[] {
   if (!site || site.launcher !== true) return [];
-  const out: string[] = [];
-  for (const host of site.domains ?? []) {
-    const h = typeof host === "string" ? host.trim().toLowerCase() : "";
-    const url = HOST_RE.test(h) ? safeHttpsUrl(`https://${h}/plan`) : null;
-    if (url && !out.includes(url)) out.push(url);
-  }
-  const hosted = safeHttpsUrl(site.url);
-  if (hosted && !out.includes(hosted)) out.push(hosted);
-  return out;
+  const urls = [...(site.domains ?? []).map(domainPlanUrl), safeHttpsUrl(site.url)];
+  return [...new Set(urls.filter((u): u is string => u !== null))];
+}
+
+/** The planner page of one custom planner domain (TripPlanner maps /plan there to the agency's planner), or null. */
+function domainPlanUrl(host: unknown): string | null {
+  const h = typeof host === "string" ? host.trim().toLowerCase() : "";
+  return HOST_RE.test(h) ? safeHttpsUrl(`https://${h}/plan`) : null;
 }
 
 const ESC: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
