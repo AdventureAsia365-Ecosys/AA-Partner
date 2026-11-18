@@ -1,0 +1,24 @@
+{
+ "allow": [
+  {
+   "id": "GHSA-fc5q-39xc-vjpf",
+   "expires": "2026-12-18",
+   "packages": [
+    "@next/eslint-plugin-next",
+    "@rollup/plugin-commonjs",
+    "@rollup/pluginutils",
+    "@sentry/nextjs",
+    "@typescript-eslint/typescript-estree",
+    "eslint-config-next",
+    "eslint-import-resolver-typescript",
+    "fast-glob",
+    "micromatch",
+    "picomatch",
+    "tinyglobby",
+    "vite",
+    "vitest"
+   ],
+   "reason": "picomatch ReDoS (high), no patched version exists (range <=4.0.7, the latest release; S284 18/11/2026). In the CRM web it is reached only through build, lint and test tooling: the lockfile marks picomatch 4.0.7 as a production dependency via @sentry/nextjs -> @rollup/plugin-commonjs, but only Sentry's build-time webpack wrappingLoader loads that plugin and it is not traced into the standalone output; every other path (micromatch, fast-glob, tinyglobby, eslint, vite / vitest) is dev only. No runtime code matches a glob a user supplies. Remove this entry when a patched picomatch ships (dependabot), or extend it once after a fresh check."
+  }
+ ]
+}
