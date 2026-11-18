@@ -4,16 +4,16 @@
 // on Vercel: one agency host for the API (/crm/*) and the web (everything else).
 import type { NextConfig } from "next";
 import path from "path";
+import { STATIC_SECURITY_HEADERS, contentSecurityPolicy, sentryOrigin } from "./lib/securityHeaders";
 
-// Security headers on every response (same set as the tenant portal, AA-885). The Content-Security-Policy is set per
-// request by proxy.ts instead (its form-action must name the Cognito domain from the environment: the sign-out form
-// is answered with a redirect to the managed-login logout page).
-const SECURITY_HEADERS = [
-  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
-  { key: "X-Content-Type-Options", value: "nosniff" },
-  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  { key: "X-Frame-Options", value: "DENY" },
-  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+// Security headers on every response (same set as the tenant portal, AA-885; AA-1111 S284: + COOP, list in
+// lib/securityHeaders.ts). The Content-Security-Policy is set per request by proxy.ts instead (a fresh script nonce,
+// and its form-action names the Cognito domain from the environment: the sign-out form is answered with a redirect to
+// the managed-login logout page). The paths the proxy skips (build chunks, image optimiser, favicon, the mail import
+// upload) get the same policy without a nonce here, so no response leaves without a CSP.
+const SECURITY_HEADERS = STATIC_SECURITY_HEADERS;
+const STATIC_CSP = [
+  { key: "Content-Security-Policy", value: contentSecurityPolicy({ connectSrc: [sentryOrigin(process.env.NEXT_PUBLIC_SENTRY_DSN)] }) },
 ];
 
 // AA-1036 (R3 slice 1, root ADR 0019 d6) — the Content studio moved into this app (app/(studio)). Its old links keep
@@ -56,6 +56,10 @@ const nextConfig: NextConfig = {
   async headers() {
     return [
       { source: "/(.*)", headers: SECURITY_HEADERS },
+      { source: "/_next/:path*", headers: STATIC_CSP },
+      { source: "/favicon.ico", headers: STATIC_CSP },
+      { source: "/bff/mail/imports/:path*", headers: STATIC_CSP },
+      { source: "/bff/mail/imports", headers: STATIC_CSP },
       // AA-943: the planning form's path carries the signed link's token: never send it on as a Referer.
       { source: "/c/s/:token*", headers: [{ key: "Referrer-Policy", value: "no-referrer" }] },
       // AA-946: the proposal page and the traveller portal carry their signed link's token in the path too.

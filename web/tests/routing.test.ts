@@ -5,7 +5,7 @@ import { matchBff, upstreamHeaders, BFF_ROUTES } from "@/lib/bff";
 import { classifyHost, clientPathAllowed, hasRefreshMarker, isPublicPartnerPath, safeNext, withRefreshMarker } from "@/lib/hosts";
 import { activeSection, contentStudioHref, isRole, sectionByKey, visibleSections } from "@/lib/nav";
 import { cookieNames, sessionCookie } from "@/lib/session";
-import { contentSecurityPolicy, gate, proxy } from "@/proxy";
+import { contentSecurityPolicy, gate, nonceFor, proxy } from "@/proxy";
 import { testConfig } from "./helpers";
 
 let cfg = testConfig();
@@ -70,12 +70,14 @@ describe("proxy", () => {
   });
 
   it("lets a valid session through, overwriting forged internal headers, with the CSP", () => {
-    const res = gate(
-      req("https://partner.example.test/clients", { cookie: validCookie(), headers: { "x-aa-path": "/evil" } }),
-    );
+    const request = req("https://partner.example.test/clients", { cookie: validCookie(), headers: { "x-aa-path": "/evil" } });
+    const res = gate(request);
     expect(res.headers.get("x-middleware-next")).toBe("1");
     expect(res.headers.get("x-middleware-request-x-aa-path")).toBe("/clients");
-    expect(res.headers.get("content-security-policy")).toBe(contentSecurityPolicy(cfg.cognitoDomain));
+    // AA-1111: the request's own nonce, also handed to the page (x-nonce) for Next and the root layout.
+    const nonce = nonceFor(request);
+    expect(res.headers.get("content-security-policy")).toBe(contentSecurityPolicy(cfg.cognitoDomain, "'none'", "", nonce));
+    expect(res.headers.get("x-middleware-request-x-nonce")).toBe(nonce);
     expect(contentSecurityPolicy("https://auth.example.test")).toContain("form-action 'self' https://auth.example.test");
     expect(contentSecurityPolicy("https://auth.example.test")).toContain("frame-ancestors 'none'");
   });
