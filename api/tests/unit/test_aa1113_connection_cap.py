@@ -89,6 +89,7 @@ async def test_prod_never_refuses_for_the_cap(prod: None) -> None:
 async def test_a_missing_view_goes_on_and_a_read_error_fails_closed_in_dev_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    connection_cap._unmapped_logged.clear()
     missing = ScriptedConn().on("FROM catalog.v_llm_connection_cap_v1", asyncpg.UndefinedTableError("no view"))
     assert await connection_cap.refusal(missing, BedrockLike()) == (None, None)
     denied = ScriptedConn().on("FROM catalog.v_llm_connection_cap_v1", asyncpg.InsufficientPrivilegeError("no"))

@@ -4,8 +4,9 @@ A model connection (an AWS account's Bedrock, a vendor API) has one monthly budg
 gateway leaves a connection out of every route once this UTC month's spend on it reaches that budget and the
 connection's policy is a hard stop. The CRM's own gateway (:mod:`app.llm.gateway`) spends on the same connections, so
 it must stop at the same cap: CIS publishes each capped connection's month-to-date CIS ledger spend, budget and policy
-as the read contract ``catalog.v_llm_connection_cap_v1`` (CIS 450; ``crm_app`` may read that one view, root ADR
-0008a still holds: the CRM reads no ``shared`` table). Before every call the gateway asks :func:`refusal`:
+as the read contract ``catalog.v_llm_connection_cap_v1`` (CIS 450; CIS 451 lets ``crm_app`` read that one view, a
+root ADR 0008a amendment proposed in S284: the CRM still reads no ``shared`` table). Before every call the gateway
+asks :func:`refusal`:
 
 - the CRM's provider connection is named in the CIS registry's terms (:data:`CIS_CONNECTION`: the task role's own
   Bedrock, ``bedrock``, is the account the CRM runs on, ``acc2``; a role-assumed connection, ``bedrock_role``, has no
@@ -18,8 +19,8 @@ as the read contract ``catalog.v_llm_connection_cap_v1`` (CIS 450; ``crm_app`` m
   says "write it by hand"); the ``prod`` rules (pay per use, tech lead S283: a connection cap never stops a customer
   call) let the call go on and log ``crm_llm_connection_cap_reached``;
 - a read error: ``dev`` refuses ``spend_unreadable`` (fail closed, the CRM's rule for its other budgets), ``prod`` goes
-  on with a warning. A missing view (before CIS 450 is applied, or ``crm_app`` without the grant) means no cap is
-  published yet: the call goes on (one warning line).
+  on with a warning. A missing view or grant (before CIS 450 / 451 are applied) means no cap is published to the CRM
+  yet: the call goes on (one warning line per process).
 
 Read on the call's own connection in a savepoint, like :mod:`app.llm.app_profile` (a platform read, no tenant rows).
 CIS does not count the CRM's spend toward the cap (it cannot read the CRM's ledger), so the CRM stops at the shared
@@ -55,7 +56,7 @@ CRM_MONTH_SQL = """
 SELECT coalesce(sum(cost_usd), 0) FROM crm.llm_usage_daily WHERE day >= ($1 AT TIME ZONE 'UTC')::date
 """
 
-_unmapped_logged: set[str] = set()
+_unmapped_logged: set[str] = set()  # connection keys (and unpublished:<key>) logged once
 
 
 @dataclass(frozen=True)
@@ -117,7 +118,9 @@ async def refusal(conn: asyncpg.Connection, provider: Any) -> tuple[str | None, 
     try:
         state = await read_state(conn, cis_key)
     except (asyncpg.UndefinedTableError, asyncpg.InsufficientPrivilegeError) as exc:
-        log.warning("crm_llm_connection_cap_unpublished connection=%s error=%s", cis_key, type(exc).__name__)
+        if f"unpublished:{cis_key}" not in _unmapped_logged:
+            _unmapped_logged.add(f"unpublished:{cis_key}")
+            log.warning("crm_llm_connection_cap_unpublished connection=%s error=%s", cis_key, type(exc).__name__)
         return None, None
     except Exception as exc:  # noqa: BLE001 — class only
         log.warning(
