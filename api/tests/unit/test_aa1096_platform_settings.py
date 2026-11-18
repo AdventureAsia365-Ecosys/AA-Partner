@@ -36,11 +36,13 @@ def _clean() -> Any:
     ps.configure_env({})
     ps.invalidate()
     ps.READER._snapshot = None
+    ps.READER.last_error = None
     ops_alerts.PENDING.drain()
     yield
     ps.configure_env({})
     ps.invalidate()
     ps.READER._snapshot = None
+    ps.READER.last_error = None  # a failed refresh here must not make a later file's fail-closed read answer off
     ops_alerts.PENDING.drain()
 
 
