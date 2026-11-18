@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.13.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.12.0...v0.13.0) (2026-11-17)
+
+
+### Features
+
+* crm-076 the agency AI budget from the plan and the CRM spend rules setting ([#335](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/335)) ([24722bc](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/24722bc85e5cb5ad01b72baaad976d2781548a66))
+* gate the Reports CSV export and Stripe connect on the agency's CRM plan ([#334](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/334)) ([b6e770b](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/b6e770b9c5953535bfa651812c007e6233dc9bef))
+* studio money in the agency currency and CRM member limits as settings ([#331](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/331)) ([183a98c](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/183a98c8fa2a5328d2f2d40984e7fdf8e6858e2e))
+* Trip planner launcher snippet on the agency Add-ons page ([#332](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/332)) ([2a40200](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/2a40200008bb49ad22fbda5f0b978bedd96a167b))
+
+
+### Bug Fixes
+
+* CRM global search review fixes (term echo, folded length, fail-closed switch and PII index proof) ([#328](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/328)) ([900566a](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/900566abd1a5e262b714d1018bd975d62b535c6d))
+
 ## [0.12.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.11.0...v0.12.0) (2026-11-16)
 
 

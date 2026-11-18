@@ -16,6 +16,9 @@ API = Path(__file__).resolve().parents[2]
 M070 = API / "migrations" / "068_crm_retire_settings_env_overrides.sql"
 DEFAULTS = API / "app" / "platform_settings" / "compiled_defaults.json"
 RETIRED = API / "tests" / "unit" / "snapshots" / "aa1096_retired_env_overrides.json"
+# The later files that edit a description crm-068 also edits (AA-1126 crm-076: crm.ai.budget_max_usd): replayed
+# after it, in number order, so the re-run below compares the chain's end state.
+LATER_EDITS = (API / "migrations" / "076_crm_plan_ai_budget_and_spend_rules.sql",)
 
 
 async def test_crm068_is_registered_and_no_definition_names_an_env_var(admin: asyncpg.Connection) -> None:
@@ -40,6 +43,8 @@ async def test_a_rerun_changes_nothing(admin: asyncpg.Connection) -> None:
     await admin.execute("SET ROLE crm_owner")
     try:
         await admin.execute(M070.read_text(encoding="utf-8"))
+        for later in LATER_EDITS:
+            await admin.execute(later.read_text(encoding="utf-8"))
     finally:
         await admin.execute("RESET ROLE")
     assert [tuple(r) for r in await admin.fetch(sql)] == before
