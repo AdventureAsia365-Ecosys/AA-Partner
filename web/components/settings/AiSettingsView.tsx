@@ -9,7 +9,10 @@ import { useState } from "react";
 import Link from "next/link";
 import { AiNotice, Badge, Button, Checkbox, Field, Input, K, useHydrated } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
-import { aiErrorKey, budgetError, meterTone, meterWidth, notOnPlan, rateLimitLine, testModeNote, usd, type AiSettings } from "@/lib/ai";
+import {
+  aiErrorKey, budgetError, meterTone, meterWidth, notOnPlan, planUpgradeHref, rateLimitLine, testModeNote, usd,
+  type AiSettings,
+} from "@/lib/ai";
 import { bffSend } from "@/lib/bffClient";
 import type { DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
@@ -69,15 +72,7 @@ export function AiSettingsView({ settings, lang, locale }: { settings: AiSetting
           {settings.can_edit && <> {tr("ai.noPlanSwitch")}</>}
         </p>
       )}
-      {settings.alert_level && (
-        <p
-          role="status"
-          data-testid="ai-alert"
-          style={{ margin: 0, fontSize: 13, color: settings.alert_level === 100 ? K.danger : K.amber }}
-        >
-          {tr(`ai.alert.${settings.alert_level}`)}
-        </p>
-      )}
+      {settings.alert_level && <AiBudgetAlert level={settings.alert_level} tr={tr} />}
 
       <Panel title={tr("ai.meter")} testId="ai-meter">
         <div style={{ display: "grid", gap: 8 }}>
@@ -167,5 +162,22 @@ export function AiSettingsView({ settings, lang, locale }: { settings: AiSetting
         </p>
       </Panel>
     </div>
+  );
+}
+
+/** The month's 75 / 90 / 100 % alert; at 100 % (AA-1126 L3) the Upgrade link (a plan upgrade request, lib/ai.ts). */
+function AiBudgetAlert({ level, tr }: { level: 75 | 90 | 100; tr: (key: string) => string }) {
+  return (
+    <p role="status" data-testid="ai-alert" style={{ margin: 0, fontSize: 13, color: level === 100 ? K.danger : K.amber }}>
+      {tr(`ai.alert.${level}`)}
+      {level === 100 && (
+        <>
+          {" "}
+          <a href={planUpgradeHref()} data-testid="ai-upgrade" style={{ fontWeight: 600 }}>
+            {tr("ai.upgrade")}
+          </a>
+        </>
+      )}
+    </p>
   );
 }

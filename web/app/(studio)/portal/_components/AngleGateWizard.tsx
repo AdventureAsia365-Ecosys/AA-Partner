@@ -74,7 +74,8 @@ import LiveWriter from "./LiveWriter";
 import { CtaReviewNotice, ctaWarningFrom, useCtaReviewCheck, type CtaWarning } from "./CtaReviewNotice";
 import { channelName, humanizeKey } from "./channelLabels";
 import { atomReplacedNote, type AtomReplacement } from "@/lib/studio/myContent";
-import { plainError } from "./studioError";
+import { detailOf } from "./studioError";
+import { WizardRefusal, refusalFromResponse, refusalOf, type Refusal } from "./wizardRefusal";
 
 /** AA-668 — the goal's name from the 8-value list (`GET /v1/angle-gate/goals`), never its key:
  *  "introduction_awareness" → "Introduction / Awareness". Before the list loads, the key as words. */
@@ -334,7 +335,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
   const [req, setReq] = useState<AngleGateRequest | null>(null);
   const [generating, setGenerating] = useState(false);
   const [choosing, setChoosing] = useState<number | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<Refusal>(null);
 
   // AA-497 — "Change angle" (step 3 -> back to step 2), see changeAngle() below.
   const [reopening, setReopening] = useState(false);
@@ -343,7 +344,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
   // AA-450 — write + inline T10 check. AA-466: `writing` spans the whole 202+poll cycle.
   const [piece, setPiece] = useState<ContentPiece | null>(null);
   const [writing, setWriting] = useState(false);
-  const [writeError, setWriteError] = useState<string | null>(null);
+  const [writeError, setWriteError] = useState<Refusal>(null);
   const [needsCtaInput, setNeedsCtaInput] = useState(false);
   const [ctaInput, setCtaInput] = useState("");
   // AA-819 follow-up — a typed CTA that mentions reviews or ratings is still written, with a
@@ -431,7 +432,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
         // AA-764 — resumed while the angle job is still running: keep showing progress.
         if (d.generating) { if (d.goal) setSelectedGoal(d.goal); pollAngles(d.request_id); }
       })
-      .catch(e => setError(e.detail ?? t("loadFailed")))
+      .catch(e => setError(detailOf(e) || t("loadFailed")))
       .finally(() => setInitialLoading(false));
   }, [requestId, pollAngles, t]);
 
@@ -442,10 +443,10 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ goal: selectedGoal }),
     })
-      .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
+      .then(async r => (r.ok ? r.json() : Promise.reject(await refusalFromResponse(r))))
       .then((d: AngleGateRequest) => { if (!settleAngles(d)) pollAngles(d.request_id); })
-      .catch(e => { setGenerating(false); setError(e.detail ?? t("anglesRetry")); });
-  }, [req, selectedGoal, settleAngles, pollAngles, t]);
+      .catch(e => { setGenerating(false); setError(refusalOf(e, t("anglesRetry"), lang)); }); // AA-1126 L1: 402 = banner
+  }, [req, selectedGoal, settleAngles, pollAngles, t, lang]);
 
   const stopPolling = useCallback(() => setPollPieceId(null), []);
 
@@ -505,10 +506,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
           setNeedsCtaInput(true);
           return null;
         }
-        if (!r.ok) {
-          const err = await r.json().catch(() => ({}));
-          throw new Error(err.detail ?? t("writeFailed"));
-        }
+        if (!r.ok) throw await refusalFromResponse(r); // AA-1126 L1: 402 = the allowance banner
         return r.json();
       })
       .then((placeholder: ContentPiece | null) => {
@@ -520,7 +518,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
       })
       .catch(e => {
         setWriting(false);
-        setWriteError(plainError(e, t("writeFailed"), lang));
+        setWriteError(refusalOf(e, t("writeFailed"), lang));
       });
   }, [pollPiece, onDetachedPiece, t, lang]);
 
@@ -574,7 +572,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
     })
       .then(async r => (r.ok ? r.json() : Promise.reject(await r.json().catch(() => ({})))))
       .then(d => setReq(d)) // AA-522 — the write-step effect above now owns firing the write call
-      .catch(e => setError(e.detail ?? t("chooseFailed")))
+      .catch(e => setError(detailOf(e) || t("chooseFailed")))
       .finally(() => setChoosing(null));
   }, [req, t]);
 
@@ -592,7 +590,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
         setShowDonePopup(false); setWriteCtaWarning(null);
         resolvedWriteStepFor.current = null; // AA-522 — force a fresh latest-piece check on re-choice
       })
-      .catch(e => setReopenError(e.detail ?? t("reopenFailed")))
+      .catch(e => setReopenError(detailOf(e) || t("reopenFailed")))
       .finally(() => setReopening(false));
   }, [req, stopPolling, t]);
 
@@ -647,11 +645,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
         <AtomReplacedNotice req={req} onNewPost={() => router.push("/portal/create/social")} />
       )}
 
-      {error && (
-        <div style={{ padding: "9px 12px", background: K.dangerSoft, border: `1px solid ${K.dangerBorder}`, borderRadius: 8, fontSize: 12, color: K.danger }}>
-          {error}
-        </div>
-      )}
+      <WizardRefusal refusal={error} />
 
       {/* AA-522 — no more raw atom picker: every request now starts from the Slate. */}
       {!req && (
@@ -823,11 +817,7 @@ export default function AngleGateWizard({ requestId, embedded = false, onPieceCh
             </div>
           )}
 
-          {writeError && !writing && (
-            <div style={{ padding: "9px 12px", background: K.dangerSoft, border: `1px solid ${K.dangerBorder}`, borderRadius: 8, fontSize: 12, color: K.danger, marginBottom: 10 }}>
-              {writeError}
-            </div>
-          )}
+          <WizardRefusal refusal={writeError} hidden={writing} gap={10} />
 
           {piece && !writing && piece.ready_state === "not_ready" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>

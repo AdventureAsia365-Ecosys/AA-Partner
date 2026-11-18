@@ -22,6 +22,9 @@ export const ERROR_MESSAGES = defineMessages(
     retryFailed: (status: number) => `Retry failed (${status})`,
     rewriteBusy: "A rewrite of this tour is already in progress.",
     rewriteRequestFailed: (status: number) => `Rewrite request failed (${status})`,
+    // AA-1126 L1: the CIS 402 ai_quota_exhausted
+    aiAllowanceUsed:
+      "Your plan's AI writing allowance for this month is used up. Upgrade your plan to keep writing now, or wait until it resets next month.",
     unknown: "Something went wrong — try again.",
   },
   {
@@ -39,6 +42,8 @@ export const ERROR_MESSAGES = defineMessages(
     retryFailed: (status: number) => `Thử lại không thành công (${status})`,
     rewriteBusy: "Tour này đang được viết lại.",
     rewriteRequestFailed: (status: number) => `Yêu cầu viết lại không thành công (${status})`,
+    aiAllowanceUsed:
+      "Hạn mức viết bằng AI trong gói của bạn đã dùng hết cho tháng này. Nâng cấp gói để viết tiếp ngay, hoặc chờ đến khi hạn mức được làm mới vào tháng sau.",
     unknown: "Đã có lỗi — vui lòng thử lại.",
   },
 );

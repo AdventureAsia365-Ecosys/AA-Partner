@@ -95,7 +95,7 @@ from app.aa_llm import budget as llm_budget
 from app.aa_llm import errors as llm_errors
 from app.aa_llm import ledger
 from app.audit import AuditEvent, current_request_id
-from app.llm import app_profile, budget_limits, stage_caps
+from app.llm import app_profile, budget_limits, spend_rules, stage_caps
 from app.llm.profiles import DbProfileSource, RouteEntry, StageProfile, fixed_profile
 from app.privacy.guardrails import GUARD_OPERATION, GUARD_STAGE, GuardCall, collect_guard_calls
 from app.privacy.placeholder_store import SealedMap, check_scrubber_version, seal_map, store_map
@@ -449,7 +449,7 @@ class LlmGateway:
             return None, None
         spent = await app_profile.day_spend(ctx.conn)
         decision = llm_budget.decide(float(spent) if spent is not None else None, float(app.default_daily_budget_usd))
-        if decision.allowed:
+        if decision.allowed or spend_rules.app_cap_alert_only(decision.reason):  # AA-1126 G3 / L4 (prod rules)
             return None, None
         if decision.reason == llm_budget.REASON_CAP:
             log.warning("crm_llm_app_budget_refused")
@@ -470,7 +470,7 @@ class LlmGateway:
             return Decimal(value)
         except Exception as exc:  # noqa: BLE001 — class only
             log.warning("crm_llm_spend_unreadable error=%s", type(exc).__name__)
-            return None
+            return spend_rules.unreadable_month()  # None (dev: fail closed); 0 under the prod rules (AA-1126 L4)
 
     async def _budget_refusal(
         self,

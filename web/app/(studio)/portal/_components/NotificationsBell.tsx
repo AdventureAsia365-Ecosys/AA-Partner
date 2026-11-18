@@ -27,6 +27,8 @@ import { RETIRED_PAGES_MESSAGES } from "./retiredPages.messages";
 import { RETIRED_PAGES_ANCHOR, RETIRED_PAGES_QUERY_KEY, moveOutcomeText, moveToDraft } from "./retiredPagesApi";
 import { plainError } from "./studioError";
 import { fmtDateTime } from "@/lib/studio/format";
+import { ADD_ONS_PATH, PLAN_PATH } from "@/lib/apps";
+import { resetsOnLabel } from "./AllowanceHeld";
 import type { ShellActivityView } from "./PortalShellContext";
 
 /** One row of GET /v1/notifications (api/routers/v1_notifications.py). */
@@ -42,6 +44,9 @@ export interface TenantNotification {
   /** AA-1039: the drafted pages of a `tour.pages_to_put_back` row, or (S276) the live pages of a `tour.pages_to_review`
    *  row with `draft_on` (the automatic draft day of an agency that turned it on, else null); [] for any other row. */
   pages?: { publish_id: string; url: string | null; draft_on?: string | null }[];
+  /** AA-1126: true for a "plan's AI allowance used up" row (links to the plan page); the day it resets. */
+  upgrade?: boolean;
+  resets_at?: string | null;
   is_read: boolean;
   created_at: string | null;
 }
@@ -67,12 +72,45 @@ const describe = (a: Activity, t: Translator<typeof BELL_MESSAGES.en>) => {
     case "failed": return t("failed");
     case "queued": case "writing": case "checking": return t("writing");
     case "done": return t("done");
+    case "held": return t("held");
     case "edited": return t("edited");
     default: return t("updated");
   }
 };
 
 const PAGES_TO_PUT_BACK = "tour.pages_to_put_back";
+const PLANNER_ALLOWANCE = "tripplanner.ai_allowance_used";
+
+/** AA-1126 L1 / L2: a "plan's AI allowance used up" row, in the UI language. The Content studio row links to the plan
+ *  page (the content plans); the Trip planner row to the Add-ons page, where the Trip planner and its plan live. */
+export function allowanceHref(eventType: string): string {
+  return eventType === PLANNER_ALLOWANCE ? ADD_ONS_PATH : PLAN_PATH;
+}
+
+export function AllowanceNote({ note, onNavigate }: { note: TenantNotification; onNavigate: () => void }) {
+  const t = useT(BELL_MESSAGES);
+  const lang = useLang();
+  const planner = note.event_type === PLANNER_ALLOWANCE;
+  const resetsOn = resetsOnLabel(note.resets_at, lang);
+  return (
+    <Link href={allowanceHref(note.event_type)} onClick={onNavigate} data-testid="bell-allowance" style={{
+      display: "grid", gridTemplateColumns: "30px minmax(0,1fr)", gap: 10, padding: "11px 16px",
+      textDecoration: "none", borderBottom: `1px solid ${K.line2}`,
+      background: note.is_read ? "transparent" : K.accentTint,
+    }}>
+      <span style={{ width: 30, height: 30, borderRadius: 8, background: K.amberSoft, color: K.amber, display: "grid", placeItems: "center" }}>
+        <AlertTriangle size={14} strokeWidth={2.2} />
+      </span>
+      <span style={{ minWidth: 0 }}>
+        <span style={{ display: "block", fontSize: 12.5, color: K.ink, lineHeight: 1.4 }}>
+          <strong style={{ fontWeight: 600 }}>{t(planner ? "plannerAllowanceTitle" : "allowanceTitle")}</strong>
+          {" · "}{t(planner ? "plannerAllowanceBody" : "allowanceBody", resetsOn)}
+        </span>
+        <span style={{ display: "block", fontSize: 11, color: K.muted2, marginTop: 2 }}>{fmtDateTime(note.created_at, lang)}</span>
+      </span>
+    </Link>
+  );
+}
 const PAGES_TO_REVIEW = "tour.pages_to_review";
 
 /** One restore notice with drafted pages: the sentence, then each page with "Put back online" (one click, one call). */
@@ -258,6 +296,9 @@ export default function NotificationsBell({ activity }: { activity: Activity[] }
             }
             if (n.event_type === PAGES_TO_REVIEW) {
               return <ReviewPagesNote key={`n-${n.id}`} note={n} onNavigate={() => setOpen(false)} />;
+            }
+            if (n.upgrade) {
+              return <AllowanceNote key={`n-${n.id}`} note={n} onNavigate={() => setOpen(false)} />;
             }
             const gone = n.event_type === "tour.discontinued";
             const Icon = gone ? AlertTriangle : RotateCcw;

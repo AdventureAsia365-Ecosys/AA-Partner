@@ -21,7 +21,8 @@ import { REWRITE_MESSAGES } from "./tours.messages";
 import LiveWriter from "./LiveWriter";
 import { WriterDrawer, type WatchItem, type WatchOutcome } from "./WriterPanel";
 import { fetchVersionDetail, type Version } from "./catalogApi";
-import { tourWorkStatus } from "./workStatus";
+import { tourWorkStatus, type WorkStatus } from "./workStatus";
+import { AllowanceHeldNote } from "./AllowanceHeld";
 
 /** What My Catalog hands the panel when a rewrite starts (or a writing / failed row is opened). */
 export interface TourRewriteTarget {
@@ -33,13 +34,17 @@ export interface TourRewriteTarget {
 
 /** The channel a T2 rewrite writes for: the tenant's own tour catalog. */
 
-export type RewriteState = "starting" | "writing" | "failed" | "ready";
+export type RewriteState = "starting" | "writing" | "failed" | "ready" | "held";
 
-export function rewriteState(version: Pick<Version, "status" | "edit_source" | "job_status"> | null): RewriteState {
+const REWRITE_STATE: Partial<Record<WorkStatus, RewriteState>> = { failed: "failed", done: "ready", held: "held" };
+
+export function rewriteState(
+  version: (Pick<Version, "status" | "edit_source" | "job_status"> & Partial<Pick<Version, "job_stop_code">>) | null,
+): RewriteState {
   if (!version) return "starting"; // the list has not picked the new version up yet
-  // AA-760 — the shared work-status model (job_status included); queued counts as writing here.
-  const s = tourWorkStatus(version);
-  return s === "failed" ? "failed" : s === "done" ? "ready" : "writing";
+  // AA-760 — the shared work-status model (job_status included); queued counts as writing here. AA-1126 L1: a version
+  // held by the plan's AI allowance is "held" (the reason + Upgrade), never a live "writing" view.
+  return REWRITE_STATE[tourWorkStatus(version)] ?? "writing";
 }
 
 /** The watch item for a tour rewrite closed mid-write (useWriteWatcher in WriterPanel.tsx). */
@@ -49,12 +54,32 @@ export function watchTourRewrite(t: TourRewriteTarget, lang: UiLang = "en"): Wat
     id: t.versionId, group: t.versionId, title: t.title,
     check: () => fetchVersionDetail(t.versionId).then((v): WatchOutcome => {
       const s = rewriteState(v);
-      return s === "ready" ? "ready" : s === "failed" ? "failed" : "running";
+      return s === "ready" || s === "failed" || s === "held" ? s : "running";   // AA-1126 L1: held settles
     }),
     readyText: m("readyText", t.title),
     failedText: m("failedText", t.title),
+    heldText: m("heldText", t.title),
     slowText: m("slowText", t.title),
   };
+}
+
+/** The live writing view shows for a version still starting / writing, or finished (its last text). */
+function liveView(state: RewriteState): boolean {
+  return state !== "failed" && state !== "held";
+}
+
+/** AA-1126 L1: a version held by the plan's AI allowance: the reason and the Upgrade link (no live view, no Retry). */
+function HeldView({ target, state, version }: {
+  target: TourRewriteTarget | null; state: RewriteState; version: Version | null;
+}) {
+  const t = useT(REWRITE_MESSAGES);
+  if (!target || state !== "held") return null;
+  return (
+    <div data-testid="tour-rewrite-held" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ fontSize: 14, fontWeight: 600, color: K.ink }}>{t("heldTitle")}</div>
+      <AllowanceHeldNote resetsAt={version?.allowance_resets_at} />
+    </div>
+  );
 }
 
 export function TourRewritePanel({
@@ -112,13 +137,14 @@ export function TourRewritePanel({
           </Button>
         </div>
       )}
+      <HeldView target={target} state={state} version={version} />
       {target && ready && (
         <div data-testid="tour-rewrite-ready" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: K.body }}>
           <CheckCircle2 size={15} color={K.success} />
           <span>{t("readyLine")}</span>
         </div>
       )}
-      {target && state !== "failed" && (
+      {target && liveView(state) && (
         <>
           {/* Polls until the version leaves "writing" (untilInactive), and is keyed per retry so a
               retried job starts from a fresh view. Once ready it keeps the last snapshot (the

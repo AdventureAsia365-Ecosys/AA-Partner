@@ -77,6 +77,13 @@ export const COMMON_MESSAGES = defineMessages(
     wsChecking: "Checking",
     wsDone: "Ready",
     wsFailed: "Writing failed",
+    // AA-1126 L1: a version waiting for AI writing allowance
+    wsAllowanceUsed: "AI allowance used up",
+    allowanceUsedNote: (resetsOn: string) =>
+      `Your plan's AI writing allowance for this month is used up. Writing continues on its own when it resets${resetsOn ? ` on ${resetsOn}` : ""}, or now after an upgrade.`,
+    upgradePlan: "Upgrade plan",
+    allowanceRetry: "Retry",
+    dismiss: "Dismiss",
     actReview: "Ready to review",
     actApproved: "Approved",
     actRejected: "Rejected",
@@ -155,6 +162,12 @@ export const COMMON_MESSAGES = defineMessages(
     wsChecking: "Đang kiểm tra",
     wsDone: "Sẵn sàng",
     wsFailed: "Viết không thành công",
+    wsAllowanceUsed: "Đã hết hạn mức AI",
+    allowanceUsedNote: (resetsOn: string) =>
+      `Hạn mức viết bằng AI trong gói của bạn đã dùng hết cho tháng này. Việc viết sẽ tự chạy tiếp khi hạn mức được làm mới${resetsOn ? ` vào ngày ${resetsOn}` : ""}, hoặc ngay sau khi bạn nâng cấp gói.`,
+    upgradePlan: "Nâng cấp gói",
+    allowanceRetry: "Thử lại",
+    dismiss: "Đóng",
     actReview: "Chờ bạn duyệt",
     actApproved: "Đã duyệt",
     actRejected: "Bị từ chối",

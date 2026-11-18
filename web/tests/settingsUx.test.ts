@@ -92,12 +92,14 @@ describe("Settings > AI", () => {
     expect(six).toContain("Tối đa 6 yêu cầu AI mỗi phút");
   });
 
-  it("the ceiling is AA's limit for the agency, not a plan's", () => {
+  // AA-1126 L3 (tech lead S283): the agency AI budget comes from its plan; the way to more is an upgrade, never
+  // "contact AA support".
+  it("the ceiling is the plan's AI budget and the way up is an upgrade", () => {
     for (const lang of ["en", "vi"] as const) {
       for (const key of ["ai.budgetHelp", "ai.error.budget_above_plan"] as const) {
-        expect(MESSAGES[lang][key]).toContain("Adventure Asia");
         expect(MESSAGES[lang][key]).toContain("{max}");
-        expect(MESSAGES[lang][key].toLowerCase()).not.toMatch(/your plan|gói của bạn/);
+        expect(MESSAGES[lang][key].toLowerCase()).toMatch(/your plan|gói của bạn/);
+        expect(MESSAGES[lang][key].toLowerCase()).not.toMatch(/contact aa support|liên hệ bộ phận hỗ trợ aa/);
       }
     }
   });

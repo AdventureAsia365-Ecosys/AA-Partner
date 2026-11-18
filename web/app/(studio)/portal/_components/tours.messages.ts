@@ -7,6 +7,9 @@ export const REWRITE_MESSAGES = defineMessages(
     channel: "Tour catalog",
     readyText: (title: string) => `"${title}" is ready — find it in My Tours.`,
     failedText: (title: string) => `Rewriting "${title}" didn't finish — open it in My Tours to retry.`,
+    // AA-1126 L1: the version waits because the plan's AI writing allowance is used up
+    heldText: (title: string) => `"${title}" waits for AI writing allowance — your plan's allowance for this month is used up.`,
+    heldTitle: "Waiting for AI writing allowance",
     slowText: (title: string) => `"${title}" is still being written — it will show up in My Tours.`,
     rewritingIn: "Rewriting in",
     for: "for",
@@ -34,6 +37,8 @@ export const REWRITE_MESSAGES = defineMessages(
     channel: "Danh mục tour",
     readyText: (title: string) => `"${title}" đã sẵn sàng — xem trong Tour của tôi.`,
     failedText: (title: string) => `Viết lại "${title}" chưa xong — mở trong Tour của tôi để thử lại.`,
+    heldText: (title: string) => `"${title}" đang chờ hạn mức viết bằng AI — hạn mức trong gói của bạn đã dùng hết cho tháng này.`,
+    heldTitle: "Đang chờ hạn mức viết bằng AI",
     slowText: (title: string) => `"${title}" vẫn đang được viết — tour sẽ hiện trong Tour của tôi.`,
     rewritingIn: "Viết lại bằng",
     for: "cho",

@@ -6,7 +6,7 @@
 import { apiGet } from "@/app/_kit";
 
 import type { ServedFields } from "./ServedBadge";
-import { StudioError } from "./studioError";
+import { AI_QUOTA_EXHAUSTED, StudioError, allowanceError } from "./studioError";
 
 export interface Version extends ServedFields {
   id: string;
@@ -31,6 +31,10 @@ export interface Version extends ServedFields {
   exclusions?: string | null;
   published_tour_id?: string;
   job_status?: string | null;
+  /** AA-1126 L1: "ai_quota_exhausted" when the version's job waits because the plan's AI writing allowance for the
+   *  month is used up (else null), and the day the allowance resets. Absent before the CIS change is deployed. */
+  job_stop_code?: string | null;
+  allowance_resets_at?: string | null;
   tour_id?: string;
   /** AA-990: when Adventure Asia last changed the tour's text, and whether that is after this version was made.
    *  Read-only, informational (lib/masterNotice.ts); absent before the CIS change is deployed. */
@@ -72,9 +76,13 @@ export function fetchVersionDetail(id: string): Promise<Version> {
   return apiGet<Version>(`/api/tenant/v1/tours/versions/${id}`);
 }
 
+export { AI_QUOTA_EXHAUSTED };
+
 export async function retryRewrite(versionId: string): Promise<void> {
   const r = await fetch(`/api/tenant/v1/tours/versions/${versionId}/retry`, { method: "POST" });
-  if (!r.ok) throw new StudioError("retryFailed", r.status);
+  if (!r.ok) {
+    throw allowanceError(r.status, await r.json().catch(() => null)) ?? new StudioError("retryFailed", r.status);
+  }
 }
 
 export async function saveVersionEdit(
@@ -102,7 +110,9 @@ export async function requestRewrite(
     body: JSON.stringify({ rewrite_language: rewriteLanguage || "en-US" }),
   });
   if (r.status === 409) throw new StudioError("rewriteBusy", r.status);
-  if (!r.ok) throw new StudioError("rewriteRequestFailed", r.status);
+  if (!r.ok) {
+    throw allowanceError(r.status, await r.json().catch(() => null)) ?? new StudioError("rewriteRequestFailed", r.status);
+  }
   return r.json();
 }
 
@@ -117,6 +127,12 @@ export function isAiWriting(
     v.edit_source === "ai_generated" &&
     !JOB_ENDED_UNSUCCESSFULLY.includes(v.job_status ?? "")
   );
+}
+
+/** AA-1126 L1: the version waits for AI writing allowance (the plan's monthly allowance is used up). It resumes on its
+ *  own when the allowance resets or after an upgrade, so the studio shows the reason and an Upgrade link, not Retry. */
+export function isAllowanceHeld(v: Pick<Version, "job_stop_code">): boolean {
+  return v.job_stop_code === AI_QUOTA_EXHAUSTED;
 }
 
 export function isRewriteFailed(
