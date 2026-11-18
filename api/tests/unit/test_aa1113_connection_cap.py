@@ -142,13 +142,13 @@ async def test_the_crm_never_reads_a_cis_view(caps: dict[str, Any]) -> None:
     assert all("catalog." not in sql and "shared." not in sql for sql, *_ in c.calls)
 
 
-def test_the_month_starts_on_the_first_utc_day() -> None:
+async def test_the_month_starts_on_the_first_utc_day() -> None:
     late = dt.datetime(2026, 11, 30, 23, 30, tzinfo=dt.timezone(dt.timedelta(hours=-5)))  # 1 Dec 04:30 UTC
     assert connection_cap.month_start(late) == dt.date(2026, 12, 1)
     assert connection_cap.month_start(dt.datetime(2026, 11, 18, 3, 0, tzinfo=dt.UTC)) == dt.date(2026, 11, 1)
 
 
-def test_the_state_stops_at_the_cap() -> None:
+async def test_the_state_stops_at_the_cap() -> None:
     assert connection_cap.CapState("acc2", Decimal("5"), Decimal("5")).stops
     assert not connection_cap.CapState("acc2", Decimal("5"), Decimal("4.99")).stops
 
