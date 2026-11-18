@@ -14,6 +14,7 @@ Fakes only (no database, no AWS, no paid call); invented names and amounts.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Iterator
 from decimal import Decimal
 from typing import Any
 
@@ -53,6 +54,13 @@ def cap_conn(row: Any = None, crm: str = "0", conn: ScriptedConn | None = None) 
     return c.on("FROM catalog.v_llm_connection_cap_v1", row).on("WHERE day >=", Decimal(crm))
 
 
+@pytest.fixture(autouse=True)
+def _cold_cap_cache() -> Iterator[None]:
+    connection_cap.invalidate()
+    yield
+    connection_cap.invalidate()
+
+
 @pytest.fixture
 def prod(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(spend_environment, "is_prod", lambda: True)
@@ -78,8 +86,10 @@ async def test_the_rule_in_dev(row: Any, crm: str, expected: tuple[Any, Any]) ->
     assert await connection_cap.refusal(c, BedrockLike()) == expected
     [(key,)] = c.sql("FROM catalog.v_llm_connection_cap_v1")
     assert key == "acc2"
-    if row is not None:
+    if row is not None and row["hard_stop"]:
         assert c.sql("WHERE day >=") == [(MONTH,)]  # the CRM's month from the view's month start
+    else:
+        assert c.sql("WHERE day >=") == []  # no budget or alert-only: the CRM's spend cannot make it stop
 
 
 async def test_prod_never_refuses_for_the_cap(prod: None) -> None:
@@ -92,12 +102,54 @@ async def test_a_missing_view_goes_on_and_a_read_error_fails_closed_in_dev_only(
     connection_cap._unmapped_logged.clear()
     missing = ScriptedConn().on("FROM catalog.v_llm_connection_cap_v1", asyncpg.UndefinedTableError("no view"))
     assert await connection_cap.refusal(missing, BedrockLike()) == (None, None)
+    connection_cap.invalidate()
     denied = ScriptedConn().on("FROM catalog.v_llm_connection_cap_v1", asyncpg.InsufficientPrivilegeError("no"))
     assert await connection_cap.refusal(denied, BedrockLike()) == (None, None)
+    connection_cap.invalidate()
     broken = ScriptedConn().on("FROM catalog.v_llm_connection_cap_v1", ConnectionError("db down"))
     assert await connection_cap.refusal(broken, BedrockLike()) == ("spend_unreadable", None)
     monkeypatch.setattr(spend_environment, "is_prod", lambda: True)
     assert await connection_cap.refusal(broken, BedrockLike()) == (None, None)
+
+
+async def test_an_unreadable_crm_spend_fails_closed_in_dev() -> None:
+    c = ScriptedConn().on("FROM catalog.v_llm_connection_cap_v1", cap_row("10", "1"))
+    c.on("WHERE day >=", ConnectionError("db down"))
+    assert await connection_cap.refusal(c, BedrockLike()) == ("spend_unreadable", None)
+
+
+# ── the cost of a read (review S284): the CIS half is kept CACHE_TTL_SECONDS ────────────────────────
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [cap_row("10", "1"), None, asyncpg.UndefinedTableError("no view"), ConnectionError("db down")],
+    ids=["row", "no-budget", "unpublished", "unreadable"],
+)
+async def test_the_view_is_read_once_per_window_whatever_its_outcome(
+    monkeypatch: pytest.MonkeyPatch, answer: Any
+) -> None:
+    clock = [1000.0]
+    monkeypatch.setattr(connection_cap.time, "monotonic", lambda: clock[0])
+    c = cap_conn(answer, "0.5")
+    first = await connection_cap.refusal(c, BedrockLike())
+    clock[0] += connection_cap.CACHE_TTL_SECONDS - 1
+    assert await connection_cap.refusal(c, BedrockLike()) == first
+    assert len(c.sql("FROM catalog.v_llm_connection_cap_v1")) == 1
+    clock[0] += 2  # the window has passed: read again
+    await connection_cap.refusal(c, BedrockLike())
+    assert len(c.sql("FROM catalog.v_llm_connection_cap_v1")) == 2
+
+
+async def test_the_crm_spend_is_read_on_every_call_so_a_crm_burst_stops_at_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(connection_cap.time, "monotonic", lambda: 1000.0)
+    under = cap_conn(cap_row("10", "8"), "1")
+    assert await connection_cap.refusal(under, BedrockLike()) == (None, None)
+    over = cap_conn(None, "2.5")  # the view row comes from the cache; only the CRM's month is read
+    assert await connection_cap.refusal(over, BedrockLike()) == ("connection_budget_exhausted", "budget")
+    assert over.sql("FROM catalog.v_llm_connection_cap_v1") == [] and over.sql("WHERE day >=") == [(MONTH,)]
 
 
 @pytest.mark.parametrize("key", ["stub", "stub-echo", "bedrock_role", "", None])

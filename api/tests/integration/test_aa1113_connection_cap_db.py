@@ -81,6 +81,7 @@ async def _cap(admin: asyncpg.Connection, budget: str, cis_spent: str, crm_spent
 
 
 async def _call(app_pool: asyncpg.Pool, owner: object, tenant_id: uuid.UUID):
+    connection_cap.invalidate()  # each test sets its own cap: no read kept from the one before
     async with tenant_tx(app_pool, owner, tenant_id) as ctx:
         return await LlmGateway(StubScrubber(), _OnAcc2()).call(
             ctx, stage="crm_draft_reply", role="writer", prompt="hello"
