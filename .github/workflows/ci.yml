@@ -162,9 +162,14 @@ jobs:
           pip-audit -r requirements-dev.txt
 
       # AA-935: the CRM web's npm dependencies (runtime and dev), from the lockfile, failing on high or critical.
+      # S284 (tech lead approved): through .github/scripts/npm_audit_gate.py, so one advisory with no patched version
+      # can be accepted with a reason and an expiry (.github/npm-audit-allow.json, at most 90 days) instead of blocking
+      # every pull request. Any other high or critical advisory still fails.
       - name: npm audit (web, failing on high)
         working-directory: web
-        run: npm audit --audit-level=high
+        run: |
+          npm audit --json > ../npm-audit.json || true
+          python3 ../.github/scripts/npm_audit_gate.py ../.github/npm-audit-allow.json < ../npm-audit.json
 
   # S271: skipped only for a docs-only pull request (Lint's scope output tests=false); a failed scope runs it.
   test-unit:

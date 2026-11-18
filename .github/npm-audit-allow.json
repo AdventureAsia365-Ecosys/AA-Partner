@@ -1,0 +1,9 @@
+{
+ "allow": [
+  {
+   "id": "GHSA-fc5q-39xc-vjpf",
+   "expires": "2026-12-18",
+   "reason": "picomatch ReDoS (high), no patched version exists (every version is affected, S284 18/11/2026). In the CRM web it is reached only through build, lint and test tooling (@sentry/nextjs's rollup plugin at build time, eslint-config-next / typescript-eslint / fast-glob, vite / vitest); no runtime code matches a glob that a user supplies. Remove this entry when a patched picomatch ships (dependabot), or extend it once with a fresh check."
+  }
+ ]
+}
