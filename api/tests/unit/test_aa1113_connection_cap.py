@@ -199,9 +199,13 @@ async def test_the_app_profile_refusal_still_comes_first(
     assert c.sql(SPEND) == []
 
 
-async def test_a_tree_without_the_reader_has_no_cap_yet(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_tree_without_the_reader_has_no_cap_yet(caps: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
     import sys
 
+    import app.llm
+
+    caps["acc2"] = 0  # would refuse if the reader were there
+    monkeypatch.delattr(app.llm, "connection_share", raising=False)
     monkeypatch.setitem(sys.modules, "app.llm.connection_share", None)  # import -> ImportError
     c = spend_conn("500")
     assert await connection_cap.refusal(c, BedrockLike()) == (None, None)
