@@ -81,22 +81,46 @@ import {
   isPublicAcademyPath,
   readAcademySession,
 } from "./lib/academySession";
+import { NONCE_HEADER, contentSecurityPolicy as fullPolicy, newNonce, sentryOrigin } from "./lib/securityHeaders";
 
-const INTERNAL_HEADERS = ["x-aa-path", "x-aa-host-kind"];
+const INTERNAL_HEADERS = ["x-aa-path", "x-aa-host-kind", NONCE_HEADER];
 
-/**
- * The CSP of every page (the portal's AA-885 policy): no framing, no <base> hijack, no plugins, forms only to this
- * origin and the managed-login domain (sign-out answers with a redirect to its logout page, and browsers apply
- * form-action to that redirect). script-src / style-src stay open for the kit's inline styles and Next's scripts.
- */
-export function contentSecurityPolicy(cognitoDomain: string, ancestors = "'none'", staffCognitoDomain = ""): string {
-  // AA-1019: the staff console's sign-out redirects to the WORKFORCE managed login (its own domain).
-  const forms = ["'self'", cognitoDomain, staffCognitoDomain].filter(Boolean).join(" ");
-  return `frame-ancestors ${ancestors}; base-uri 'self'; form-action ${forms}; object-src 'none'`;
+// AA-1111 (S284): the browser posts Sentry events to the DSN's origin (a public build-time value; none = no Sentry).
+const SENTRY_ORIGIN = sentryOrigin(process.env.NEXT_PUBLIC_SENTRY_DSN);
+
+// AA-1111 (S284): one nonce per request, shared by the gate, the studio step and the form step of that request.
+const NONCES = new WeakMap<NextRequest, string>();
+
+/** This request's CSP nonce (made on first use). */
+export function nonceFor(request: NextRequest): string {
+  let nonce = NONCES.get(request);
+  if (!nonce) {
+    nonce = newNonce();
+    NONCES.set(request, nonce);
+  }
+  return nonce;
 }
 
-function secure<T extends NextResponse>(res: T, cognitoDomain: string, ancestors?: string): T {
-  res.headers.set("Content-Security-Policy", contentSecurityPolicy(cognitoDomain, ancestors));
+/**
+ * The CSP of every response (the portal's AA-885 policy, made full by AA-1111 after the S283 ZAP baseline,
+ * lib/securityHeaders.ts): default-src 'self', scripts only with the request's nonce ('strict-dynamic', no
+ * 'unsafe-inline' for scripts; style-src keeps it for the kit's inline styles), no framing, no <base> hijack, no
+ * plugins, forms only to this origin and the managed-login domain (sign-out answers with a redirect to its logout page,
+ * and browsers apply form-action to that redirect).
+ */
+export function contentSecurityPolicy(cognitoDomain: string, ancestors = "'none'", staffCognitoDomain = "", nonce?: string): string {
+  // AA-1019: the staff console's sign-out redirects to the WORKFORCE managed login (its own domain).
+  return fullPolicy({
+    nonce,
+    dev: process.env.NODE_ENV === "development",
+    connectSrc: [SENTRY_ORIGIN],
+    formAction: [cognitoDomain, staffCognitoDomain],
+    frameAncestors: ancestors,
+  });
+}
+
+function secure<T extends NextResponse>(request: NextRequest, res: T, cognitoDomain: string, ancestors?: string): T {
+  res.headers.set("Content-Security-Policy", contentSecurityPolicy(cognitoDomain, ancestors, "", nonceFor(request)));
   return res;
 }
 
@@ -105,7 +129,7 @@ function notFound(): NextResponse {
 }
 
 function pass(request: NextRequest, kind: HostKind, cognitoDomain = "", ancestors?: string): NextResponse {
-  return secure(NextResponse.next({ request: { headers: forwardHeaders(request, kind) } }), cognitoDomain, ancestors);
+  return secure(request, NextResponse.next({ request: { headers: forwardHeaders(request, kind) } }), cognitoDomain, ancestors);
 }
 
 function forwardHeaders(request: NextRequest, kind: HostKind): Headers {
@@ -113,13 +137,17 @@ function forwardHeaders(request: NextRequest, kind: HostKind): Headers {
   for (const name of INTERNAL_HEADERS) h.delete(name);
   h.set("x-aa-path", `${request.nextUrl.pathname}${request.nextUrl.search}`);
   h.set("x-aa-host-kind", kind);
+  // AA-1111: Next takes the nonce for its own scripts from the request's CSP; app/layout.tsx reads x-nonce.
+  const nonce = nonceFor(request);
+  h.set(NONCE_HEADER, nonce);
+  h.set("Content-Security-Policy", contentSecurityPolicy("", "'none'", "", nonce));
   return h;
 }
 
 function redirectOn(cfg: WebConfig, request: NextRequest, path: string, status: 307 | 308): NextResponse {
   const res = NextResponse.redirect(new URL(path, cfg.publicOrigin || request.nextUrl.origin), status);
   res.headers.set("Cache-Control", "no-store");
-  return secure(res, cfg.cognitoDomain);
+  return secure(request, res, cfg.cognitoDomain);
 }
 
 
@@ -167,7 +195,7 @@ function staffGate(request: NextRequest, cfg: ReturnType<typeof forHost>): NextR
   const { pathname, search } = request.nextUrl;
   const passStaff = () => {
     const res = pass(request, "partner", cfg.cognitoDomain);
-    res.headers.set("Content-Security-Policy", contentSecurityPolicy(cfg.cognitoDomain, undefined, cfg.staffCognitoDomain));
+    res.headers.set("Content-Security-Policy", contentSecurityPolicy(cfg.cognitoDomain, undefined, cfg.staffCognitoDomain, nonceFor(request)));
     return res;
   };
   if (isPublicStaffPath(pathname) || pathname === STAFF_BFF_PREFIX || pathname.startsWith(`${STAFF_BFF_PREFIX}/`)) {
@@ -213,7 +241,7 @@ function academyGate(request: NextRequest, cfg: WebConfig): NextResponse {
   if (!academyPathAllowed(pathname)) return notFound();
   const passAcademy = () => {
     const res = pass(request, "academy");
-    res.headers.set("Content-Security-Policy", contentSecurityPolicy(cfg.academyCognitoDomain));
+    res.headers.set("Content-Security-Policy", contentSecurityPolicy(cfg.academyCognitoDomain, undefined, "", nonceFor(request)));
     if (pathname.startsWith("/verify/")) res.headers.set("Referrer-Policy", "no-referrer");
     return res;
   };
@@ -244,7 +272,7 @@ function passStudio(request: NextRequest, cfg: WebConfig, renewed: StudioCookie[
   const res = NextResponse.next({ request: { headers: h } });
   for (const c of renewed) res.cookies.set(c.name, c.value, cookieOptions(c.maxAge, cfg.secureCookies));
   if (renewed.length > 0) res.headers.set("Cache-Control", "no-store");
-  return secure(res, cfg.cognitoDomain);
+  return secure(request, res, cfg.cognitoDomain);
 }
 
 /** A studio access page (choose / none) with the asked path as `next`; `clear` drops studio cookies of another sign-in. */
@@ -256,7 +284,7 @@ function toStudioAccess(request: NextRequest, cfg: WebConfig, path: string, extr
   const res = NextResponse.redirect(target, 307);
   res.headers.set("Cache-Control", "no-store");
   if (clear) for (const c of studioCookiesCleared(cfg)) res.cookies.set(c.name, "", { ...c, maxAge: 0 });
-  return secure(res, cfg.cognitoDomain);
+  return secure(request, res, cfg.cognitoDomain);
 }
 
 /**
@@ -299,6 +327,10 @@ export async function studioGate(request: NextRequest, fetchImpl: typeof fetch =
  * page the form's own frame-ancestors (unknown form: 'self').
  */
 export async function proxy(request: NextRequest): Promise<NextResponse> {
+  return withCsp(request, await route(request));
+}
+
+async function route(request: NextRequest): Promise<NextResponse> {
   const res = gate(request);
   if (res.headers.get("x-middleware-next") === "1" && isStudioPage(request.nextUrl.pathname)) return studioGate(request);
   const key = formKey(request.nextUrl.pathname);
@@ -306,7 +338,17 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   const cfg = webConfig();
   const viewer = viewerKey(request.headers.get("cloudfront-viewer-address"));
   const found = cfg.crmApiOrigin ? await loadForm(cfg.crmApiOrigin, key, { viewer }) : null;
-  res.headers.set("Content-Security-Policy", contentSecurityPolicy(cfg.cognitoDomain, frameAncestors(found && found.ok ? found.form : null)));
+  const ancestors = frameAncestors(found && found.ok ? found.form : null);
+  res.headers.set("Content-Security-Policy", contentSecurityPolicy(cfg.cognitoDomain, ancestors, "", nonceFor(request)));
+  return res;
+}
+
+/** AA-1111 (S284, ZAP baseline): a response the gate answered without a CSP (a 404, a sign-in redirect) gets one too. */
+function withCsp(request: NextRequest, res: NextResponse): NextResponse {
+  if (!res.headers.has("Content-Security-Policy")) {
+    const cfg = forHost(webConfig(), request.headers.get("host"));
+    res.headers.set("Content-Security-Policy", contentSecurityPolicy(cfg.cognitoDomain, "'none'", "", nonceFor(request)));
+  }
   return res;
 }
 

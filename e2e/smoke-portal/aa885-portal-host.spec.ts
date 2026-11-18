@@ -159,6 +159,20 @@ test.describe('AA-885 — portal host', () => {
         expect(h['referrer-policy'], `${p}: Referrer-Policy`).toBe('strict-origin-when-cross-origin');
         expect(h['content-security-policy'], `${p}: CSP`).toContain("frame-ancestors 'none'");
         expect(h['permissions-policy'], `${p}: Permissions-Policy`).toContain('camera=()');
+        // AA-1111 (S284, ZAP baseline): the full CSP, scripts by a per-response nonce only, and COOP.
+        expect(h['content-security-policy'], `${p}: CSP default-src`).toContain("default-src 'self'");
+        expect(h['content-security-policy'], `${p}: CSP nonce`).toMatch(/script-src 'self' 'nonce-[A-Za-z0-9+/=]+' 'strict-dynamic'/);
+        expect(h['content-security-policy'], `${p}: no unsafe-inline script`).not.toMatch(/script-src[^;]*'unsafe-inline'/);
+        expect(h['cross-origin-opener-policy'], `${p}: COOP`).toBe('same-origin');
+      }
+      // AA-1111: a static route and an unknown path carry the set too.
+      for (const p of ['/robots.txt', '/aa1111-no-such-page']) {
+        const h = (await ctx.get(p, { maxRedirects: 0, timeout: 15000 })).headers();
+        expect(h['strict-transport-security'], `${p}: HSTS`).toContain('max-age=63072000');
+        expect(h['x-content-type-options'], `${p}: nosniff`).toBe('nosniff');
+        expect(h['content-security-policy'], `${p}: CSP`).toContain("frame-ancestors 'none'");
+        expect(h['content-security-policy'], `${p}: CSP default-src`).toContain("default-src 'self'");
+        expect(h['cross-origin-opener-policy'], `${p}: COOP`).toBe('same-origin');
       }
     } finally {
       await ctx.dispose();
