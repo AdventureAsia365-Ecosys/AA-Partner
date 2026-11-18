@@ -1,10 +1,10 @@
-"""AA-1113 (root ADR 0009 decision 6; CIS 450): one connection cap for every caller, the CRM's side.
+"""AA-1113 (root ADR 0009 decision 6; CIS 452): one connection cap for every caller, the CRM's side.
 
 A model connection (an AWS account's Bedrock, a vendor API) has one monthly budget in the CIS gateway registry. The CIS
 gateway leaves a connection out of every route once this UTC month's spend on it reaches that budget and the
 connection's policy is a hard stop. The CRM's own gateway (:mod:`app.llm.gateway`) spends on the same connections, so
 it must stop at the same cap: CIS publishes each capped connection's month-to-date CIS ledger spend, budget and policy
-as the read contract ``catalog.v_llm_connection_cap_v1`` (CIS 450; CIS 451 lets ``crm_app`` read that one view, a
+as the read contract ``catalog.v_llm_connection_cap_v1`` (CIS 452; CIS 453 lets ``crm_app`` read that one view, a
 root ADR 0008a amendment proposed in S284: the CRM still reads no ``shared`` table). Before every call the gateway
 asks :func:`refusal`:
 
@@ -19,7 +19,7 @@ asks :func:`refusal`:
   says "write it by hand"); the ``prod`` rules (pay per use, tech lead S283: a connection cap never stops a customer
   call) let the call go on and log ``crm_llm_connection_cap_reached``;
 - a read error: ``dev`` refuses ``spend_unreadable`` (fail closed, the CRM's rule for its other budgets), ``prod`` goes
-  on with a warning. A missing view or grant (before CIS 450 / 451 are applied) means no cap is published to the CRM
+  on with a warning. A missing view or grant (before CIS 452 / 453 are applied) means no cap is published to the CRM
   yet: the call goes on (one warning line per process).
 
 Read on the call's own connection in a savepoint, like :mod:`app.llm.app_profile` (a platform read, no tenant rows).
@@ -69,7 +69,7 @@ _unmapped_logged: set[str] = set()  # connection keys (and unpublished:<key>) lo
 
 @dataclass(frozen=True)
 class _ReadFailed:
-    """A cached failed read of the view: ``unpublished`` for a missing view or grant (CIS 450 / 451 not applied)."""
+    """A cached failed read of the view: ``unpublished`` for a missing view or grant (CIS 452 / 453 not applied)."""
 
     unpublished: bool
     error: str

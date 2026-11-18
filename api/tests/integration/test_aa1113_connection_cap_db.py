@@ -1,13 +1,13 @@
-"""AA-1113 (CIS 450) on PostgreSQL with the RDS role shape: the CRM's connection cap read as ``crm_app`` in the call's
+"""AA-1113 (CIS 452) on PostgreSQL with the RDS role shape: the CRM's connection cap read as ``crm_app`` in the call's
 ``tenant_tx()``.
 
 CIS owns ``catalog.v_llm_connection_cap_v1`` on Dev; this database has no CIS schema, so the module stands in a table of
-the contract's columns (created by the admin login, SELECT to ``crm_app`` like CIS 450 grants it) and drops it after.
+the contract's columns (created by the admin login, SELECT to ``crm_app`` like CIS 452 grants it) and drops it after.
 
 - The CRM's own month (``crm.llm_usage_daily`` since the row's ``month_start``) is added to the CIS spend: over the
   budget the gateway writes one ``crm.llm_call`` row ``refused`` / ``connection_budget_exhausted`` / ``budget`` at
   0 USD and never calls the model; under it the call answers.
-- Without the view (CIS 450 not applied) the call answers.
+- Without the view (CIS 452 not applied) the call answers.
 Invented connection amounts; the rollup rows use an invented stage and are removed after each test.
 """
 

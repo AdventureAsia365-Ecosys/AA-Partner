@@ -1,10 +1,10 @@
-"""AA-1113 (root ADR 0009 decision 6; CIS 450): one connection cap for every caller, the CRM's side
+"""AA-1113 (root ADR 0009 decision 6; CIS 452): one connection cap for every caller, the CRM's side
 (:mod:`app.llm.connection_cap`).
 
 - The rule: the CIS ledger's month spend on the connection (``catalog.v_llm_connection_cap_v1``) plus the CRM's own
   (``crm.llm_usage_daily`` since the view's month start) against the connection's budget; a hard-stop policy at or
   above it refuses ``connection_budget_exhausted`` under the dev spend rules and only logs under prod; no row = no cap;
-  a missing view (CIS 450 not applied) goes on; an unreadable cap refuses ``spend_unreadable`` in dev only; a provider
+  a missing view (CIS 452 not applied) goes on; an unreadable cap refuses ``spend_unreadable`` in dev only; a provider
   with no CIS connection (the stub, an unmapped role connection) reads nothing.
 - Through the real gateway, each of the three CRM AI paths: over the cap = one 0 USD refused row and the provider is
   never called; under it = the answered call and its row, as before.
