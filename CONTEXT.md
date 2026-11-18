@@ -2915,6 +2915,14 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   sampler's ops checks `llm_app_spend_near` / `llm_app_spend_cap` (one AA ops e-mail per check and UTC day on the
   platform alerts topic, the recipients of the CIS ops e-mail): CIS cannot read the CRM ledger (ADR 0008a), so there
   is no CIS bell for it.
+- **Connection cap** (AA-1113, `app/llm/connection_cap.py`, reached through `app_profile.then_connection_cap`; root
+  ADR 0009 d6, CIS 450): one monthly cap per model connection for every caller. Right after the app profile the
+  gateway reads the connection's row of the CIS contract view `catalog.v_llm_connection_cap_v1` (the CRM's only
+  catalog read: `crm_app` has USAGE on `catalog` and SELECT on that view; still no `shared` table) and adds its own
+  month (`crm.llm_usage_daily`); at or above the budget with a hard-stop policy the dev spend rules refuse
+  `connection_budget_exhausted` (class `budget`, one 0 USD row, the draft falls back to "write it by hand"), the prod
+  rules only log. The task role's Bedrock (`bedrock`) is CIS connection `acc2`; a role-assumed connection has no
+  mapping yet (no cap read). A missing view goes on; an unreadable one refuses `spend_unreadable` in dev only.
 - **Stage profiles and the shared core** (S263 gateway plan F1 + F2, crm-037, `app/llm/profiles.py`): each CRM stage
   has a profile in `crm` (`crm.llm_stage_profile`: role, kill switch `is_active`, `max_attempts` <= 6,
   `route_deadline_s`, degrade mode `manual_reply_needed`) and a route (`crm.llm_stage_route`: Bedrock model ids in

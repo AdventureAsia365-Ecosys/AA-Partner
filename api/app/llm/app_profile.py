@@ -35,6 +35,8 @@ from typing import Any
 
 import asyncpg
 
+from app.llm import connection_cap
+
 APP = "crm"
 DEGRADE_MODES = ("manual_reply_needed",)
 REASON_MAX = 500
@@ -125,6 +127,16 @@ async def for_call(conn: asyncpg.Connection) -> AppProfile:
     except Exception as exc:  # noqa: BLE001 — fail open, class only
         log.warning("crm_llm_app_profile_unreadable error=%s", type(exc).__name__)
         return DEFAULT
+
+
+async def then_connection_cap(
+    app_refusal: tuple[str | None, str | None], conn: asyncpg.Connection, provider: Any
+) -> tuple[str | None, str | None]:
+    """AA-1113: the app profile's refusal when it has one, else the connection cap's (:mod:`app.llm.connection_cap`,
+    one cap for every caller of a model connection). Kept here so the gateway's call path does not grow."""
+    if app_refusal[0] is not None:
+        return app_refusal
+    return await connection_cap.refusal(conn, provider)
 
 
 async def day_spend(conn: asyncpg.Connection) -> Decimal | None:
