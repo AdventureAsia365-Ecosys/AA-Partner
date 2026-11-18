@@ -133,7 +133,7 @@ async def then_connection_cap(
     app_refusal: tuple[str | None, str | None], conn: asyncpg.Connection, provider: Any
 ) -> tuple[str | None, str | None]:
     """AA-1113: the app profile's refusal when it has one, else the connection cap's (:mod:`app.llm.connection_cap`,
-    one cap for every caller of a model connection). Kept here so the gateway's call path does not grow."""
+    the CRM's own monthly cap on its model connection, crm-077). Kept here so the gateway's call path does not grow."""
     if app_refusal[0] is not None:
         return app_refusal
     return await connection_cap.refusal(conn, provider)
