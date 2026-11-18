@@ -10,6 +10,18 @@ personal-data names). A key that breaks either rule:
 - on ``test`` / ``local``: the response becomes **500** ``ops_key_not_allowed`` (with the key names), so CI fails;
 - elsewhere: the key is dropped, the rest is served, and ``crm_ops_key_dropped`` is logged (key names only).
 
+**Setting values are data, not response keys** (AA-1113 follow-up, S284). A json-type CRM setting holds an object, for
+example ``crm.ai.connection_monthly_cap_usd`` = ``{"acc2": 5}``: its inner keys (connection keys here) are the setting's
+data, chosen by AA staff in the maker-checker flow, not field names of the contract, so they can never be on the
+explicit list (the whole-depth walk used to drop them and serve ``{}``). A route class names the fields whose value is
+such data in :attr:`OpsAllowListRoute.opaque_value_fields`; only :class:`OpsSettingsRoute` (the ``/settings`` routes of
+:mod:`app.routers.ops_settings`) names any: :data:`SETTING_VALUE_FIELDS` (``value``, ``previous_value``,
+``default_value``, ``allowed_values``, wherever they sit in a settings answer: the setting, ``last_change``,
+``pending``, ``scheduled``, ``agency_overrides``, ``agency_pending``, ``history``, ``definition``). The field name
+itself is still checked as above; inside its value every key, at any depth, is checked against :data:`OPS_FORBIDDEN`
+only, never against :data:`OPS_ALLOWED_KEYS`. A forbidden inner key (a trip, money or personal-data name) keeps the
+rule above: 500 on test / local, dropped + logged elsewhere. No other route and no other field is exempt.
+
 The route class also answers a request that fails validation itself, with ``{detail: invalid_request, message,
 fields}`` and the field names only: FastAPI's own 422 body echoes the submitted input, which on the first-owner invite
 would carry the owner's e-mail address back (and into any proxy log). Every ops route also declares a Pydantic
@@ -287,30 +299,68 @@ OPS_FORBIDDEN = re.compile(
 STRICT_ENVIRONMENTS = frozenset({"test", "local"})
 
 
+# The fields of a settings answer whose value is a setting value (crm.ops.v1 SettingValue, or a list of them): opaque
+# data on :class:`OpsSettingsRoute` only (see the module docstring). Each name is itself on OPS_ALLOWED_KEYS.
+SETTING_VALUE_FIELDS: frozenset[str] = frozenset({"value", "previous_value", "default_value", "allowed_values"})
+
+
 def key_allowed(key: str) -> bool:
     return key in OPS_ALLOWED_KEYS and not OPS_FORBIDDEN.search(key.lower())
 
 
-def bad_keys(value: Any, found: set[str] | None = None) -> set[str]:
-    """Every key at any depth that is not allowed."""
+def key_forbidden(key: str) -> bool:
+    """A key that matches a forbidden pattern (the only rule inside an opaque setting value)."""
+    return OPS_FORBIDDEN.search(key.lower()) is not None
+
+
+def bad_keys(value: Any, found: set[str] | None = None, opaque_fields: frozenset[str] = frozenset()) -> set[str]:
+    """Every key at any depth that is not allowed; inside the value of a field named in ``opaque_fields`` only the
+    forbidden ones."""
     found = set() if found is None else found
     if isinstance(value, dict):
         for k, v in value.items():
             if not isinstance(k, str) or not key_allowed(k):
                 found.add(str(k))
-            bad_keys(v, found)
+            if isinstance(k, str) and k in opaque_fields:
+                _forbidden_inner_keys(v, found)
+            else:
+                bad_keys(v, found, opaque_fields)
     elif isinstance(value, list):
         for v in value:
-            bad_keys(v, found)
+            bad_keys(v, found, opaque_fields)
     return found
 
 
-def drop_keys(value: Any) -> Any:
-    """A copy of ``value`` without the keys that are not allowed (at any depth)."""
+def _forbidden_inner_keys(value: Any, found: set[str]) -> None:
     if isinstance(value, dict):
-        return {k: drop_keys(v) for k, v in value.items() if isinstance(k, str) and key_allowed(k)}
+        for k, v in value.items():
+            if not isinstance(k, str) or key_forbidden(k):
+                found.add(str(k))
+            _forbidden_inner_keys(v, found)
+    elif isinstance(value, list):
+        for v in value:
+            _forbidden_inner_keys(v, found)
+
+
+def drop_keys(value: Any, opaque_fields: frozenset[str] = frozenset()) -> Any:
+    """A copy of ``value`` without the keys that are not allowed (at any depth); inside the value of a field named in
+    ``opaque_fields`` without the forbidden ones only."""
+    if isinstance(value, dict):
+        return {
+            k: (_drop_forbidden_inner(v) if k in opaque_fields else drop_keys(v, opaque_fields))
+            for k, v in value.items()
+            if isinstance(k, str) and key_allowed(k)
+        }
     if isinstance(value, list):
-        return [drop_keys(v) for v in value]
+        return [drop_keys(v, opaque_fields) for v in value]
+    return value
+
+
+def _drop_forbidden_inner(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _drop_forbidden_inner(v) for k, v in value.items() if isinstance(k, str) and not key_forbidden(k)}
+    if isinstance(value, list):
+        return [_drop_forbidden_inner(v) for v in value]
     return value
 
 
@@ -343,6 +393,9 @@ class OpsProblem(BaseModel):
 class OpsAllowListRoute(APIRoute):
     """An APIRoute whose JSON body must pass the L1 allow-list (see the module docstring)."""
 
+    # The fields whose value is opaque data (inner keys checked against OPS_FORBIDDEN only): none on an ops route.
+    opaque_value_fields: frozenset[str] = frozenset()
+
     def __init__(self, path: str, endpoint: Callable[..., Any], **kwargs: Any) -> None:
         responses = dict(kwargs.pop("responses", None) or {})
         responses.setdefault(422, {"model": OpsProblem, "description": "Invalid request (field names only)"})
@@ -352,6 +405,7 @@ class OpsAllowListRoute(APIRoute):
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         original = super().get_route_handler()
         path = self.path
+        opaque = self.opaque_value_fields
 
         async def handler(request: Request) -> Response:
             try:
@@ -366,7 +420,7 @@ class OpsAllowListRoute(APIRoute):
                 data = json.loads(body)
             except ValueError:
                 return response
-            bad = bad_keys(data)
+            bad = bad_keys(data, opaque_fields=opaque)
             if not bad:
                 return response
             names = sorted(bad)
@@ -384,10 +438,18 @@ class OpsAllowListRoute(APIRoute):
             log.warning("crm_ops_key_dropped path=%s keys=%s", path, ",".join(names))
             headers = {k: v for k, v in response.headers.items() if k.lower() not in {"content-length", "content-type"}}
             return Response(
-                content=json.dumps(drop_keys(data), ensure_ascii=False, separators=(",", ":")).encode(),
+                content=json.dumps(drop_keys(data, opaque), ensure_ascii=False, separators=(",", ":")).encode(),
                 status_code=response.status_code,
                 headers=headers,
                 media_type="application/json",
             )
 
         return handler
+
+
+class OpsSettingsRoute(OpsAllowListRoute):
+    """The ``/settings`` routes (:mod:`app.routers.ops_settings`): a setting value is opaque data (a json setting's
+    object keys are its data, e.g. the connection keys of ``crm.ai.connection_monthly_cap_usd``), still free of any
+    forbidden key (see the module docstring)."""
+
+    opaque_value_fields = SETTING_VALUE_FIELDS

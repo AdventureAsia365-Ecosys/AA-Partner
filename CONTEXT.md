@@ -2688,6 +2688,11 @@ operations in `app/ops/console.py`):
   invoice, payment, price, amount, net, proposal, personal-data names); 500 on test / local, dropped + logged
   elsewhere; validation errors answer `{detail: invalid_request, message, fields}` (names only, never the input).
   `tests/unit/test_ops_contract.py` calls every ops route (success and 4xx) and walks the OpenAPI response schemas.
+  One named exemption (AA-1113 follow-up, S284): on the `/settings` routes only (`OpsSettingsRoute`, passed as
+  `class_router(OPS, ops_route=...)`, which accepts only an `OpsAllowListRoute` subclass) the setting value fields
+  `value`, `previous_value`, `default_value`, `allowed_values` are opaque data: the keys inside a json setting's object
+  (e.g. the connection keys of `crm.ai.connection_monthly_cap_usd`) are not checked against the explicit list, only
+  against the forbidden patterns (a forbidden inner key: 500 on test / local, dropped + logged elsewhere).
 - **Agency side**: an AA-raised request shows on Settings > Data and privacy with Confirm
   (`POST /crm/v1/lifecycle/offboarding/{id}/accept`, owner) / Decline (cancel); a locked agency shows "This agency is
   locked by AA" on the chooser. The opt-out is stored, not yet honoured: the insights card (AA-966) must exclude it.

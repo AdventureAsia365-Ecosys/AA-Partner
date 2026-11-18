@@ -7,7 +7,9 @@ trip, pipeline or revenue keys"; design v3 S-01 "never trips or revenue", "no PI
    when a served ops route is not exercised (the scenario set must equal the route set).
 2. Static: every ops route declares a response model with ``extra='forbid'`` (nested models too), and every property
    of its OpenAPI response schema passes the same key rules.
-3. Structural: every ops route is an :class:`app.ops.serializer.OpsAllowListRoute`.
+3. Structural: every ops route is an :class:`app.ops.serializer.OpsAllowListRoute`; only the ``/settings`` routes are
+   :class:`app.ops.serializer.OpsSettingsRoute` (a setting value is opaque data, AA-1113 follow-up S284), and a json
+   setting value round-trips through them whole while a forbidden key inside it still fails.
 """
 
 from __future__ import annotations
@@ -28,7 +30,8 @@ from pydantic import BaseModel
 
 from app.main import create_app
 from app.ops import console
-from app.ops.serializer import OpsAllowListRoute, bad_keys, key_allowed
+from app.ops import serializer as ops_serializer
+from app.ops.serializer import SETTING_VALUE_FIELDS, OpsAllowListRoute, OpsSettingsRoute, bad_keys, key_allowed
 from app.routers import ops as ops_router
 from app.routers import ops_settings as ops_settings_router
 from app.vault.wrapping import LocalKeyWrapper
@@ -538,6 +541,7 @@ def test_every_ops_route_answers_inside_the_allow_list(ops_app: Any, pools: Loca
     client, state = ops_app
     tokens = {"reader": pools.cis_admin(), "admin": pools.cis_admin(["cis-admin", "crm-platform-admin"])}
     exercised: set[tuple[str, str]] = set()
+    opaque = {(m, r.path): r.opaque_value_fields for r in _ops_routes(state["app"]) for m in r.methods}
     for method, route, path, body, adjust, who, status, detail in SCENARIOS:
         conn = base_conn()
         if adjust is not None:
@@ -547,7 +551,7 @@ def test_every_ops_route_answers_inside_the_allow_list(ops_app: Any, pools: Loca
         label = f"{method} {path} -> {r.status_code} {r.text[:300]}"
         assert r.status_code == status, label
         data = r.json()
-        assert bad_keys(data) == set(), label
+        assert bad_keys(data, opaque_fields=opaque[(method, PREFIX + route)]) == set(), label
         if detail is not None:
             assert data["detail"] == detail and set(data) <= {"detail", "message", "fields", "state", "member_limit"}
         if status < 300 and method != "GET" and route not in NO_AGENCY_AUDIT:
@@ -649,3 +653,78 @@ def test_every_response_schema_key_passes_the_rules(ops_app: Any) -> None:
                     keys |= props(content.get("schema", {}), set())
     assert keys, "the walk saw no response keys"
     assert sorted(k for k in keys if not key_allowed(k)) == []
+
+
+# AA-1113 follow-up (S284): a json-type CRM setting holds an object whose keys are its data (the connection keys of
+# crm.ai.connection_monthly_cap_usd; invented ones here). The allow-list used to drop them and serve {}.
+JSON_KEY = "crm.ai.connection_monthly_cap_usd"
+JSON_VALUE = {"conn_alpha": 5, "conn_beta": 12.5}
+
+
+def test_only_the_settings_routes_carry_opaque_setting_values(ops_app: Any) -> None:
+    _, state = ops_app
+    for route in _ops_routes(state["app"]):
+        if route.path.startswith(f"{PREFIX}/settings"):
+            assert isinstance(route, OpsSettingsRoute), route.path
+            assert route.opaque_value_fields == SETTING_VALUE_FIELDS, route.path
+        else:
+            assert route.opaque_value_fields == frozenset(), route.path
+    assert all(key_allowed(k) for k in SETTING_VALUE_FIELDS)
+
+
+def test_a_json_setting_value_round_trips_through_the_settings_routes(ops_app: Any, pools: LocalPools) -> None:
+    client, state = ops_app
+    reader = {"Authorization": f"Bearer {pools.cis_admin()}"}
+    older = _setting_row(
+        key=JSON_KEY,
+        value={"conn_alpha": 4},
+        version=1,
+        status="superseded",
+        id=uuid.UUID("00000000-0000-4000-8000-00000000bbb1"),
+    )
+    newer = _setting_row(key=JSON_KEY, value=JSON_VALUE, version=2)
+    state["conn"] = base_conn().on("ORDER BY v.version DESC", [newer, older])
+    r = client.get(f"{PREFIX}/settings/{JSON_KEY}/history", headers=reader)
+    assert r.status_code == 200, r.text
+    history = r.json()["history"]
+    assert [h["value"] for h in history] == [JSON_VALUE, {"conn_alpha": 4}]
+    assert [h["previous_value"] for h in history] == [{"conn_alpha": 4}, {}]
+    assert r.json()["definition"]["default_value"] == {}
+
+    snapshot = {
+        "key": JSON_KEY,
+        "tenant_id": None,
+        "value_text": json.dumps(JSON_VALUE),
+        "version": 2,
+        "effective_from": NOW,
+    }
+    state["conn"] = (
+        base_conn()
+        .on("v.status = 'approved' AND v.effective_from <= now() AND v.key LIKE $1", [snapshot])
+        .on("v.status IN ('approved', 'rejected', 'superseded')", [newer])
+        .on(
+            "v.tenant_id IS NULL AND v.status = 'proposed'",
+            [_setting_row(key=JSON_KEY, value={"conn_alpha": 6}, version=3, status="proposed")],
+        )
+    )
+    try:
+        r = client.get(f"{PREFIX}/settings?area=ai", headers=reader)
+        assert r.status_code == 200, r.text
+        row = next(x for x in r.json()["settings"] if x["key"] == JSON_KEY)
+        assert row["value"] == JSON_VALUE and row["source"] == "platform"
+        assert row["last_change"]["value"] == JSON_VALUE
+        assert [p["value"] for p in row["pending"]] == [{"conn_alpha": 6}]
+    finally:
+        # the reader is process-wide: leave it on the compiled defaults for the next test
+        state["conn"] = base_conn()
+        client.get(f"{PREFIX}/settings?area=ai", headers=reader)
+
+
+def test_a_forbidden_key_inside_a_setting_value_still_fails(ops_app: Any, pools: LocalPools) -> None:
+    client, state = ops_app
+    row = _setting_row(key=JSON_KEY, value={"conn_alpha": 5, "trip_count": 2, "inner": {"owner_email": "x"}})
+    state["conn"] = base_conn().on("ORDER BY v.version DESC", [row])
+    r = client.get(f"{PREFIX}/settings/{JSON_KEY}/history", headers={"Authorization": f"Bearer {pools.cis_admin()}"})
+    assert r.status_code == 500 and r.json()["detail"] == "ops_key_not_allowed"
+    assert r.json()["fields"] == ["owner_email", "trip_count"]
+    assert ops_serializer.STRICT_ENVIRONMENTS >= {"test"}
