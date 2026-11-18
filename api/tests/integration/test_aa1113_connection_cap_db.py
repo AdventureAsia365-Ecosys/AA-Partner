@@ -27,6 +27,10 @@ from app.tenancy import tenant_tx
 from tests.integration.test_aa964_gateway_profiles import _enable, _rows
 from tests.integration.test_crm005_intake import _agency
 
+# The setting and its reader ship with the crm-077 migration PR (MIG-4); this code PR runs after main has them.
+pytest.importorskip("app.llm.connection_share", reason="ships with the crm-077 migration PR")
+CAP_KEY = "crm.ai.connection_monthly_cap_usd"
+
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 ZZ_STAGE = "crm_zz_aa1113_cap"
@@ -42,9 +46,7 @@ class _OnAcc2(StubProvider):
 def caps(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     value: dict[str, Any] = {}
     real = ps.get
-    monkeypatch.setattr(
-        ps, "get", lambda key, tenant_id=None: value if key == ps.AI_CONNECTION_MONTHLY_CAP else real(key, tenant_id)
-    )
+    monkeypatch.setattr(ps, "get", lambda key, tenant_id=None: value if key == CAP_KEY else real(key, tenant_id))
     return value
 
 

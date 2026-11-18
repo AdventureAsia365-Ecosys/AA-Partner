@@ -32,6 +32,10 @@ from tests.unit.test_aa1113_ai_paths_ledger import (  # noqa: F401 — the autou
     ledger,
 )
 
+# The setting and its reader ship with the crm-077 migration PR (MIG-4); this code PR runs after main has them.
+pytest.importorskip("app.llm.connection_share", reason="ships with the crm-077 migration PR")
+CAP_KEY = "crm.ai.connection_monthly_cap_usd"
+
 pytestmark = pytest.mark.asyncio
 
 SPEND = "FROM crm.llm_usage_daily WHERE day >="
@@ -50,7 +54,7 @@ def caps(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     real = ps.get
 
     def fake(key: str, tenant_id: object = None) -> Any:
-        return value if key == ps.AI_CONNECTION_MONTHLY_CAP else real(key, tenant_id)
+        return value if key == CAP_KEY else real(key, tenant_id)
 
     monkeypatch.setattr(ps, "get", fake)
     return value
