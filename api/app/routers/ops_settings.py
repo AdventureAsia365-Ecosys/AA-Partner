@@ -9,7 +9,9 @@ relayed by the CIS admin Platform > Settings page (CRM tab) with the staff membe
 The thresholds, limits, caps, platform defaults and ranges of the agency-owner settings and the retention dry-run
 switches; service :mod:`app.platform_settings.service`; 503 ``settings_unavailable`` before crm-064. The same route
 class as :mod:`app.routers.ops` (OPS, the L1 response allow-list): the open changes are ``pending`` because crm.ops.v1
-forbids the word "proposal" in a key.
+forbids the word "proposal" in a key. The route class is :class:`app.ops.serializer.OpsSettingsRoute`: the keys inside
+a setting value (``value``, ``previous_value``, ``default_value``, ``allowed_values``; a json setting's object) are its
+data, checked against the forbidden patterns only, not against the explicit key list (AA-1113 follow-up, S284).
 
 1.14 (AA-1096 S280, additive): ``agency_overrides`` / ``agency_pending`` per platform+tenant setting, ``reason_min`` /
 ``evidence_min`` / ``evidence_max`` per definition; a backdated ``effective_from`` is 422 ``effective_from_in_past``.
@@ -31,10 +33,12 @@ from pydantic import Field
 from app.auth.identity_config import OPS
 from app.auth.route_guard import class_router
 from app.db import request_pool
+from app.ops.serializer import OpsSettingsRoute
 from app.platform_settings import service as settings_service
 from app.routers.ops import FullReader, PlatformAdmin, _In, _Out
 
-router = class_router(OPS, tags=["ops"])
+# OpsSettingsRoute: the allow-list with the setting values as opaque data (a json setting's own keys, AA-1113 S284)
+router = class_router(OPS, ops_route=OpsSettingsRoute, tags=["ops"])
 
 SettingKey = Annotated[str, Path(pattern=r"^crm(\.[a-z0-9_]+){2,}$", max_length=120)]
 SettingValue = bool | int | float | str | list[Any] | dict[str, Any]

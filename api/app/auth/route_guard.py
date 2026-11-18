@@ -182,12 +182,14 @@ def _environment(request: Request) -> str:
     return value if isinstance(value, str) else ""
 
 
-def class_router(route_class: RouteClass, **kwargs: Any) -> APIRouter:
+def class_router(route_class: RouteClass, *, ops_route: type | None = None, **kwargs: Any) -> APIRouter:
     """An APIRouter under the class prefix whose every route runs the class guard first.
 
     AGENCY routers also use :class:`app.margin.MarginFilteredRoute` (AA-939, design §4.6): their JSON responses lose
     every margin-bearing key unless the member's role may see margins. OPS routers use
-    :class:`app.ops.serializer.OpsAllowListRoute` (AA-941, card CRM-13a R): every key must be on the L1 allow-list."""
+    :class:`app.ops.serializer.OpsAllowListRoute` (AA-941, card CRM-13a R): every key must be on the L1 allow-list;
+    ``ops_route`` names a subclass of it for one OPS router (AA-1113 S284: ``OpsSettingsRoute``, the setting values as
+    opaque data), never a class outside the allow-list."""
     if route_class.name == "agency":
         from app.margin import MarginFilteredRoute  # noqa: PLC0415 — keeps the auth module free of app imports
 
@@ -195,7 +197,11 @@ def class_router(route_class: RouteClass, **kwargs: Any) -> APIRouter:
     elif route_class.name == "ops":
         from app.ops.serializer import OpsAllowListRoute  # noqa: PLC0415 — same reason
 
-        kwargs.setdefault("route_class", OpsAllowListRoute)
+        if ops_route is not None and not (isinstance(ops_route, type) and issubclass(ops_route, OpsAllowListRoute)):
+            raise TypeError("ops_route must be a subclass of OpsAllowListRoute")
+        kwargs.setdefault("route_class", ops_route or OpsAllowListRoute)
+    if ops_route is not None and route_class.name != "ops":
+        raise TypeError("ops_route is for an OPS router only")
     return APIRouter(prefix=route_class.prefix, dependencies=[Depends(guard_for(route_class))], **kwargs)
 
 
