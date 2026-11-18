@@ -98,10 +98,15 @@ async def month_spend(conn: asyncpg.Connection, since: dt.date | None = None) ->
 async def read_state(conn: asyncpg.Connection, cis_key: str) -> CapState | None:
     """The connection's cap state read now, None when the CRM has no cap on it. Raises
     :class:`connection_share.CapUnreadable` or the read error as is (the caller decides). ``connection_share`` ships
-    with the crm-077 migration PR (MIG-4: the key's reader rides with its seed); imported here so the app imports on a
-    tree without it (the call then fails closed in dev like any unreadable cap)."""
-    from app.llm import connection_share
-
+    with the crm-077 migration PR (MIG-4: the key's reader rides with its seed); on a tree without it the setting does
+    not exist yet, which is its default ``{}``: no cap (logged once per process)."""
+    try:
+        from app.llm import connection_share
+    except ImportError:
+        if "reader-missing" not in _unmapped_logged:
+            _unmapped_logged.add("reader-missing")
+            log.warning("crm_llm_connection_cap_reader_missing connection=%s", cis_key)
+        return None
     cap = connection_share.cap_for(cis_key)
     if cap is None:
         return None

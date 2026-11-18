@@ -197,3 +197,12 @@ async def test_the_app_profile_refusal_still_comes_first(
     out = await run(c, gateway(BedrockLike(answer)))
     assert out["refusal_code"] == "app_budget_exhausted"
     assert c.sql(SPEND) == []
+
+
+async def test_a_tree_without_the_reader_has_no_cap_yet(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    monkeypatch.setitem(sys.modules, "app.llm.connection_share", None)  # import -> ImportError
+    c = spend_conn("500")
+    assert await connection_cap.refusal(c, BedrockLike()) == (None, None)
+    assert c.calls == []
