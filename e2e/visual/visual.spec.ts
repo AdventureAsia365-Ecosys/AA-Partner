@@ -7,6 +7,9 @@
 //   - no console error and no uncaught page error (allowlist.json for known noise);
 //   - no failed same-origin request (status >= 400 or a network failure), except the document's own expected status;
 //   - a kit frame is on the page unless the page says frame: false; the theme applied (`<html data-theme>`);
+//   - AA-1131: every visible form control, dialog and icon button has an accessible name (a11yNames.ts). A control the
+//     kit core renders (a data-kit-* hook) must be named on every page, and every control on the kit gallery; a page's
+//     own unnamed controls elsewhere are listed in the report (`unnamed`), not failed;
 //   - a PNG of the page (the inner scroll region grown into the viewport first).
 // Each result goes to visual/results/report/<page>__<viewport>__<theme>.json (from e2e/); summary.mjs merges them.
 // Read-only: the run only navigates.
@@ -18,6 +21,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
+import { unnamedControls } from "./a11yNames";
 import { PAGES, selectPages } from "./pages";
 import { TENANT_STATE } from "../smoke-portal/smoke-helpers";
 import { hasTenantState, NO_LOGIN_REASON } from "../smoke-portal/portal-helpers";
@@ -135,6 +139,9 @@ for (const p of selectPages(PAGES, { auth: AUTH, slugs: SLUGS, gallery: GALLERY,
       const appliedTheme = await page.evaluate(() => document.documentElement.getAttribute("data-theme"));
       const hasFrame = (await page.locator('[data-kit-frame], [data-kit-shell="main"]').count()) > 0;
       const overflow = await probeOverflow(page);
+      const unnamed = await unnamedControls(page).catch(() => []);
+      // The gate: kit-rendered controls everywhere, every control on the gallery (not on its self-test plants).
+      const unnamedGate = p.gallery && !p.selftest ? unnamed : unnamed.filter((u) => u.kit);
 
       const name = `${p.slug}__${viewport}__${theme}`;
       if (!redirectedTo) {
@@ -147,7 +154,7 @@ for (const p of selectPages(PAGES, { auth: AUTH, slugs: SLUGS, gallery: GALLERY,
       const result = {
         page: p.slug, path: p.path, auth: p.auth, viewport, theme, selftest: p.selftest ?? null,
         status: res?.status() ?? null, appliedTheme, hasFrame, frameExpected: p.frame !== false, overflow,
-        consoleErrors, failedRequests: failed, redirectedTo,
+        consoleErrors, failedRequests: failed, redirectedTo, unnamed, unnamedGate,
       };
       fs.mkdirSync(REPORT_DIR, { recursive: true });
       fs.writeFileSync(path.join(REPORT_DIR, `${name}.json`), JSON.stringify(result, null, 1));
@@ -160,6 +167,7 @@ for (const p of selectPages(PAGES, { auth: AUTH, slugs: SLUGS, gallery: GALLERY,
       expect.soft(overflow.frames, `the page frame scrolls sideways: ${overflow.offenders.join(", ")}`).toEqual([]);
       expect.soft(consoleErrors, "console errors").toEqual([]);
       expect.soft(failed, "failed same-origin requests").toEqual([]);
+      expect.soft(unnamedGate, "controls with no accessible name (kit controls, or any on the kit gallery)").toEqual([]);
     });
   }
 }
