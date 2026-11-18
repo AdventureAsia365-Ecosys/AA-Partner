@@ -572,6 +572,17 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   (`WEB_CLIENT_HOSTS`, later `go-dev.`) serves `/c/*` and `/trip/*` only (both 404 on the partner host); any other
   Host is 404; `/healthz` answers any Host (the ALB health check sends the task IP). Cookies are host-only, so the two
   hosts never share a session.
+- **Security headers** (AA-885; AA-1111 S284 after the ZAP baseline, `web/lib/securityHeaders.ts`):
+  `next.config.ts` sends HSTS (two years, sub-domains, no preload), `nosniff`, `Referrer-Policy`, `X-Frame-Options:
+  DENY`, `Permissions-Policy`, `Cross-Origin-Opener-Policy: same-origin` on every path. `web/proxy.ts` sends the full
+  CSP on every response it handles, 404s and sign-in redirects included: `frame-ancestors` first (`'none'`, or a
+  form's allowed origins on `/c/f/<key>`), `default-src 'self'`, scripts only with a per-request nonce
+  (`nonceFor(request)`, `'strict-dynamic'`, no `'unsafe-inline'` for scripts), `style-src` keeps `'unsafe-inline'`
+  (kit inline styles), images and media from any https host (academy videos play from presigned S3 URLs),
+  `connect-src` self + the Sentry DSN origin, `form-action` self + the managed-login domain of the host. The nonce
+  reaches the page as `x-nonce` (`app/layout.tsx` restore scripts) and in the request CSP (Next's own scripts). The
+  paths the proxy skips (`/_next/*`, `/favicon.ico`, the mail import upload) get the policy without a nonce from
+  `next.config.ts`.
 - **Book now on the trip page** (AA-1072): a link with an agency's inquiry form key (`/trip/<tourId>?f=<key>[&p=<AA tour
   key>]`) shows that agency's booking widget (`web/components/booking/BookNowWidget.tsx`, `web/lib/bookNow.ts`; words
   EN by default, VI by the visitor's cookie, `web/lib/i18nBookNow.ts`) instead of the AA contact button; section "Book

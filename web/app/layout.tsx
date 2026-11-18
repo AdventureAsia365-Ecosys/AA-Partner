@@ -10,7 +10,9 @@ import type { Metadata, Viewport } from "next";
 // here, before globals.css, rather than by a CSS @import).
 import "./_kit/core/tokens.css";
 import "./globals.css";
+import { headers } from "next/headers";
 import { serverContext } from "@/lib/serverContext";
+import { NONCE_HEADER } from "@/lib/securityHeaders";
 import { themeStore } from "./_kit/local/theme";
 import { ThemeKeeper } from "./_kit/local/ThemeKeeper";
 
@@ -24,15 +26,17 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1 };
 
+// AA-1111 (S284): the CSP allows a script only with this request's nonce (proxy.ts sets x-nonce).
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const { lang } = await serverContext();
+  const nonce = (await headers()).get(NONCE_HEADER) ?? undefined;
   return (
     <html lang={lang} suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: themeStore.restoreScript }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: themeStore.restoreScript }} />
         {/* AA-1036: the Content studio's sidebar rail (`cis_sidebar`, core/sidebarStore.ts) before paint, as in the
             studio app's root layout; only the studio's CSS reads data-sidebar. */}
-        <script dangerouslySetInnerHTML={{ __html: SIDEBAR_RESTORE }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: SIDEBAR_RESTORE }} />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link

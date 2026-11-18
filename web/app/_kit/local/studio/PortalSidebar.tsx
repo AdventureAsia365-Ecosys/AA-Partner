@@ -12,6 +12,10 @@
 // useNavGroups (core, scope "portal"): folded unless the user opened them, the group of the current page open on
 // arrival. Overview has no title and stays open. The collapsed rail (desktop, >= 900 px) shows every item. The item
 // counts (tours available, my tours) are sizes, not things to act on, so a folded header does not repeat them.
+//
+// AA-1131 (S283 UI audit, batch K1, as in the Booking and CIS shells): the Collapse row is pinned. The <aside> no longer
+// scrolls; the nav does (min-height 0, a thin dark-surface scrollbar), so with several groups open on a short window
+// the Collapse row stays at the bottom edge instead of scrolling away with the nav.
 
 import { useEffect } from "react";
 import Link from "next/link";
@@ -80,7 +84,7 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
       style={{
         flexShrink: 0, background: K.sideBg, color: K.sideText,
         display: "flex", flexDirection: "column", gap: 22,
-        overflowY: "auto", overflowX: "hidden", fontFamily: sans,
+        overflow: "hidden", fontFamily: sans,
       }}
     >
       {/* Brand → Dashboard */}
@@ -107,7 +111,16 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
         </Link>
       </div>
 
-      <nav aria-label={t("navPrimary")} style={{ flex: 1, display: "flex", flexDirection: "column", gap: 16 }}>
+      <nav
+        aria-label={t("navPrimary")}
+        data-testid="portal-sidebar-nav"
+        style={{
+          flex: "1 1 auto", minHeight: 0, overflowY: "auto", overflowX: "hidden",
+          // A thin, dark-surface scrollbar (the page's light track would be a white strip on the navy panel).
+          scrollbarWidth: "thin", scrollbarColor: `${alpha(K.sideText, 18)} transparent`,
+          display: "flex", flexDirection: "column", gap: 16,
+        }}
+      >
         {NAV_GROUPS.map((group) => {
           const id = navGroupId(group.id);
           return (
@@ -139,7 +152,8 @@ export function PortalSidebar({ drawerOpen, poolCount, catalogCount, onNavigate 
         <StudioApps t={t} rail={rail} open={navGroups.isOpen("apps")} onToggle={() => navGroups.toggle("apps")} />
       </nav>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {/* Collapse (pinned: outside the scrolling nav) */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: "none" }}>
         {/* A sidebar row (the kit Pressable: no look of its own, the kit focus ring); studio.css hides it below 900 px. */}
         <Pressable
           data-pshell="collapse-btn"
