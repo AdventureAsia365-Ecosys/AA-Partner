@@ -331,8 +331,8 @@ class LlmGateway:
         # 0. the stage profile and its kill switch (free: nothing scrubbed, nothing sent, no rate token used)
         profile, refusal = await self._profile(ctx, stage, role)
         first = self._entry_provider(profile.attempts[0]) if profile and profile.attempts else self.provider
-        # AA-1025 H1c: the app profile first (AI off for the whole CRM, or its daily budget used up), also free
-        app_refusal, app_error = await self._app_refusal(ctx)
+        # AA-1025 H1c: the app profile first (AI off, its daily budget used up), then AA-1113 the connection cap; free
+        app_refusal, app_error = await app_profile.then_connection_cap(await self._app_refusal(ctx), ctx.conn, first)
         if app_refusal is not None:
             return await self._log(
                 ctx, stage, role, REFUSED, who=first, refusal=app_refusal, error=app_error, meta=meta
