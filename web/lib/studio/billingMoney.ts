@@ -166,39 +166,62 @@ export interface QuoteView {
   annual: { months: number; total: string } | null;
 }
 
+function lineNotes(ln: BillingQuoteLine, currency: string): QuoteNote[] {
+  const notes: QuoteNote[] = [];
+  const qty = toNumber(ln.quantity) ?? 1;
+  if (qty > 1) notes.push({ kind: "quantity", n: qty });
+  const extra = toNumber(ln.extra_seats) ?? 0;
+  if (extra > 0) {
+    const price = toNumber(ln.extra_seat_price);
+    notes.push({ kind: "extraSeats", n: extra, price: price === null ? null : fmtMoney(price, currency) });
+  }
+  const flags: [boolean | null | undefined, QuoteNote][] = [
+    [ln.trialing, { kind: "trial" }],
+    [ln.agreed, { kind: "agreed" }],
+    [ln.price_missing, { kind: "priceMissing" }],
+    [ln.billing_interval === "year", { kind: "yearly" }],
+  ];
+  for (const [on, note] of flags) if (on) notes.push(note);
+  return notes;
+}
+
+function quoteRow(ln: BillingQuoteLine, i: number, currency: string): QuoteRow {
+  const name = ln.name || ln.plan_key || ln.product || "—";
+  return { key: `${ln.plan_key ?? ln.product ?? "line"}-${i}`, name, notes: lineNotes(ln, currency), amount: fmtMoney(toNumber(ln.amount), currency) };
+}
+
+function quoteDiscount(q: BillingQuote, currency: string): QuoteView["discount"] {
+  const amount = Math.abs(toNumber(q.discount) ?? 0);
+  if (amount <= 0) return null;
+  const pct = toNumber(q.discount_pct);
+  return { kind: q.discount_kind ?? null, pct: pct !== null && pct > 0 ? pct : null, amount: fmtMoney(amount, currency) };
+}
+
+function quoteAnnual(q: BillingQuote, currency: string): QuoteView["annual"] {
+  const months = toNumber(q.annual_paid_months);
+  const total = toNumber(q.annual_total);
+  if (q.pilot_free || months === null || months <= 0 || total === null) return null;
+  return { months, total: fmtMoney(total, currency) };
+}
+
 export function quoteView(b: BillingMoneyRecord | null | undefined): QuoteView | null {
   const q = b?.quote;
   const lines = q?.lines ?? [];
   if (!q || lines.length === 0) return null;
   const currency = (q.currency || billingCurrency(b)).toUpperCase();
-  const money = (v: unknown) => fmtMoney(toNumber(v), currency);
-  const rows = lines.map((ln, i) => {
-    const notes: QuoteNote[] = [];
-    const qty = toNumber(ln.quantity) ?? 1;
-    if (qty > 1) notes.push({ kind: "quantity", n: qty });
-    const extra = toNumber(ln.extra_seats) ?? 0;
-    if (extra > 0) {
-      const price = toNumber(ln.extra_seat_price);
-      notes.push({ kind: "extraSeats", n: extra, price: price === null ? null : fmtMoney(price, currency) });
-    }
-    if (ln.trialing) notes.push({ kind: "trial" });
-    if (ln.agreed) notes.push({ kind: "agreed" });
-    if (ln.price_missing) notes.push({ kind: "priceMissing" });
-    if (ln.billing_interval === "year") notes.push({ kind: "yearly" });
-    return { key: `${ln.plan_key ?? ln.product ?? "line"}-${i}`, name: ln.name || ln.plan_key || ln.product || "—", notes, amount: money(ln.amount) };
-  });
   const sum = lines.reduce((acc, ln) => acc + (toNumber(ln.amount) ?? 0), 0);
-  const discountAmount = Math.abs(toNumber(q.discount) ?? 0);
-  const pct = toNumber(q.discount_pct);
-  const months = toNumber(q.annual_paid_months);
-  const annualTotal = toNumber(q.annual_total);
   return {
     currency,
-    rows,
-    subtotal: money(q.subtotal ?? sum),
-    discount: discountAmount > 0 ? { kind: q.discount_kind ?? null, pct: pct !== null && pct > 0 ? pct : null, amount: fmtMoney(discountAmount, currency) } : null,
+    rows: lines.map((ln, i) => quoteRow(ln, i, currency)),
+    subtotal: fmtMoney(toNumber(q.subtotal) ?? sum, currency),
+    discount: quoteDiscount(q, currency),
     pilotFree: q.pilot_free === true,
-    total: money(q.monthly_total),
-    annual: months !== null && months > 0 && annualTotal !== null && !q.pilot_free ? { months, total: fmtMoney(annualTotal, currency) } : null,
+    total: fmtMoney(toNumber(q.monthly_total), currency),
+    annual: quoteAnnual(q, currency),
   };
+}
+
+/** The bill a page shows: none for an agency without a plan (`plan_attached` false). */
+export function billOf(b: (BillingMoneyRecord & { plan_attached?: boolean }) | null | undefined): QuoteView | null {
+  return b?.plan_attached === false ? null : quoteView(b);
 }

@@ -21,8 +21,8 @@ type DashT = Translator<typeof DASHBOARD_MESSAGES.en>;
 import GettingStarted from "./GettingStarted";
 import UsageSparkline, { type DailyPoint } from "./UsageSparkline";
 import { DashboardSkeleton } from "./Skeleton";
-import { fmtMoney, monthMoney, quoteView, type BillingPlanPrice, type BillingQuote } from "@/lib/studio/billingMoney";
-import { QuoteLines } from "./QuoteCard";
+import { billOf, fmtMoney, monthMoney, type BillingPlanPrice, type BillingQuote } from "@/lib/studio/billingMoney";
+import { DashboardBill, spendBadgeKey } from "./QuoteCard";
 
 interface BillingData {
   tenant_name: string | null; plan_tier: string | null; tours_quota_monthly: number | null;
@@ -88,7 +88,7 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
   // AA-1116: the plan fee and the amount due in the agency's billing currency (VND agencies in VND), never a bare "$"
   const { planFee, due } = monthMoney(b);
   // AA-1129 (S283 row 18): the bill behind the amount due (products, discount), so it adds up next to the plan fee.
-  const bill       = noPlan ? null : quoteView(b);
+  const bill       = billOf(b);
   const planName   = b?.plan_tier ?? "";
   const planLabel  = noPlan || !planName ? t("noPlan") : planName.charAt(0).toUpperCase() + planName.slice(1);
   const fmtTotal   = (v: number | null) => (v == null ? "—" : n(v));
@@ -193,14 +193,10 @@ export default function DashboardTab({ onNavigate }: { onNavigate: (href: string
             </div>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 600, color: overage > 0 ? K.amber : K.success, background: overage > 0 ? K.amberSoft : K.successSoft, padding: "3px 8px", borderRadius: 5 }}>
               {overage > 0 ? <AlertTriangle size={12} /> : <Check size={12} />}
-              {overage > 0 ? t("includesOverage") : bill ? t("noOverage") : t("withinPlan")}
+              {t(spendBadgeKey(overage, bill))}
             </span>
           </div>
-          {bill && (
-            <div data-testid="dashboard-quote" style={{ marginTop: 14 }}>
-              <QuoteLines quote={bill} compact />
-            </div>
-          )}
+          <DashboardBill quote={bill} />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginTop: 18 }}>
             <SpendTile label={t("planFee")} value={planFee} sub={t("planFeeSub", planLabel)} />
             <SpendTile label={t("rewritesThisMonth")} value={`${n(toursUsed)} / ${fmtTotal(toursTotal)}`}

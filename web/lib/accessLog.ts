@@ -203,8 +203,12 @@ function objectText(e: AuditEventView, lang: Lang, members?: MemberDirectory | n
     return `${t(lang, "log.obj.member")} ${memberName(e.object_id, null, lang, members)}`;
   }
   const word = noun(lang, e.object_kind);
-  if (word === null) return t(lang, "log.obj.unknown");
-  // The key version ("vault:v1") is a name the agency's key page shows, not a random id.
+  return word === null ? t(lang, "log.obj.unknown") : nounPhrase(e, lang, word);
+}
+
+/** "a trip" (one object), "the agency" (the one of its kind), "version vault:v1" (a key version is a name the
+ *  agency's key page shows, not a random id); Vietnamese has no article. */
+function nounPhrase(e: AuditEventView, lang: Lang, word: string): string {
   if (e.object_kind === "tenant_key" && e.object_id && KEY_VERSION.test(e.object_id)) return `${word} ${e.object_id}`;
   if (lang === "vi" || /^the\s/i.test(word)) return word;
   return e.object_id ? `${article(word)} ${word}` : `the ${word}`;

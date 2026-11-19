@@ -109,3 +109,25 @@ export function QuoteCard({ quote }: { quote: QuoteView | null }) {
     </Card>
   );
 }
+
+/** The Dashboard's "This month" badge: overage, else "No overage" beside a bill (the amount is more than the plan
+ *  fee), else "Within plan" (an older CIS without lines: the amount is the plan fee). */
+export function spendBadgeKey(overage: number, bill: QuoteView | null): "includesOverage" | "noOverage" | "withinPlan" {
+  if (overage > 0) return "includesOverage";
+  return bill ? "noOverage" : "withinPlan";
+}
+
+/** Billing's "Amount due so far" note when there is no overage. */
+export function noOverageKey(bill: QuoteView | null): "noOverageBill" | "noOverage" {
+  return bill ? "noOverageBill" : "noOverage";
+}
+
+/** Dashboard: the bill's short form under the amount due; nothing without a bill. */
+export function DashboardBill({ quote }: { quote: QuoteView | null }) {
+  if (!quote) return null;
+  return (
+    <div data-testid="dashboard-quote" style={{ marginTop: 14 }}>
+      <QuoteLines quote={quote} compact />
+    </div>
+  );
+}

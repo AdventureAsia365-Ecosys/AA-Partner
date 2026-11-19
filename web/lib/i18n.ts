@@ -46,7 +46,8 @@ import { agencyUiEn, agencyUiVi } from "./i18nAgencyUi";
 import { campaignsEn, campaignsVi } from "./i18nCampaigns";
 import { settingsUxEn, settingsUxVi } from "./i18nSettingsUx";
 import { helpEn, helpVi } from "./i18nHelp";
-import { auditLogEn, auditLogVi } from "./i18nAuditLog";
+import { auditLogEn } from "./i18nAuditLog";
+import { auditLogVi } from "./i18nAuditLogVi";
 
 export type Lang = "en" | "vi";
 export const LOCALE_COOKIE = "aa_crm_locale";

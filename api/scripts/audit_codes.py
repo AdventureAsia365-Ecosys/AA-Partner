@@ -76,37 +76,44 @@ class _Resolver:
             return []
         if isinstance(node, ast.Constant):
             return [node.value] if isinstance(node.value, str) else []
-        if isinstance(node, ast.Name) and node.id in self.consts:
-            return list(self.consts[node.id])
-        if isinstance(node, ast.Attribute):
-            if node.attr == "value":
-                return self.codes(node.value, where)
-            if isinstance(node.value, ast.Name) and f"{node.value.id}.{node.attr}" in self.consts:
-                return list(self.consts[f"{node.value.id}.{node.attr}"])
+        found = self._named(node, where) if isinstance(node, (ast.Name, ast.Attribute)) else self._composed(node, where)
+        if found is None:
+            self.unresolved.append(where)
+            return []
+        return found
+
+    def _named(self, node: ast.Name | ast.Attribute, where: str) -> list[str] | None:
+        """A constant (``TABLE``), an enum member (``Action.X``) or its ``.value``."""
+        if isinstance(node, ast.Attribute) and node.attr == "value":
+            return self.codes(node.value, where)
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            key = f"{node.value.id}.{node.attr}"
+        else:
+            key = node.id if isinstance(node, ast.Name) else ""
+        return list(self.consts[key]) if key in self.consts else None
+
+    def _composed(self, node: ast.AST, where: str) -> list[str] | None:
+        """``a if c else b``, ``a or b``, ``"x_" + y``, f-strings and tuples of codes."""
         if isinstance(node, ast.IfExp):
             return self.codes(node.body, where) + self.codes(node.orelse, where)
-        if isinstance(node, ast.BoolOp):
-            return [c for v in node.values for c in self.codes(v, where)]
+        if isinstance(node, (ast.BoolOp, ast.Tuple, ast.List, ast.Set)):
+            items = node.values if isinstance(node, ast.BoolOp) else node.elts
+            return [c for v in items for c in self.codes(v, where)]
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
             left, right = self.codes(node.left, where), self.codes(node.right, where)
-            if left and right:
-                return [a + b for a, b in itertools.product(left, right)]
+            return [a + b for a, b in itertools.product(left, right)] if left and right else None
         if isinstance(node, ast.JoinedStr):
-            parts: list[list[str]] = []
-            for v in node.values:
-                if isinstance(v, ast.Constant):
-                    parts.append([str(v.value)])
-                elif isinstance(v, ast.FormattedValue):
-                    vals = self.codes(v.value, where)
-                    if not vals:
-                        self.unresolved.append(where)
-                        return []
-                    parts.append(vals)
-            return ["".join(p) for p in itertools.product(*parts)]
-        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-            return [c for e in node.elts for c in self.codes(e, where)]
-        self.unresolved.append(where)
-        return []
+            return self._fstring(node, where)
+        return None
+
+    def _fstring(self, node: ast.JoinedStr, where: str) -> list[str] | None:
+        parts: list[list[str]] = []
+        for v in node.values:
+            vals = [str(v.value)] if isinstance(v, ast.Constant) else self.codes(getattr(v, "value", None), where)
+            if not vals:
+                return None
+            parts.append(vals)
+        return ["".join(p) for p in itertools.product(*parts)]
 
 
 def _audit_args(call: ast.Call) -> dict[str, ast.AST | None]:
@@ -148,6 +155,34 @@ def _files(root: Path) -> Iterable[Path]:
     return sorted(p for p in root.rglob("*.py") if "__pycache__" not in p.parts)
 
 
+def _imported(tree: ast.Module, by_module: dict[str, dict[str, list[str]]]) -> dict[str, list[str]]:
+    """The constants and enum members a module imports from another ``app`` module (``from app.x import TABLE``)."""
+    out: dict[str, list[str]] = {}
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.ImportFrom) and node.module in by_module):
+            continue
+        src = by_module[node.module]
+        for alias in node.names:
+            name = alias.asname or alias.name
+            for key, vals in src.items():
+                if key == alias.name or key.startswith(alias.name + "."):
+                    out[name + key[len(alias.name) :]] = vals
+    return out
+
+
+ARGS = (("action", "actions"), ("object_kind", "object_kinds"), ("fields", "fields"), ("reason", "reasons"))
+
+
+def _module_codes(tree: ast.Module, res: _Resolver, rel: Path, out: dict[str, set[str]]) -> None:
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and _is_audit_call(node)):
+            continue
+        args = _audit_args(node)
+        for arg, kind in ARGS:
+            if args.get(arg) is not None:
+                out[kind].update(v for v in res.codes(args[arg], f"{rel}:{node.lineno}:{arg}") if v)
+
+
 def collect(root: Path = APP) -> tuple[dict[str, set[str]], list[str]]:
     """The codes per kind and the call sites whose code could not be read (``path:line:arg``)."""
     trees = {p: ast.parse(p.read_text(encoding="utf-8"), filename=str(p)) for p in _files(root)}
@@ -156,33 +191,8 @@ def collect(root: Path = APP) -> tuple[dict[str, set[str]], list[str]]:
     out: dict[str, set[str]] = {k: set() for k in KINDS}
     unresolved: list[str] = []
     for path, tree in trees.items():
-        imported: dict[str, list[str]] = {}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module in by_module:
-                src = by_module[node.module]
-                for alias in node.names:
-                    name = alias.asname or alias.name
-                    for key, vals in src.items():
-                        if key == alias.name:
-                            imported[name] = vals
-                        elif key.startswith(alias.name + "."):
-                            imported[name + key[len(alias.name) :]] = vals
-        res = _Resolver(consts[path], imported)
-        rel = path.relative_to(root.parent)
-        for node in ast.walk(tree):
-            if not (isinstance(node, ast.Call) and _is_audit_call(node)):
-                continue
-            args = _audit_args(node)
-            for arg, kind in (
-                ("action", "actions"),
-                ("object_kind", "object_kinds"),
-                ("fields", "fields"),
-                ("reason", "reasons"),
-            ):
-                if args.get(arg) is None:
-                    continue
-                vals = res.codes(args[arg], f"{rel}:{node.lineno}:{arg}")
-                out[kind].update(v for v in vals if v)
+        res = _Resolver(consts[path], _imported(tree, by_module))
+        _module_codes(tree, res, path.relative_to(root.parent), out)
         unresolved.extend(res.unresolved)
     # A refusal through app.permissions names any Action member.
     perms = consts.get(root / "permissions.py", {})
