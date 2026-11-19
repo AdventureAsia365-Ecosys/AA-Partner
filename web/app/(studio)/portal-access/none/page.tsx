@@ -13,6 +13,7 @@ import { SignOutButton } from "../SignOutButton";
 import { BRAND } from "@/app/_kit/core/brand";
 import { translator } from "@/app/_kit";
 import { fetchMemberships } from "@/lib/crmApi";
+import { CRM_HOME_PATH } from "@/lib/nav";
 import { serverContext } from "@/lib/serverContext";
 import { ACCESS_MESSAGES } from "../access.messages";
 
@@ -44,7 +45,8 @@ export default async function NoAccessPage({ searchParams }: { searchParams: Pro
       )}
       <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
         {crm && (
-          <a href="/home" style={linkStyle} data-testid="portal-no-access-open-crm">
+          // A plain <a>: a full page load between the studio and the CRM (the studio stylesheet stays with the studio).
+          <a href={CRM_HOME_PATH} style={linkStyle} data-testid="portal-no-access-open-crm">
             {t("openCrm")}
           </a>
         )}

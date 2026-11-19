@@ -416,7 +416,8 @@ def test_the_agenda_counts() -> None:
 def test_the_agenda_reads_departure_dates_from_the_aa_lines_and_needs_for_the_caller() -> None:
     # AA-1129 (S283 audit row 3): the date is the AA line's service date, the trip's start date only as a fallback.
     sql = agenda.DEPARTURES_SQL
-    assert "min(l.service_from)" in sql and "coalesce(min(a.service_from), min(d.start_date))" in sql
+    assert "min(l.service_from)" in sql and "coalesce(a.service_from, d.start_date) AS day" in sql
+    assert "a.trip_id = d.trip_id AND a.departure_ref = d.departure_ref" in sql
     assert "l.supplier_kind = 'aa'" in sql and "l.status <> 'cancelled'" in sql
     # "Needs you" is the caller's (/tasks "mine"): assigned to them, or unassigned on their trip.
     needs = agenda.NEEDS_SQL

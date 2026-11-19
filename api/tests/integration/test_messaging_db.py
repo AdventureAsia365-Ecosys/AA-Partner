@@ -198,7 +198,11 @@ async def test_unknown_number_stop_and_isolation(app_pool: asyncpg.Pool) -> None
     (unmatched,) = await _sql(app_pool, d["tenant"], "SELECT trip_id, traveler_id FROM crm.conversation")
     assert (unmatched["trip_id"], unmatched["traveler_id"]) == (None, None)
     async with tenant_tx(app_pool, d["owner"], d["tenant"], action=Action.TRIP_VIEW) as ctx:
-        assert len((await conversations.list_conversations(ctx, unmatched=True))["conversations"]) == 1
+        (listed,) = (await conversations.list_conversations(ctx, unmatched=True, vault=Vault(d["keys"], ctx)))[
+            "conversations"
+        ]
+    # AA-1129: the Unmatched row says who wrote and what, before the thread is opened (an SMS has no subject).
+    assert listed["sender"] == STRANGER and listed["subject"] is None and listed["preview"] == "Hi, saw your tour"
 
     # The client writes (window open), the agent queues a reply, then the client texts STOP before it leaves.
     await webhook.handle(app_pool, d["runtime"], _inbound(d))

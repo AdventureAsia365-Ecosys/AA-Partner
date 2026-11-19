@@ -52,27 +52,34 @@ SELECT
         AND t.start_date BETWEEN (SELECT d FROM today) AND (SELECT d FROM today) + $2::int
         AND (tr.passport_no_enc IS NULL OR tr.passport_expiry_enc IS NULL))::int AS passport_missing
 """
-# AA-1129 (P1, S283 audit row 3): the departure's date and tour title come from its AA lines (the AA service date,
-# as on /departures), not from the trip's own start date; a group code without an AA line keeps the trip's date.
+# AA-1129 (P1, S283 audit row 3): each booked trip on a departure is dated by its own AA line's service date (the AA
+# date, as on /departures), its trip start date only when it joined by a group code without an AA line; the departure
+# is named by the tour title of its AA lines (null for a group code with none).
 DEPARTURES_SQL = """
 WITH today AS (
     SELECT (now() AT TIME ZONE COALESCE((SELECT timezone FROM crm.tenant_settings), $1::text))::date AS d
 ), aa AS (
-    SELECT l.departure_id AS departure_ref, min(l.service_from) AS service_from, min(l.title) AS title
+    SELECT l.trip_id, l.departure_id AS departure_ref, min(l.service_from) AS service_from
+      FROM crm.booking_line l
+     WHERE l.supplier_kind = 'aa' AND l.departure_id IS NOT NULL AND l.status <> 'cancelled' AND l.deleted_at IS NULL
+     GROUP BY l.trip_id, l.departure_id
+), titles AS (
+    SELECT l.departure_id AS departure_ref, min(l.title) AS title
       FROM crm.booking_line l
      WHERE l.supplier_kind = 'aa' AND l.departure_id IS NOT NULL AND l.status <> 'cancelled' AND l.deleted_at IS NULL
      GROUP BY l.departure_id
-), dep AS (
-    SELECT d.departure_ref, coalesce(min(a.service_from), min(d.start_date)) AS start_date, min(a.title) AS title,
-           count(*)::int AS trips, sum(d.pax)::int AS pax
+), on_dep AS (
+    SELECT d.departure_ref, d.pax, coalesce(a.service_from, d.start_date) AS day
       FROM crm.v_departure_trip d
-      LEFT JOIN aa a ON a.departure_ref = d.departure_ref
+      LEFT JOIN aa a ON a.trip_id = d.trip_id AND a.departure_ref = d.departure_ref
      WHERE d.stage IN ('booked', 'pre_departure', 'travelling')
-     GROUP BY d.departure_ref
 )
-SELECT departure_ref, start_date, title, trips, pax FROM dep
- WHERE start_date BETWEEN (SELECT d FROM today) AND (SELECT d FROM today) + $2::int
- ORDER BY start_date, departure_ref
+SELECT o.departure_ref, min(o.day) AS start_date, min(t.title) AS title, count(*)::int AS trips, sum(o.pax)::int AS pax
+  FROM on_dep o
+  LEFT JOIN titles t ON t.departure_ref = o.departure_ref
+ WHERE o.day BETWEEN (SELECT d FROM today) AND (SELECT d FROM today) + $2::int
+ GROUP BY o.departure_ref
+ ORDER BY min(o.day), o.departure_ref
  LIMIT $3
 """
 # AA-1129 (P1, S283 audit row 2): "Needs you" on Home, for the caller: their open tasks past due and due today (the

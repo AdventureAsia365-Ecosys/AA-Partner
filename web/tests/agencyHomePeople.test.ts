@@ -108,7 +108,7 @@ describe("P1: next group departures", () => {
 describe("P1: a CRM-only owner is not stuck on 'No Content studio access'", () => {
   it("the page links the CRM home for a person with an active CRM agency", () => {
     const page = read("app/(studio)/portal-access/none/page.tsx");
-    expect(page).toContain('href="/home"');
+    expect(page).toContain("href={CRM_HOME_PATH}");
     expect(page).toContain("fetchMemberships(base.cfg, base.session)");
     expect(page).toContain('m.tenant_status === "active"');
   });
