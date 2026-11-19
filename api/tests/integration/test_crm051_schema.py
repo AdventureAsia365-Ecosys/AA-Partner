@@ -96,12 +96,12 @@ async def _agency(admin: asyncpg.Connection) -> dict[str, Any]:
     )  # fmt: skip
     ids["own"] = await _as_owner(
         admin, tenant,
-        "INSERT INTO crm.agency_supplier (kind, name, category) VALUES ('own', 'Lotus Lodge', 'accommodation') "
+        "INSERT INTO crm.agency_supplier (kind, name, category) VALUES ('own', 'Lotus Lodge', 'flight') "
         "RETURNING agency_supplier_id",
     )  # fmt: skip
     ids["other_own"] = await _as_owner(
         admin, tenant,
-        "INSERT INTO crm.agency_supplier (kind, name, category) VALUES ('own', 'River Boats', 'transport') "
+        "INSERT INTO crm.agency_supplier (kind, name, category) VALUES ('own', 'River Boats', 'other') "
         "RETURNING agency_supplier_id",
     )  # fmt: skip
     return ids

@@ -98,7 +98,7 @@ async def _ledger(pool: asyncpg.Pool, *, level: str = "basic", base: str = "USD"
         )
         ids["aa"] = await conn.fetchval("SELECT crm.ensure_aa_supplier()")
         ids["supplier"] = await conn.fetchval(
-            "INSERT INTO crm.agency_supplier (name, category) VALUES ('Hanoi Pearl Hotel', 'accommodation') "
+            "INSERT INTO crm.agency_supplier (name, category) VALUES ('Hanoi Pearl Hotel', 'flight') "
             "RETURNING agency_supplier_id"
         )
     return ids

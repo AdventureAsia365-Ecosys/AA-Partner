@@ -1250,12 +1250,12 @@ CASCADE_ERASED = {
     "proposal_inclusion": {"proposal"},
     # AA-1070 item crm-13 (crm-060): an "AA cancelled" case leaves with its trip.
     "aa_cancel_case": {"trip"},
-    # AA-1093 part 1 (crm-063, an expand file): a retired-tour flag leaves with its trip.
-    "tour_retired_flag": {"trip"},
+    "tour_retired_flag": {"trip"},  # AA-1093 part 1 (crm-063, an expand file): a retired-tour flag goes with its trip
     "setting_value": {"tenant_settings"},  # AA-1096 L4 (crm-064): an agency's own values leave with its settings row
     "campaign": {"tenant_settings"},  # AA-968 crm-073: a campaign and the suppression list go with the settings row,
     "campaign_recipient": {"campaign", "traveler"},  # a recipient with its campaign or its client (erase, trash purge)
     "campaign_suppression": {"tenant_settings"},
+    "aa_extra_night_request": {"trip"},  # AA-1144 (crm-080): a request to AA for extra nights leaves with its trip
 }
 
 
