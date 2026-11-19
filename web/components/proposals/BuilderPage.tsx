@@ -19,6 +19,7 @@ import { BuilderAaDrawer, type Supplier } from "@/components/proposals/BuilderAa
 import { DiscountBox } from "@/components/proposals/DiscountBox";
 import { ScheduleEditor } from "@/components/proposals/ScheduleEditor";
 import { OptionPricesEditor } from "@/components/proposals/OptionPricesEditor";
+import { OptionTitle } from "@/components/proposals/OptionTitle";
 import { bffSend } from "@/lib/bffClient";
 import {
   allOptions,
@@ -276,12 +277,8 @@ export function BuilderPage({
           disabled={!draft || !hydrated || busy || o.availability === "sold_out"}
           onChange={() => write("PATCH", `proposals/${view.proposal_id}/blocks/${block.option_block_id}`, { default_option_id: o.option_id })}
         />
-        <span style={{ flex: "1 1 160px", color: K.ink, overflowWrap: "anywhere" }}>
-          {o.title}
-          {o.source === "aa" && <span style={{ color: K.muted }}> · AA</span>}
-          {o.aa?.nights ? <span style={{ color: K.muted }}> · {fmt(tr("builder.option.nights"), { n: o.aa.nights })}</span> : null}
-          {o.tier && <span style={{ color: K.muted }}> · {tr(`builder.tier.${o.tier}`)}</span>}
-        </span>
+        {/* AA-1144 (D9): the name (an AA item's is read only) and the agency's one note line */}
+        <OptionTitle option={o} editable={draft && hydrated && !busy} tr={tr} onNote={(body) => write("PATCH", `proposals/${view.proposal_id}/options/${o.option_id}`, body)} />
         <Badge tone={AVAIL_TONE[o.availability]}>{tr(`builder.avail.${o.availability}`)}</Badge>
         {o.pay_on_arrival && <Badge tone="purple">{tr("builder.option.payOnArrival")}</Badge>}
         {o.choose_later_allowed && <Badge tone="neutral">{tr("builder.option.chooseLater")}</Badge>}

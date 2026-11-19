@@ -35,6 +35,8 @@ export interface BuilderOption {
   availability_checked_at: string | null;
   is_default: boolean;
   picked: boolean;
+  /** AA-1144 (D9): the agency's one line under the item (an AA item's title is read only). */
+  display_note?: string | null;
   /** AA-1066: the price per traveller type (the sell is their sum), the rules the sell was suggested with, and the
    *  grid the editor starts from (the suggestion shared per head, or the current sell). */
   prices?: PriceRow[];
@@ -220,6 +222,10 @@ export function builderErrorKey(detail: string): MessageKey {
     option_sold_out: "builder.err.aa_sold_out",
     invalid_nights: "aa.error.nights",
     aa_net_from_quote: "builder.err.aa_net_from_quote",
+    // AA-1144 (D9): an AA item's name is read only; the agency's one note line under an item.
+    aa_title_read_only: "builder.err.aa_title_read_only",
+    display_note_too_long: "builder.err.display_note_too_long",
+    invalid_display_note: "builder.err.invalid_display_note",
     // AA-1069: "From catalogue" (the service is switched off, not offered on the day, gone, or needs a rate).
     service_inactive: "catalogue.error.service_inactive",
     service_not_valid: "catalogue.error.service_not_valid",
@@ -306,4 +312,12 @@ export function roomsSummary(rooms: Room[], words: Record<RoomType, string>): st
 /** The day a block of the builder sits on (AA-965: the AI ideas tab runs for that day; the catalogue tab reads its date). */
 export function dayOfBlock(view: Pick<BuilderView, "days">, blockId: string): BuilderDay | undefined {
   return view.days.find((d) => d.blocks.some((b) => b.option_block_id === blockId));
+}
+
+/** AA-1144 (D9): the PATCH body of a note typed in the prompt: one line (spaces collapsed, "" removes the note), or
+ *  null when the prompt was cancelled or nothing changed. */
+export function noteBody(typed: string | null, current: string | null | undefined): { display_note: string } | null {
+  if (typed === null) return null;
+  const line = typed.split(/\s+/).filter(Boolean).join(" ");
+  return line === (current ?? "") ? null : { display_note: line };
 }

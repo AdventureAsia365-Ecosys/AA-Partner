@@ -44,6 +44,17 @@ export function allowanceError(status: number, body: unknown): StudioError | nul
   return new StudioError("aiAllowanceUsed", status, "", resetsAt);
 }
 
+/** AA-1144 (D8): the CIS code of a tour copy edit that changes a tour fact (HTTP 422, body
+ *  `{detail: {code, message, locked: [{field, fact, value}]}}`, CIS services/content_generation/t2_fact_lock.py). */
+export const FACT_LOCKED = "fact_locked";
+
+/** The StudioError of an edit refused because it changed a tour fact (factLocked, in the UI language), else null. */
+export function factLockedError(status: number, body: unknown): StudioError | null {
+  const d = (body as { detail?: unknown } | null)?.detail;
+  const code = d && typeof d === "object" ? (d as { code?: unknown }).code : null;
+  return code === FACT_LOCKED ? new StudioError("factLocked", status) : null;
+}
+
 /** True for the error of a used-up AI allowance (allowanceError). */
 export function isAllowanceError(e: unknown): e is StudioError {
   return e instanceof StudioError && e.code === "aiAllowanceUsed";

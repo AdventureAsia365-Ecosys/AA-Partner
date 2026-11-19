@@ -314,6 +314,8 @@ export function ClientBuilderProposal({ initial, dict, locale }: { initial: Clie
                       <strong style={{ fontSize: 14.5, color: K.ink, overflowWrap: "anywhere", minWidth: 0 }}>{o.title}</strong>
                       {delta !== null && <span data-testid="client-delta" style={{ fontSize: 13.5, color: K.body, whiteSpace: "nowrap" }}>{delta === "" ? t("client.included") : fmt(t("client.deltaPp"), { delta })}</span>}
                     </div>
+                    {/* AA-1144 (D9): the agency's one line under the item */}
+                    {o.note && <span data-testid="client-option-note" style={{ fontSize: 13, color: K.body, overflowWrap: "anywhere" }}>{o.note}</span>}
                     <span style={{ fontSize: 12.5, color: K.muted }}>
                       {t(`client.confirm.${o.confirm_class}`)}
                       {o.availability === "on_request" ? ` · ${t("client.onRequest")}` : ""}

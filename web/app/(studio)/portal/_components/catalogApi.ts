@@ -6,7 +6,7 @@
 import { apiGet } from "@/app/_kit";
 
 import type { ServedFields } from "./ServedBadge";
-import { AI_QUOTA_EXHAUSTED, StudioError, allowanceError } from "./studioError";
+import { AI_QUOTA_EXHAUSTED, StudioError, allowanceError, factLockedError } from "./studioError";
 
 export interface Version extends ServedFields {
   id: string;
@@ -92,9 +92,10 @@ export async function saveVersionEdit(
   const r = await fetch(`/api/tenant/v1/tours/versions/${versionId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "edit", edited_content: editedContent, edited_by: "tenant" }),
+    body: JSON.stringify({ action: "edit", edited_content: editedContent }),
   });
-  if (!r.ok) throw new StudioError("saveFailed", r.status);
+  // AA-1144 (D8): CIS keeps the tour facts (days, places, figures, what is not included); only the wording changes.
+  if (!r.ok) throw factLockedError(r.status, await r.json().catch(() => null)) ?? new StudioError("saveFailed", r.status);
   return r.json();
 }
 
