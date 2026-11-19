@@ -736,6 +736,22 @@
     "when": "Đặt khi CRM bắt đầu dùng một kết nối hoặc khi ngân sách nhà cung cấp của kết nối thay đổi; kết nối CRM không dùng thì đặt 0 để phép chia cộng đúng.",
     "example": "Với mặc định {} CRM không có hạn mức trên kết nối nào. Với {\"acc2\": 20}, khi chi tiêu AI trong tháng của CRM trên acc2 chạm 20 USD thì bản nháp trên acc2 dừng theo quy tắc dev. Với {\"acc1\": 5, \"acc2\": 5}, bản nháp có tuyến bắt đầu ở acc1 bỏ qua bước đó khi chi tiêu acc1 của CRM chạm 5 USD và chuyển sang bước dự phòng trên acc2. Bước tuyến trên kết nối có tên (acc1) mà không có mục ở đây thì không bao giờ được dùng theo quy tắc dev."
    }
+  },
+  "crm.platform.admin_mfa_required": {
+   "en": {
+    "what": "Whether AA operations staff on the CRM (platform administrators, the operations desk, CIS administrators on the operations pages) must sign in with a password and a six-digit code from an authenticator app before the CRM answers them.",
+    "raise": "On: such a session signed in with an e-mail code only is refused and must sign in again with the authenticator code; a stolen mailbox no longer opens agency data.",
+    "lower": "Off: these staff can work with an e-mail code sign-in as today; their sessions are only logged.",
+    "when": "Turn it on only after every person in these groups has set up an authenticator app and one test sign-in shows the code was used; turn it off only to let someone back in while their authenticator is being reset.",
+    "example": "With the default off, an operations staff member who signed in with an e-mail code opens the CRM operations pages; switched on, the same session gets an error asking for an authenticator sign-in."
+   },
+   "vi": {
+    "what": "Nhân viên vận hành AA trên CRM (quản trị nền tảng, bàn vận hành, quản trị viên CIS trên các trang vận hành) có phải đăng nhập bằng mật khẩu và mã 6 số từ ứng dụng xác thực thì CRM mới trả lời hay không.",
+    "raise": "Bật: phiên như vậy mà chỉ đăng nhập bằng mã e-mail bị từ chối và phải đăng nhập lại kèm mã xác thực; hộp thư bị lộ không còn mở được dữ liệu đại lý.",
+    "lower": "Tắt: các nhân viên này làm việc với đăng nhập mã e-mail như hiện nay; phiên của họ chỉ được ghi log.",
+    "when": "Chỉ bật sau khi mọi người trong các nhóm này đã cài ứng dụng xác thực và một lần đăng nhập thử cho thấy mã đã được dùng; chỉ tắt để cho một người vào lại trong lúc đặt lại ứng dụng xác thực.",
+    "example": "Với mặc định tắt, nhân viên vận hành đăng nhập bằng mã e-mail vẫn mở được các trang vận hành CRM; khi bật, cùng phiên đó nhận lỗi yêu cầu đăng nhập kèm mã xác thực."
+   }
   }
  }
 }
