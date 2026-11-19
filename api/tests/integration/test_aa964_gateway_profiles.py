@@ -2,8 +2,8 @@
 gateway, profile source and ledger against the real CHECKs and RLS (the orchestrator's Dev checks, reproduced here).
 
 - The draft stage routes the stub as its first enabled entry: one ``crm.llm_call`` row with the entry's model and
-  family, ``attempt_no = 1`` (since crm-042, AA-1027 F4: Amazon Nova Lite, ``family = 'amazon'``; the Claude entries
-  of crm-037 are switched off).
+  family, ``attempt_no = 1`` (since crm-078, AA-1138: Claude Haiku 5.5 on acc1, ``family = 'anthropic'``, with Amazon
+  Nova Lite behind it; the stub answers as the first entry whatever its connection).
 - A stage switched off (kill switch) refuses with one row at 0 USD, nothing scrubbed or sent.
 - A throttled first entry is a refused row, then the second entry answers (``attempt_no = 2``).
 - A reply cut at its token limit is a ``truncated`` row on every entry, never ``ok``.
@@ -79,10 +79,10 @@ async def test_the_draft_stage_routes_the_stub_as_its_enabled_entry(
         "crm_draft_reply",
         "stub",
         "ok",
-        "amazon",
+        "anthropic",
         1,
     )
-    assert row["model"] == "us.amazon.nova-lite-v1:0" and row["cost_usd_est"] == Decimal(0)
+    assert row["model"] == "global.anthropic.claude-haiku-5-5" and row["cost_usd_est"] == Decimal(0)
 
 
 async def test_the_kill_switch_refuses_with_one_zero_cost_row(
