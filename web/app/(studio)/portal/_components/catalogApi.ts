@@ -94,7 +94,7 @@ export async function saveVersionEdit(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "edit", edited_content: editedContent }),
   });
-  // AA-1144 (D8): CIS keeps the tour facts (days, places, figures, what is not included); only the wording changes.
+  // AA-1144 (D8): CIS keeps the tour facts (days, places, figures, what is or is not included); only the wording changes.
   if (!r.ok) throw factLockedError(r.status, await r.json().catch(() => null)) ?? new StudioError("saveFailed", r.status);
   return r.json();
 }

@@ -27,7 +27,7 @@ export const ERROR_MESSAGES = defineMessages(
       "Your plan's AI writing allowance for this month is used up. Upgrade your plan to keep writing now, or wait until it resets next month.",
     // AA-1144 (D8): CIS 422 fact_locked on an edit of the agency's tour copy
     factLocked:
-      "This edit changes a tour fact (days, places, figures or what is not included). Only the wording can change: the facts come from Adventure Asia.",
+      "This edit changes a tour fact (days, places, figures or what is or is not included). Only the wording can change: the facts come from Adventure Asia.",
     unknown: "Something went wrong — try again.",
   },
   {
@@ -42,7 +42,7 @@ export const ERROR_MESSAGES = defineMessages(
     exportFailed: (status: number) => `Xuất không thành công (${status})`,
     ctaMissing: "Hãy thêm lời kêu gọi hành động trước: mở bài từ mục Sáng tạo và viết ở đó.",
     factLocked:
-      "Bản sửa này đổi một dữ kiện của tour (số ngày, địa điểm, con số hoặc mục không bao gồm). Chỉ được sửa câu chữ: dữ kiện do Adventure Asia cung cấp.",
+      "Bản sửa này đổi một dữ kiện của tour (số ngày, địa điểm, con số hoặc mục có hay không bao gồm). Chỉ được sửa câu chữ: dữ kiện do Adventure Asia cung cấp.",
     rewriteStartFailed: (status: number) => `Không bắt đầu viết lại được (${status})`,
     retryFailed: (status: number) => `Thử lại không thành công (${status})`,
     rewriteBusy: "Tour này đang được viết lại.",
