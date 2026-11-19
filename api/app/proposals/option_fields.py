@@ -15,6 +15,7 @@ import unicodedata
 from typing import Any
 
 from app.errors import Forbidden, Invalid
+from app.tenancy import TenantContext
 
 NOTE_MAX = 200  # technical-constant: crm-081 option_display_note_chk (one line under an item, like the title's 200)
 NOTE_COPY_SQL = "UPDATE crm.option SET display_note = $2 WHERE option_id = $1"
@@ -56,7 +57,7 @@ def check_title(option: dict[str, Any], changes: dict[str, Any]) -> None:
         raise Forbidden("aa_title_read_only", "an Adventure Asia item keeps its name; add a note line under it instead")
 
 
-async def copy_note(conn: Any, option_id: Any, source: dict[str, Any]) -> None:
+async def copy_note(ctx: TenantContext, option_id: Any, source: dict[str, Any]) -> None:
     """A new quote version keeps the note of the item it copies (the INSERT shared by every add path has no note)."""
     if source.get("display_note"):
-        await conn.execute(NOTE_COPY_SQL, option_id, source["display_note"])
+        await ctx.conn.execute(NOTE_COPY_SQL, option_id, source["display_note"])

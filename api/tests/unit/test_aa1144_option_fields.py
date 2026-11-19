@@ -3,6 +3,7 @@ field and the client page line. The real-PostgreSQL path is tests/integration/te
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -67,11 +68,11 @@ def test_rules_json() -> None:
 
 @pytest.mark.asyncio
 async def test_copy_note_writes_only_a_note() -> None:
-    conn = AsyncMock()
-    await option_fields.copy_note(conn, "new-id", AA)
-    conn.execute.assert_not_called()
-    await option_fields.copy_note(conn, "new-id", AGENCY)
-    conn.execute.assert_awaited_once_with(option_fields.NOTE_COPY_SQL, "new-id", "Paid at the border")
+    ctx = SimpleNamespace(conn=AsyncMock())
+    await option_fields.copy_note(ctx, "new-id", AA)  # type: ignore[arg-type]
+    ctx.conn.execute.assert_not_called()
+    await option_fields.copy_note(ctx, "new-id", AGENCY)  # type: ignore[arg-type]
+    ctx.conn.execute.assert_awaited_once_with(option_fields.NOTE_COPY_SQL, "new-id", "Paid at the border")
 
 
 def test_the_route_takes_a_note() -> None:

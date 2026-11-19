@@ -935,7 +935,7 @@ async def _copy(
             o["aa_departure_id"], o["aa_quote_id"], o["aa_quote_valid_until"], o["aa_from_price"],
             o["below_from_price"], o["option_id"], o["aa_nights"], _rules_json(o.get("price_rules")), o.get("category"),
         )  # fmt: skip
-        await option_fields.copy_note(ctx.conn, option_id, o)  # AA-1144 (D9): the next version keeps the note
+        await option_fields.copy_note(ctx, option_id, o)  # AA-1144 (D9): the next version keeps the note
         # AA-1066: the per-traveller rows go with their option.
         await pricing.replace(ctx, proposal_id, option_id, s["prices"].get(str(o["option_id"]), []))
     if s["discount_pct"]:
