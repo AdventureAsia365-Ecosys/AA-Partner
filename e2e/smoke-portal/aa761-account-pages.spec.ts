@@ -8,6 +8,8 @@
 //     type filter reaches the server; "Export CSV" downloads the filtered set (CSV header of the CIS route);
 //   - Integrations: each channel's health badge, and no API key card (tenant API keys were removed, AA-1036).
 // One mocked case: server paging (the pager asks the API for page 2), with a 60-row total answered in the browser.
+// The mocked rows carry their page in the detail line: the studio words a known action itself (tenant.login shows
+// "Signed in" whatever label the server sends, lib/studio/account.ts activityLabel), the detail passes through.
 import { readFileSync } from 'node:fs';
 import { test, expect, type Page } from '@playwright/test';
 import { baseUrl, installBypassRoute, watchPage, describeApiFailures } from './smoke-helpers';
@@ -135,7 +137,7 @@ test.describe('UI smoke — portal Account pages (AA-761)', () => {
       pagesAsked.push(String(page));
       const data = Array.from({ length: size }, (_, i) => ({
         id: `row-${page}-${i}`, at: '2026-10-20T08:30:00+00:00', action: 'tenant.login', category: 'account',
-        label: `Signed in (page ${page})`, actor: 'you', resource_type: 'tenant', resource_id: 'x', detail: 'Content studio',
+        label: SIGN_IN_LABEL, actor: 'you', resource_type: 'tenant', resource_id: 'x', detail: `Content studio (page ${page})`,
       }));
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
         data, pagination: { page, page_size: size, total: 60, pages: Math.ceil(60 / size) },
@@ -147,10 +149,12 @@ test.describe('UI smoke — portal Account pages (AA-761)', () => {
     const page = await context.newPage();
     try {
       await open(page, '/portal/account/activity');
-      await expect(page.getByText('Signed in (page 1)').first()).toBeVisible({ timeout: 15000 });
-      // The kit pager's next button follows its "Page n / m" label (icon only, no name).
-      await page.getByText(/^Page 1 \/ 3$/).locator('xpath=following-sibling::button[1]').click();
-      await expect(page.getByText('Signed in (page 2)').first()).toBeVisible({ timeout: 15000 });
+      await expect(page.getByText('Content studio (page 1)').first()).toBeVisible({ timeout: 15000 });
+      await expect(page.getByText(/^Page 1 \/ 3$/)).toBeVisible();
+      // The kit pager's next button is an icon button named by its aria-label.
+      await page.getByRole('button', { name: 'Next page', exact: true }).click();
+      await expect(page.getByText('Content studio (page 2)').first()).toBeVisible({ timeout: 15000 });
+      await expect(page.getByText(/^Page 2 \/ 3$/)).toBeVisible();
       expect(pagesAsked).toContain('2');
     } finally {
       await context.close();

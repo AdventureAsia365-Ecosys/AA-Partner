@@ -3,6 +3,7 @@ import { test } from "vitest";
 import assert from "node:assert/strict";
 import {
   activityDetail,
+  activityLabel,
   activityQuery,
   actorLabel,
   cleanFilters,
@@ -99,4 +100,11 @@ test("S251 D3: a download's format code reads as words; other details pass throu
   assert.equal(activityDetail("tenant.login", "API"), "API");
   assert.equal(activityDetail("content_piece.published", "Blog · failed"), "Blog · failed");
   assert.equal(activityDetail("content_piece.exported", ""), "");
+});
+
+// The portal smoke's mocked pager rows (e2e/smoke-portal/aa761-account-pages.spec.ts) tell pages apart by the detail
+// line: a known action shows the studio's own label whatever the server sends, while the detail passes through.
+test("a known action ignores the server label; its detail line is shown as sent", () => {
+  assert.equal(activityLabel("tenant.login", "Signed in (page 2)"), "Signed in");
+  assert.equal(activityDetail("tenant.login", "Content studio (page 2)"), "Content studio (page 2)");
 });
