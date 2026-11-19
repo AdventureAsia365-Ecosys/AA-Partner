@@ -33,6 +33,7 @@ from app.ops import console
 from app.ops import serializer as ops_serializer
 from app.ops.serializer import SETTING_VALUE_FIELDS, OpsAllowListRoute, OpsSettingsRoute, bad_keys, key_allowed
 from app.routers import ops as ops_router
+from app.routers import ops_connection_shares as ops_connection_shares_router
 from app.routers import ops_settings as ops_settings_router
 from app.vault.wrapping import LocalKeyWrapper
 from tests.tokens import LocalPools
@@ -306,6 +307,7 @@ def ops_app(pools: LocalPools, monkeypatch: pytest.MonkeyPatch) -> Iterator[tupl
 
     monkeypatch.setattr(ops_router, "request_pool", pool)
     monkeypatch.setattr(ops_settings_router, "request_pool", pool)  # AA-1096 L4: /settings
+    monkeypatch.setattr(ops_connection_shares_router, "request_pool", pool)  # AA-1143: /llm/connection-shares
     monkeypatch.setattr(console, "Vault", lambda keys, ctx: FakeVault())
     with TestClient(app) as client:
         state["app"] = app
@@ -333,6 +335,22 @@ SCENARIOS: list[tuple[str, str, str, Any, Any, str, int, str | None]] = [
      "invalid_app_profile"),
     ("PUT", "/llm/app-profile", f"{PREFIX}/llm/app-profile", {"ai_enabled": True}, None, "reader", 403,
      "missing_group"),
+    # crm.ops.v1 1.16 (AA-1143): the CRM's copy of its connection budget shares; the CIS admin writes it whole.
+    ("GET", "/llm/connection-shares", f"{PREFIX}/llm/connection-shares",
+     None, lambda c: c.on("to_regclass('crm.llm_connection_share')", True).on(
+         "FROM crm.llm_connection_share ORDER BY", [{"connection_key": "zz-a", "share_usd": Decimal("5.00"),
+                                                     "updated_at": NOW}]), "reader", 200, None),
+    ("GET", "/llm/connection-shares", f"{PREFIX}/llm/connection-shares",
+     None, lambda c: c.on("to_regclass('crm.llm_connection_share')", False), "reader", 503,
+     "connection_shares_unavailable"),
+    ("PUT", "/llm/connection-shares", f"{PREFIX}/llm/connection-shares",
+     {"shares": [{"connection_key": "zz-a", "share_usd": "8.00"}], "reason": "zz test: a budget save reason"},
+     lambda c: c.on("to_regclass('crm.llm_connection_share')", True), "admin", 200, None),
+    ("PUT", "/llm/connection-shares", f"{PREFIX}/llm/connection-shares",
+     {"shares": [{"connection_key": "zz-a", "share_usd": "1"}, {"connection_key": "zz-a", "share_usd": "2"}],
+      "reason": "zz test: a budget save reason"}, None, "admin", 422, "invalid_connection_shares"),
+    ("PUT", "/llm/connection-shares", f"{PREFIX}/llm/connection-shares",
+     {"shares": [], "reason": "zz test: a budget save reason"}, None, "reader", 403, "missing_group"),
     # crm.ops.v1 1.6 (AA-964): the CRM ledger rows, newest first, scrubbed fields only.
     ("GET", "/llm/calls", f"{PREFIX}/llm/calls?from=2026-10-01&to=2026-10-24&limit=1", None,
      lambda c: c.on("FROM crm.llm_call", [_llm_call_row(), {**_llm_call_row(), "llm_call_id": REQ}]),
@@ -531,6 +549,7 @@ SCENARIOS: list[tuple[str, str, str, Any, Any, str, int, str | None]] = [
 NO_AGENCY_AUDIT = {
     "/tenants/{tenant_id}/studio-invitations",
     "/llm/app-profile",  # AA-1025: a platform setting
+    "/llm/connection-shares",  # AA-1143: the CRM copy of its connection budget shares, a platform setting
     # AA-1096 L4: a platform value of a setting (an agency's own value writes its agency's audit)
     "/settings/{key}/changes",
     "/settings/changes/{value_id}/{decision}",

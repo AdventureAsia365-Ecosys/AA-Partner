@@ -54,6 +54,7 @@ DB_MODULES = frozenset(
         "app/llm/app_profile.py",  # crm.llm_app_profile: platform singleton, no tenant rows (AA-1025 H1c)
         # AA-1113 (crm-077): the CRM's own connection cap (crm.llm_usage_daily month spend, a platform read)
         "app/llm/connection_cap.py",
+        "app/llm/connection_share.py",  # crm.llm_connection_share: the CIS copy, platform rows, no tenant (AA-1143)
         "app/audit_export/registry.py",  # crm-007 platform functions: agency list, partition maker, drop (AA-940)
         "app/privacy/purge.py",  # expired placeholder maps, crm-009 DELETE-only purge policy, no reads (AA-938)
         "app/fx/fetch.py",  # crm.fx_rate_platform: platform reference rates, no tenant rows, insert only (AA-944)

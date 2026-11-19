@@ -91,6 +91,7 @@ from app.routers import (
     messaging,
     onboarding,
     ops,
+    ops_connection_shares,
     ops_release,
     ops_settings,
     partner_pages,
@@ -372,6 +373,7 @@ def create_app(
     app.include_router(ai.router)
     app.include_router(ops.router)
     app.include_router(ops_settings.router)  # AA-1096 L4: crm.ops.v1 1.13 /settings (1.14: S280)
+    app.include_router(ops_connection_shares.router)  # AA-1143: crm.ops.v1 1.16 /llm/connection-shares (crm-079)
     app.include_router(support_access.router)
     app.include_router(staff.router)
     app.include_router(staff_ops.router)

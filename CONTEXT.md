@@ -3021,6 +3021,14 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   prod rules only log), so no order of the live steps can call acc1 before the CRM's acc1 cap exists. The task role's Bedrock (`bedrock`) is CIS connection `acc2`, `bedrock_acc1` is `acc1`; the
   `CRM_LLM_ROLE_ARN` connection has no mapping yet (no cap). An unreadable setting or spend refuses
   `spend_unreadable` in dev only (for that connection).
+- **The CIS copy of the CRM's connection shares** (AA-1143, tech lead decision G3, crm-079, crm.ops.v1 1.16): a
+  connection's budget is one set of rows in CIS (its total, one share per app, CIS taking the remainder; CIS AI gateway
+  > Budgets). CIS sends the CRM its part whole over `PUT /crm/ops/v1/llm/connection-shares` (crm-platform-admin, the
+  staff member's own token; `app/routers/ops_connection_shares.py`) into `crm.llm_connection_share`: every CIS
+  connection that has a total, with the CRM's share or 0 (0 = the CRM may not spend there). The connection cap above
+  reads the copy's row first (`connection_share.share_for`, a savepoint after a `to_regclass` check) and falls back to
+  the setting `crm.ai.connection_monthly_cap_usd` for a connection the copy does not name (one release; the setting is
+  retired in a later contract step). `GET` of the same path lets the CIS page show whether the copy is in step.
 - **Stage profiles and the shared core** (S263 gateway plan F1 + F2, crm-037, `app/llm/profiles.py`): each CRM stage
   has a profile in `crm` (`crm.llm_stage_profile`: role, kill switch `is_active`, `max_attempts` <= 6,
   `route_deadline_s`, degrade mode `manual_reply_needed`) and a route (`crm.llm_stage_route`: Bedrock model ids in
