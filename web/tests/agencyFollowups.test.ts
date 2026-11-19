@@ -29,7 +29,6 @@ const read = (rel: string) => readFileSync(path.join(WEB, rel), "utf8");
 const OWNER = "a1000000-0000-4000-8000-000000000001";
 const AGENT = "a2000000-0000-4000-8000-000000000002";
 const GONE = "a3000000-0000-4000-8000-000000000003";
-const TRIP = "b1000000-0000-4000-8000-000000000001";
 
 describe("one member label rule (rows 10 and 15)", () => {
   it("names a member by name, then by place in the role, then by role; 'Former member' when unknown", () => {
