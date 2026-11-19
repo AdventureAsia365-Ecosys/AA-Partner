@@ -376,7 +376,7 @@ export const onboardingVi: Record<OnboardingKey, string> = {
   "onb.imp.phaseHelp.relationships":
     "Ai có quan hệ với ai: spouse, partner, parent, child, sibling, friend, referrer hoặc referred.",
   "onb.imp.phaseHelp.trips":
-    "Chuyến đi đã qua được nhập là hoàn tất (hoặc đã hủy, thất bại); chuyến sắp tới là yêu cầu mới. companion_refs liệt kê mã khách, cách nhau bằng ;",
+    "Chuyến đi đã qua được nhập là hoàn tất (hoặc đã huỷ, thất bại); chuyến sắp tới là yêu cầu mới. companion_refs liệt kê mã khách, cách nhau bằng ;",
   "onb.imp.phaseHelp.notes": "Mỗi ghi chú ghi client_ref hoặc trip_ref. Có ngày thì ghi chú nằm đúng chỗ trong lịch sử.",
   "onb.imp.requiredCols": "Cột bắt buộc: {cols}",
   "onb.imp.optionalCols": "Cột tùy chọn: {cols}",
@@ -497,9 +497,9 @@ export const onboardingVi: Record<OnboardingKey, string> = {
   "onb.dup.keep": "Giữ khách này",
   "onb.dup.confirmTitle": "Gộp hai khách này?",
   "onb.dup.confirmBody":
-    "{keep} được giữ lại. Chuyến đi, ghi chú, tài liệu, tin nhắn và các đồng ý của khách kia chuyển sang {keep}, và các thông tin {keep} còn thiếu được bổ sung. Khách kia vào thùng rác và bị xóa hẳn sau thời hạn của thùng rác.",
+    "{keep} được giữ lại. Chuyến đi, ghi chú, tài liệu, tin nhắn và các đồng ý của khách kia chuyển sang {keep}, và các thông tin {keep} còn thiếu được bổ sung. Khách kia vào thùng rác và bị xoá hẳn sau thời hạn của thùng rác.",
   "onb.dup.merge": "Gộp",
-  "onb.dup.cancel": "Hủy",
+  "onb.dup.cancel": "Huỷ",
   "onb.dup.merged": "Đã gộp.",
   "onb.dup.blocked": "Khách sẽ bị gộp đi đang có {what}, nên hãy giữ khách đó.",
   "onb.dup.blockedBoth": "Cả hai khách đều có {what}: không gộp được.",

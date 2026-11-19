@@ -19,6 +19,7 @@ import {
   ACTIVITY_PAGE_SIZES,
   NO_FILTERS,
   activityDetail,
+  activityLabel,
   activityQuery,
   actorLabel,
   exportFilename,
@@ -98,13 +99,13 @@ export default function AccountActivity() {
     {
       id: "label",
       header: t("colActivity"),
-      accessorFn: (r) => r.label,
+      accessorFn: (r) => activityLabel(r.action, r.label, lang),
       enableSorting: false,
       cell: (c) => {
         const r = c.row.original;
         return (
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: K.ink }}>{r.label}</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: K.ink }}>{activityLabel(r.action, r.label, lang)}</div>
             {r.detail && <div style={{ fontSize: 11.5, color: K.muted, marginTop: 2 }}>{activityDetail(r.action, r.detail, lang)}</div>}
           </div>
         );

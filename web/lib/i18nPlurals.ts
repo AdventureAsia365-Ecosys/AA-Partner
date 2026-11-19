@@ -29,6 +29,14 @@ export const pluralsEn = {
   "pipeline.bulkPreview.one": "{n} trip will move to {stage}.",
   "pipeline.bulkBlocked.one": "{n} trip cannot move:",
   "pipeline.bulkConfirm.one": "Move {n} trip",
+  // AA-1129 (P3, S283 audit): "1 trips", "1 lines", "1 clients", "1 adults" on the partners, suppliers, marketing and
+  // departures pages.
+  "partners.trips.one": "{n} trip",
+  "suppliers.lines.one": "line",
+  "tag.ready.count.one": "{n} client",
+  "travel.pax.adults.one": "{n} adult",
+  "travel.pax.children.one": "{n} child",
+  "travel.pax.infants.one": "{n} infant",
 } as const;
 
 export const pluralsVi: Record<keyof typeof pluralsEn, string> = {
@@ -56,4 +64,10 @@ export const pluralsVi: Record<keyof typeof pluralsEn, string> = {
   "pipeline.bulkPreview.one": "{n} chuyến sẽ chuyển sang {stage}.",
   "pipeline.bulkBlocked.one": "{n} chuyến không chuyển được:",
   "pipeline.bulkConfirm.one": "Chuyển {n} chuyến",
+  "partners.trips.one": "{n} chuyến",
+  "suppliers.lines.one": "dịch vụ",
+  "tag.ready.count.one": "{n} khách",
+  "travel.pax.adults.one": "{n} người lớn",
+  "travel.pax.children.one": "{n} trẻ em",
+  "travel.pax.infants.one": "{n} em bé",
 };

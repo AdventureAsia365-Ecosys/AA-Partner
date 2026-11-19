@@ -304,10 +304,18 @@ export function InquiryForm({ publicKey, form, lang, dict, submitPath }: { publi
         <input type="checkbox" name="consent_marketing" style={{ marginTop: 3 }} />
         <span>{t("intake.marketing")}</span>
       </label>
-      {form.privacy_notice_url && (
+      {form.privacy_notice_url ? (
         <a href={form.privacy_notice_url} target="_blank" rel="noreferrer noopener" style={{ fontSize: 12.5, color: K.accentDeep }}>
           {t("intake.privacy")}
         </a>
+      ) : (
+        // AA-1129 (P5): an agency with no privacy link still tells the visitor what the details are for and how to
+        // have them removed (the form collects name, e-mail and phone under the consent box).
+        !form.data_request_contact && (
+          <p data-testid="intake-privacy-fallback" style={{ margin: 0, fontSize: 12.5, color: K.muted }}>
+            {fmt(t("intake.privacyFallback"), { agency: form.agency_name })}
+          </p>
+        )
       )}
       {form.data_request_contact && (
         <p data-testid="intake-data-requests" style={{ margin: 0, fontSize: 12.5, color: K.muted, overflowWrap: "anywhere" }}>

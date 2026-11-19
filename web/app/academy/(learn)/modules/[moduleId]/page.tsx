@@ -107,6 +107,8 @@ export default async function AcademyModulePage({ params }: { params: Promise<{ 
   const dict = academyDict(ctx.lang);
   const read = await academyRead<Module>(ctx, `modules/${moduleId}`);
   const crumbs = [{ label: dict["academy.nav.courses"], href: "/academy" }];
+  // AA-1129 (A1): a planned or unknown module answers a real 404, not a 200 page that says "does not exist".
+  if (!read.ok && read.kind === "not_found") notFound();
   if (!read.ok) {
     return (
       <div style={{ display: "grid", gap: 16 }}>
@@ -144,10 +146,15 @@ export default async function AcademyModulePage({ params }: { params: Promise<{ 
         <Section title={dict["academy.module.prerequisites"]}>
           <ul style={{ margin: 0, paddingLeft: 20, fontSize: 13.5, color: K.body, display: "grid", gap: 4 }}>
             {m.prerequisites.map((p) => (
-              <li key={p.id}>
-                <Link href={`/academy/modules/${encodeURIComponent(p.id)}`} style={{ color: K.accentDeep }}>
-                  {p.id}
-                </Link>{" "}
+              <li key={p.id} data-testid={`academy-prereq-${p.id}`}>
+                {/* AA-1129 (A1): a planned module has no page yet, so it is plain text, as on the catalogue. */}
+                {p.state === "planned" ? (
+                  <span style={{ color: K.muted }}>{p.id}</span>
+                ) : (
+                  <Link href={`/academy/modules/${encodeURIComponent(p.id)}`} style={{ color: K.accentDeep }}>
+                    {p.id}
+                  </Link>
+                )}{" "}
                 <span style={{ color: K.muted }}>({dict[`academy.module.prereq.${p.state}`]})</span>
               </li>
             ))}

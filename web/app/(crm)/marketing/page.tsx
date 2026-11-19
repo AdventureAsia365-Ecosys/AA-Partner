@@ -13,7 +13,7 @@ import type { CampaignList, CampaignOptions } from "@/lib/campaigns";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { formatDate } from "@/lib/dates";
-import { fmt, t, type Lang } from "@/lib/i18n";
+import { fmt, plural, t, type Lang } from "@/lib/i18n";
 import { serverContext } from "@/lib/serverContext";
 import { consentKey, reasonText, seesMarketing, type ReadyList } from "@/lib/tags";
 
@@ -85,7 +85,7 @@ export default async function MarketingPage({ searchParams }: { searchParams: Pr
               <a href={href("me", 1)} style={chip(owner === "me")}>
                 {t(lang, "tag.ready.mine")}
               </a>
-              <span style={{ fontSize: 12.5, color: K.muted }}>{fmt(t(lang, "tag.ready.count"), { n: res.data.total })}</span>
+              <span style={{ fontSize: 12.5, color: K.muted }}>{plural(lang, "tag.ready.count", res.data.total)}</span>
             </nav>
             {res.data.items.length === 0 ? (
               <EmptyState title={t(lang, "tag.ready.title")} description={t(lang, "tag.ready.empty")} />

@@ -9,6 +9,9 @@
 // owner (S269: a CRM-only owner has no studio; lib/addOns.ts).
 // AA-963 (CRM-32): the global search config (GET search/config: off by default per agency, the kinds the member may
 // see); Content pieces join the search only when CIS lists this agency among the person's studios ("yes").
+// AA-1129 (P3): every CRM page sits inside the kit I18nProvider (the studio's fixed-language provider, StudioLang), so
+// kit core text (DataTable "Columns", "1-4 of 4", "10 / page", Field hints) follows the person's language like the
+// CRM's own dictionary does. Before, kit core fell back to English on every CRM page in VI.
 import { ErrorState, PageFrame } from "@/app/_kit";
 import { MailboxBanner } from "@/components/mail/MailboxBanner";
 import { SupportBanner } from "@/components/support/SupportBanner";
@@ -23,6 +26,7 @@ import { disconnected, type MailboxView } from "@/lib/mail";
 import { bannerState, type SupportAccess } from "@/lib/supportAccess";
 import type { Recovery } from "@/lib/team";
 import { CrmShell } from "@/app/_kit/local/CrmShell";
+import { StudioLang as AppLang } from "@/app/_kit/local/studio/StudioLang";
 import { plannerHref } from "@/lib/apps";
 import { AiPausedBanner } from "@/components/ai/AiPausedBanner";
 import { shellSearch } from "@/lib/searchServer";
@@ -34,17 +38,19 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
   if (ctx.apiDown) {
     const refused = ctx.reason === "refused";
     return (
-      <PageFrame
-        style={{ minHeight: "100vh", display: "grid", placeItems: "center", overflowY: "visible" }}
-        testId={refused ? "crm-session-refused" : "crm-api-down"}
-      >
-        <div style={{ display: "grid", justifyItems: "center", gap: 8 }}>
-          <ErrorState message={t(ctx.lang, refused ? "error.session" : "error.api")} />
-          <a href={refused ? "/auth/sign-in?next=%2F" : "/"} style={{ fontSize: 13 }}>
-            {t(ctx.lang, refused ? "auth.signIn" : "error.retry")}
-          </a>
-        </div>
-      </PageFrame>
+      <AppLang lang={ctx.lang} locale={ctx.locale}>
+        <PageFrame
+          style={{ minHeight: "100vh", display: "grid", placeItems: "center", overflowY: "visible" }}
+          testId={refused ? "crm-session-refused" : "crm-api-down"}
+        >
+          <div style={{ display: "grid", justifyItems: "center", gap: 8 }}>
+            <ErrorState message={t(ctx.lang, refused ? "error.session" : "error.api")} />
+            <a href={refused ? "/auth/sign-in?next=%2F" : "/"} style={{ fontSize: 13 }}>
+              {t(ctx.lang, refused ? "auth.signIn" : "error.retry")}
+            </a>
+          </div>
+        </PageFrame>
+      </AppLang>
     );
   }
   const active = ctx.memberships.filter((m) => m.tenant_status === "active").length;
@@ -64,24 +70,26 @@ export default async function CrmLayout({ children }: { children: React.ReactNod
   const contentHref = studioLink(studioHref, studio);
   const search = await shellSearch(ctx.cfg, session, { tenantId: ctx.me.tenant_id, lang: ctx.lang, studio });
   return (
-    <CrmShell
-      dict={dictionary(ctx.lang)}
-      role={ctx.role}
-      agencyName={ctx.me.display_name ?? ctx.me.tenant_id}
-      agencyCount={active}
-      contentStudioHref={contentHref}
-      plannerHref={plannerHref(ctx.role)}
-      locale={ctx.locale}
-      syntheticBadge={ctx.cfg.environment !== "prod"}
-      search={search}
-    >
-      {banner && (
-        <SupportBanner state={banner} canManage={!!supportView?.can_manage} lang={ctx.lang} locale={ctx.locale} timeZone={supportView?.timezone ?? "UTC"} />
-      )}
-      {recovery && <RecoveryBanner recovery={recovery} lang={ctx.lang} locale={ctx.locale} />}
-      {down.length > 0 && <MailboxBanner lang={ctx.lang} />}
-      {ctx.me.ai_paused === true && <AiPausedBanner lang={ctx.lang} />}
-      {children}
-    </CrmShell>
+    <AppLang lang={ctx.lang} locale={ctx.locale}>
+      <CrmShell
+        dict={dictionary(ctx.lang)}
+        role={ctx.role}
+        agencyName={ctx.me.display_name ?? ctx.me.tenant_id}
+        agencyCount={active}
+        contentStudioHref={contentHref}
+        plannerHref={plannerHref(ctx.role)}
+        locale={ctx.locale}
+        syntheticBadge={ctx.cfg.environment !== "prod"}
+        search={search}
+      >
+        {banner && (
+          <SupportBanner state={banner} canManage={!!supportView?.can_manage} lang={ctx.lang} locale={ctx.locale} timeZone={supportView?.timezone ?? "UTC"} />
+        )}
+        {recovery && <RecoveryBanner recovery={recovery} lang={ctx.lang} locale={ctx.locale} />}
+        {down.length > 0 && <MailboxBanner lang={ctx.lang} />}
+        {ctx.me.ai_paused === true && <AiPausedBanner lang={ctx.lang} />}
+        {children}
+      </CrmShell>
+    </AppLang>
   );
 }

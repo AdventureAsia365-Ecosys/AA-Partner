@@ -65,7 +65,7 @@ function PathCard({ path, dict }: { path: PathSummary; dict: AcademyDict }) {
   const progress = pathProgress(path);
   const planned = path.planned ?? [];
   return (
-    <Section title={path.title} description={say(dict, "academy.path.progress", progress)} actions={<PathBadges path={path} dict={dict} />} testId={`academy-path-${path.id}`}>
+    <Section title={path.title} description={say(dict, progress.total === 1 ? "academy.path.progress.one" : "academy.path.progress", progress)} actions={<PathBadges path={path} dict={dict} />} testId={`academy-path-${path.id}`}>
       <div style={{ display: "grid", gap: 12 }}>
         {!path.enrolled && (
           <div>

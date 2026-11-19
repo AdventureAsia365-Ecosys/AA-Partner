@@ -9,7 +9,7 @@ import { LessonBody } from "@/components/academy/LessonBody";
 import { LessonProgress } from "@/components/academy/LessonProgress";
 import { ReadError } from "@/components/academy/ReadError";
 import { VideoPlayer } from "@/components/academy/VideoPlayer";
-import { lessonNeighbours, type CitedSection, type LearnLang, type Lesson, type Module } from "@/lib/academy";
+import { lessonNeighbours, sourceTitle, type CitedSection, type LearnLang, type Lesson, type Module } from "@/lib/academy";
 import { LESSON_ID } from "@/lib/academyBff";
 import { academyContext } from "@/lib/academyContext";
 import { academyRead } from "@/lib/academyPage";
@@ -52,12 +52,19 @@ function Sources({ sources, dict }: { sources: CitedSection[]; dict: AcademyDict
   return (
     <Section title={dict["academy.lesson.sources"]} description={dict["academy.lesson.sourcesHelp"]} testId="academy-lesson-sources">
       <div style={{ display: "grid", gap: 10 }}>
-        {sources.map((s) => (
-          <details key={s.ref} style={{ border: `1px solid ${K.line}`, borderRadius: 8, padding: "8px 12px" }}>
-            <summary style={{ cursor: "pointer", fontSize: 13, color: K.ink, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ overflowWrap: "anywhere" }}>{s.ref}</span>
-              <Badge dot={false}>{s.kind}</Badge>
-              {s.stale && <Badge tone="warning">{dict["academy.stale"]}</Badge>}
+        {sources.map((s, i) => (
+          <details key={s.ref} open={i === 0} style={{ border: `1px solid ${K.line}`, borderRadius: 8, padding: "8px 12px" }}>
+            {/* AA-1129 (A1): the section's own heading names the row (the ref is the small line under it); the summary
+                stays a list item so the browser keeps its open / closed marker, and the first section starts open. */}
+            <summary style={{ cursor: "pointer", fontSize: 13, color: K.ink, display: "list-item" }}>
+              <span style={{ display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap", verticalAlign: "top", maxWidth: "calc(100% - 20px)" }}>
+                <span style={{ fontWeight: 600, overflowWrap: "anywhere" }}>{sourceTitle(s)}</span>
+                <Badge dot={false}>{s.kind}</Badge>
+                {s.stale && <Badge tone="warning">{dict["academy.stale"]}</Badge>}
+              </span>
+              {sourceTitle(s) !== s.ref && (
+                <span style={{ display: "block", fontSize: 11.5, color: K.muted, overflowWrap: "anywhere", marginTop: 2 }}>{s.ref}</span>
+              )}
             </summary>
             <div style={{ marginTop: 8 }}>
               {s.available && s.body_md ? (
@@ -141,6 +148,7 @@ export default async function AcademyLessonPage({
   const dict = academyDict(ctx.lang);
   const lang = lessonLang(rawLang, ctx.lang);
   const read = await academyRead<Lesson>(ctx, `lessons/${lessonId}`, new URLSearchParams({ lang }));
+  if (!read.ok && read.kind === "not_found") notFound(); // AA-1129 (A1): a real 404, not a soft 200
   if (!read.ok) {
     return (
       <div style={{ display: "grid", gap: 16 }}>
