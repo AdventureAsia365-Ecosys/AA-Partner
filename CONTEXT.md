@@ -169,6 +169,16 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
   another class (`cis-admin`, `breakglass`, a partner token on ops, ...) = **403**. `breakglass` is accepted by no
   class. The guard sits on the router (`class_router()`), and a unit test calls every served path of each class with
   foreign tokens.
+- **Operations staff MFA (AA-1111 S2, root ADR 0006c, crm-081; `app/auth/admin_mfa.py`).** After the class and group
+  checks, a WORKFORCE session holding `crm-platform-admin`, `crm-ops` or `cis-admin` must show an authenticator code:
+  the verified access token's Cognito `amr` claim holds `otp` (password + TOTP gives `["pwd", "otp", "mfa"]`, an
+  e-mail code `["email_otp"]`). While the CRM setting `crm.platform.admin_mfa_required` (area platform, bool,
+  maker-checker, no env override, default off) is on, a session without it is refused 403 `mfa_required` on every
+  class; off, it is served and logged `staff_admin_mfa_check outcome=would_refuse` (`satisfied` when the code was used;
+  one line per identity and outcome per 10 minutes). The desk groups (`crm-support`, `cis-customer_success`,
+  `cis-support`), agency members (PARTNER pool: MFA always required, ADR 0006b) and the Dev-only E2E identities
+  (A10b / A10c / A10d) are never checked. The claim is read from the verified token string, so the byte-copied
+  verifier is unchanged. Enrolment and the switch-on order: AA-CIS-Infra `docs/runbooks/staff-admin-mfa.md`.
 - Issuers and client ids come **only from the environment** (Terraform task definition); there are no code constants
   (public repo, DM-6.10). An unconfigured class accepts nothing. The EXTERNAL pool is configured nowhere since AA-979
   P2b (the Dev `cis-portal` bridge is gone; `COGNITO_EXTERNAL_ISSUER` / `COGNITO_CIS_PORTAL_CLIENT_ID` are no longer

@@ -108,6 +108,9 @@ SPEND_ENVIRONMENT = "crm.spend.environment"
 # AA-1113 (crm-077): the CRM's own monthly cap per model connection (its share of the provider budget), read by
 # app/llm/connection_share.py.
 AI_CONNECTION_MONTHLY_CAP = "crm.ai.connection_monthly_cap_usd"
+# AA-1111 (crm-081): refuse an AA operations staff session signed in without an authenticator code, read by
+# app/auth/admin_mfa.py.
+ADMIN_MFA_REQUIRED = "crm.platform.admin_mfa_required"
 
 # The platform ranges of the agency-owner settings: (new-agency default, lowest an owner may pick, highest). The
 # registry service refuses a change that would break min <= default <= max (422 range_inconsistent);

@@ -14,6 +14,9 @@ The guard, in order:
 5. AA-1019 (root ADR 0006a A10c): the Dev-only CRM staff E2E identity outside ``dev`` / ``test`` / ``local`` ->
    **403** ``e2e_read_only`` (the token cannot exist elsewhere: this is the second lock); AA-1035 (A10d) the Dev-only
    CIS customer_success E2E identity likewise;
+5a. AA-1111 (root ADR 0006c, :mod:`app.auth.admin_mfa`): a WORKFORCE session holding an operations group
+   (``crm-platform-admin``, ``crm-ops``, ``cis-admin``) whose token's ``amr`` lacks ``otp`` (no authenticator code) ->
+   **403** ``mfa_required`` while ``crm.platform.admin_mfa_required`` is on; off, it is only logged;
 6. AA-969 (CRM-37a): on the agency class only, more than ``crm.rate.member_per_minute`` requests in a minute by
    one member for one agency (``iss`` + ``sub`` + the canonical ``X-AA-Tenant-Id`` uuid, ``app.state.member_limiter``)
    -> **429** ``rate_limited``. The agency is part of the key only once this task verified the caller's membership of
@@ -39,7 +42,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app import tenant_gate
-from app.auth import e2e_staff
+from app.auth import admin_mfa, e2e_staff
 from app.auth.identity_config import WORKFORCE, Identity, RouteClass
 from app.auth.identity_verifier import AuthUnavailable, InvalidToken, MultiIssuerVerifier
 from app.settings import DEV_ONLY_ENVIRONMENTS
@@ -124,6 +127,17 @@ def guard_for(route_class: RouteClass) -> Callable[..., Awaitable[Caller]]:
         if e2e_cis_cs and _environment(request) not in DEV_ONLY_ENVIRONMENTS:
             log.warning("route_guard_e2e_cis_cs_refused class=%s", route_class.name)
             raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
+        e2e_cis_admin = issuer_kind == WORKFORCE and e2e_staff.is_e2e_cis_admin(principal.email)
+        # AA-1111 (root ADR 0006c): an operations staff session without an authenticator code, 403 mfa_required while
+        # crm.platform.admin_mfa_required is on (logged only while it is off).
+        admin_mfa.check(
+            issuer_kind,
+            principal.iss,
+            principal.sub,
+            principal.groups,
+            credentials.credentials,
+            e2e=e2e_crm_staff or e2e_cis_cs or e2e_cis_admin,
+        )
         caller = Caller(
             route_class=route_class.name,
             issuer_kind=issuer_kind,
@@ -131,7 +145,7 @@ def guard_for(route_class: RouteClass) -> Callable[..., Awaitable[Caller]]:
             iss=principal.iss,
             sub=principal.sub,
             groups=principal.groups,
-            e2e_read_only=issuer_kind == WORKFORCE and e2e_staff.is_e2e_cis_admin(principal.email),
+            e2e_read_only=e2e_cis_admin,
             e2e_synthetic_only=e2e_crm_staff,
             e2e_no_write=e2e_cis_cs,
         )
