@@ -4,7 +4,8 @@
   agency erase takes it with the settings row (the member key is checked by test_crm010_schema CASCADE_ERASED).
 - ``crm.ai_draft``: the two new kinds, ``voice_profile_id`` only on a reply / follow-up draft, ``validation`` an object
   of at most 16 KB; the crm-040 guard still lets only the decision change.
-- The two AI stages are copies of the ``crm_draft_reply`` profile and route.
+- The two AI stages are copies of the ``crm_draft_reply`` profile and route as it stood then (crm-078, AA-1138, later
+  moved only the draft's position 0 to Claude Haiku 5.5 on acc1; the copies keep it as it was).
 """
 
 from __future__ import annotations
@@ -144,7 +145,7 @@ async def test_the_new_stages_copy_the_draft_profile_and_route(admin: asyncpg.Co
         tuple(r)
         for r in await admin.fetch(
             "SELECT position, model, family, is_enabled FROM crm.llm_stage_route WHERE stage = 'crm_draft_reply' "
-            "ORDER BY position"
+            "AND position > 0 ORDER BY position"  # crm-078 changed position 0 of the draft stage only
         )
     ]
     for stage in STAGES:
@@ -161,4 +162,5 @@ async def test_the_new_stages_copy_the_draft_profile_and_route(admin: asyncpg.Co
                 stage,
             )
         ]
-        assert got == route, stage
+        assert got[1:] == route, stage
+        assert got[0][0] == 0 and got[0][2] == "anthropic" and got[0][3] is False, stage  # the crm-037 entry, off

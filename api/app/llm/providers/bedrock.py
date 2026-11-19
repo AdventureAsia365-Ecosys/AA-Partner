@@ -15,6 +15,11 @@ an outage is one ``error`` row and the draft says "reply by hand" (the gateway n
   priced at the core's cache rates (the CRM sends no cache point, so they are 0 today).
 - **Route** (S263 F2): :meth:`BedrockConverseProvider.for_route` gives the provider of one route entry (its model,
   family and prices) on the same client.
+- **Named connections** (AA-1138, crm-078): a route entry with a ``connection_key`` runs on that named connection
+  instead (today ``bedrock_acc1``: acc1's invoker role, assumed with its ExternalId; :class:`Connection`). A key the
+  process has no configuration for is never called: :meth:`complete` raises ``ConnectionNotConfigured`` (no AWS call,
+  no cost) and the gateway moves on to the next entry. A route entry with ``sends_temperature = false`` (a model that
+  rejects one, Claude Haiku 5.5) leaves the temperature out of the request.
 - Errors leave as :class:`ProviderCallError` with a class code only (the AWS error code, e.g.
   ``AccessDeniedException``, ``ThrottlingException``), never the message: botocore messages can echo request fields.
   Its ``llm_error_class`` is the shared core's class (``app.aa_llm.errors.classify`` of the whole exception, read here
@@ -28,7 +33,8 @@ import datetime as dt
 import logging
 import re
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
@@ -43,6 +49,8 @@ _REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 ROLE_SESSION = "crm-llm-gateway"
 REFRESH_BEFORE = dt.timedelta(minutes=5)
 DEFAULT_TEMPERATURE = 0.3
+ACC1_CONNECTION = "bedrock_acc1"  # crm-078: the acc1 invoker role (root ADR 0001a, Note S278)
+NOT_CONFIGURED = "ConnectionNotConfigured"
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +64,14 @@ class ProviderCallError(Exception):
         self.error_class = error_class if _CODE.match(error_class or "") else "ProviderError"
         self.billed = billed
         self.llm_error_class = llm_error_class or llm_errors.classify_text(self.error_class)
+
+
+@dataclass(frozen=True)
+class Connection:
+    """A named Bedrock connection a route entry may run on: the role to assume and the ExternalId its trust pins."""
+
+    role_arn: str
+    external_id: str = field(default="", repr=False)
 
 
 def _error_class(exc: BaseException) -> str:
@@ -89,10 +105,15 @@ class BedrockConverseProvider:
         role_arn: str = "",
         client: Any | None = None,
         parent: BedrockConverseProvider | None = None,
+        external_id: str = "",
+        connection_key: str | None = None,
+        connections: Mapping[str, Connection] | None = None,
+        sends_temperature: bool = True,
     ) -> None:
         """``usd_per_mtok_in`` / ``_out``: the configured price override of this model (both or neither, > 0).
         ``catalog``: the route entry's catalog prices (in, out per million tokens). ``parent``: the provider whose
-        client this one shares (a route entry of the process's provider)."""
+        client this one shares (a route entry of the process's provider). ``connections``: the named connections a
+        route entry may name (AA-1138); ``connection_key`` / ``external_id``: those of a named connection's root."""
         if not model_id:
             raise ValueError("a model id is required")
         if (usd_per_mtok_in is None) != (usd_per_mtok_out is None):
@@ -101,7 +122,13 @@ class BedrockConverseProvider:
             raise ValueError("a price override must be above 0 (the budget must see the cost)")
         self.model = model_id
         self.family = family or family_of(model_id)
-        self.connection_key = "bedrock_role" if role_arn else "bedrock"
+        self.connection_key = connection_key or ("bedrock_role" if role_arn else "bedrock")
+        # None = the process's own connection (a route entry without a connection_key); else the entry's named one
+        self.route_connection: str | None = connection_key
+        self.external_id = external_id
+        self.connections: dict[str, Connection] = dict(connections or {})
+        self.sends_temperature = sends_temperature
+        self.configured = True
         self.usd_in = usd_per_mtok_in
         self.usd_out = usd_per_mtok_out
         self.catalog = catalog
@@ -114,13 +141,32 @@ class BedrockConverseProvider:
         self._expires: dt.datetime | None = None
         self._lock = threading.Lock()
         self._children: dict[RouteEntry, BedrockConverseProvider] = {}
+        self._roots: dict[str, BedrockConverseProvider] = {}
+
+    @classmethod
+    def from_settings(cls, settings: Any, *, max_tokens: int | Callable[[], int]) -> BedrockConverseProvider:
+        """The process's provider from ``app.settings``: its model, price override, region and role, and the named
+        connections it knows (AA-1138: ``bedrock_acc1`` when ``CRM_LLM_ACC1_ROLE_ARN`` is set)."""
+        connections = {}
+        if settings.crm_llm_acc1_role_arn:
+            connections[ACC1_CONNECTION] = Connection(settings.crm_llm_acc1_role_arn, settings.crm_llm_acc1_external_id)
+        return cls(
+            settings.crm_llm_model_id,
+            usd_per_mtok_in=settings.crm_llm_usd_per_mtok_in,
+            usd_per_mtok_out=settings.crm_llm_usd_per_mtok_out,
+            region=settings.crm_llm_region,
+            max_tokens=max_tokens,
+            role_arn=settings.crm_llm_role_arn,
+            connections=connections,
+        )
 
     def for_route(self, entry: RouteEntry) -> BedrockConverseProvider:
         """The provider of one route entry: its model, family and catalog prices, on this provider's client. The
         configured price override applies only to the configured model."""
         child = self._children.get(entry)
         if child is None:
-            same = entry.model == self.model
+            same = entry.model == self.model and not entry.connection_key
+            root = self._connection_root(entry.connection_key) if entry.connection_key else (self._parent or self)
             child = BedrockConverseProvider(
                 entry.model,
                 usd_per_mtok_in=self.usd_in if same else None,
@@ -130,11 +176,34 @@ class BedrockConverseProvider:
                 region=self.region,
                 max_tokens=self.max_tokens,
                 timeout_s=self.timeout_s,
-                role_arn=self.role_arn,
-                parent=self._parent or self,
+                role_arn=root.role_arn,
+                parent=root,
+                external_id=root.external_id,
+                connection_key=entry.connection_key,
+                sends_temperature=entry.sends_temperature,
             )
+            child.configured = root.configured
             self._children[entry] = child
         return child
+
+    def _connection_root(self, key: str) -> BedrockConverseProvider:
+        """The provider that owns the client of the named connection ``key`` (one per key and process). A key without
+        configuration gets a root that is never called (``configured`` false)."""
+        owner = self._parent or self
+        root = owner._roots.get(key)
+        if root is None:
+            conn = owner.connections.get(key)
+            root = BedrockConverseProvider(
+                owner.model,
+                region=owner.region,
+                timeout_s=owner.timeout_s,
+                role_arn=conn.role_arn if conn else "",
+                external_id=conn.external_id if conn else "",
+                connection_key=key,
+            )
+            root.configured = conn is not None
+            owner._roots[key] = root
+        return root
 
     # ── the client ──────────────────────────────────────────────────────────────────────────────
     def _config(self) -> Any:
@@ -161,7 +230,14 @@ class BedrockConverseProvider:
                 self._client = boto3.client("bedrock-runtime", region_name=self.region, config=self._config())
                 return self._client
             sts = boto3.client("sts", region_name=self.region)
-            creds = sts.assume_role(RoleArn=self.role_arn, RoleSessionName=ROLE_SESSION, DurationSeconds=3600)
+            assume: dict[str, Any] = {
+                "RoleArn": self.role_arn,
+                "RoleSessionName": ROLE_SESSION,
+                "DurationSeconds": 3600,
+            }
+            if self.external_id:
+                assume["ExternalId"] = self.external_id  # AA-1138: the acc1 invoker's trust pins it
+            creds = sts.assume_role(**assume)
             c = creds["Credentials"]
             self._client = boto3.client(
                 "bedrock-runtime",
@@ -192,16 +268,21 @@ class BedrockConverseProvider:
     # ── the call ────────────────────────────────────────────────────────────────────────────────
     def _request(self, prompt: str, system: str | None, max_tokens: int | None = None) -> dict[str, Any]:
         cap = int(max_tokens) if max_tokens is not None else self.output_cap()  # AA-965: a stage's own cap
+        config: dict[str, Any] = {"maxTokens": cap}
+        if self.sends_temperature:  # AA-1138: Claude Haiku 5.5 rejects a temperature (crm-078 sends_temperature)
+            config["temperature"] = DEFAULT_TEMPERATURE
         request: dict[str, Any] = {
             "modelId": self.model,
             "messages": [{"role": "user", "content": [{"text": prompt}]}],
-            "inferenceConfig": {"maxTokens": cap, "temperature": DEFAULT_TEMPERATURE},
+            "inferenceConfig": config,
         }
         if system:
             request["system"] = [{"text": system}]
         return request
 
     async def complete(self, prompt: str, *, system: str | None = None, max_tokens: int | None = None) -> Completion:
+        if not self.configured:  # AA-1138: a named connection this process has no role for is never called
+            raise ProviderCallError(NOT_CONFIGURED, llm_error_class=llm_errors.CREDENTIAL)
         try:
             client = await asyncio.to_thread(self._runtime)
             response = await asyncio.to_thread(client.converse, **self._request(prompt, system, max_tokens))

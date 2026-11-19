@@ -26,7 +26,7 @@ pytestmark = pytest.mark.asyncio
 CAP_KEY = "crm.ai.connection_monthly_cap_usd"
 READY = "to_regclass('crm.llm_connection_share')"
 ONE = "FROM crm.llm_connection_share WHERE connection_key"
-SPEND = "FROM crm.llm_usage_daily WHERE day >="
+SPEND = "FROM crm.llm_usage_daily u WHERE u.day >="  # own and named connection spend (AA-1138)
 REASON = "zz test: the CIS budget save reason"
 
 

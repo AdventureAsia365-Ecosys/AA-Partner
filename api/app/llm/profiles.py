@@ -5,7 +5,8 @@ A stage profile is the CRM's own control plane for one AI stage, in schema ``crm
 - ``crm.llm_stage_profile``: role, ``is_active`` (the stage kill switch), ``max_attempts`` (1..6), ``route_deadline_s``
   and ``degrade_mode`` (``manual_reply_needed``);
 - ``crm.llm_stage_route``: the route in order (position 0 = primary): the Bedrock model id, its family (the maker) and
-  the catalog prices per million tokens (both or neither), each entry switchable on its own.
+  the catalog prices per million tokens (both or neither), each entry switchable on its own; since crm-078 (AA-1138)
+  also its connection (``connection_key``, NULL = the process's own) and whether it takes a temperature.
 
 :class:`DbProfileSource` is the CRM's ``ConfigSource`` of the shared core (``app.aa_llm.ports``): one SELECT in the
 call's own transaction (platform tables, no tenant rows; ``crm_app`` may only read them). ``load_route`` returns None
@@ -28,7 +29,7 @@ DEGRADE_MANUAL = "manual_reply_needed"
 
 PROFILE_SQL = """
 SELECT p.stage, p.role, p.is_active, p.max_attempts, p.route_deadline_s, p.degrade_mode,
-       r.position, r.model, r.family, r.price_in_per_mtok, r.price_out_per_mtok
+       r.position, r.model, r.family, r.price_in_per_mtok, r.price_out_per_mtok, r.connection_key, r.sends_temperature
   FROM crm.llm_stage_profile p
   LEFT JOIN crm.llm_stage_route r ON r.stage = p.stage AND r.is_enabled
  WHERE p.stage = $1
@@ -57,13 +58,16 @@ def family_of(model_id: str | None) -> str | None:
 
 @dataclass(frozen=True)
 class RouteEntry:
-    """One step of a stage's route: a Bedrock model, its family and its catalog prices (USD per million tokens)."""
+    """One step of a stage's route: a Bedrock model, its family and its catalog prices (USD per million tokens), the
+    named connection it runs on (None = the process's own) and whether the request carries a temperature."""
 
     position: int
     model: str
     family: str | None = None
     price_in_per_mtok: Decimal | None = None
     price_out_per_mtok: Decimal | None = None
+    connection_key: str | None = None
+    sends_temperature: bool = True
 
     @property
     def catalog_prices(self) -> tuple[Decimal, Decimal] | None:
@@ -101,6 +105,8 @@ def profile_from_rows(rows: list[Any]) -> StageProfile | None:
             family=r["family"] or family_of(r["model"]),
             price_in_per_mtok=r["price_in_per_mtok"],
             price_out_per_mtok=r["price_out_per_mtok"],
+            connection_key=r.get("connection_key"),
+            sends_temperature=r.get("sends_temperature") is not False,
         )
         for r in rows
         if r["model"] is not None
