@@ -24,6 +24,18 @@ const field: React.CSSProperties = {
   boxSizing: "border-box",
 };
 
+/** AA-1129 (S283 audit row 4): who wrote and about what, before the thread is opened (the list's own fields). */
+function Summary({ c, lang, opened }: { c: Conversation; lang: Lang; opened: boolean }) {
+  if (opened || (!c.sender && !c.subject && !c.preview)) return null;
+  return (
+    <div style={{ fontSize: 13, display: "grid", gap: 2, minWidth: 0 }} data-testid={`unmatched-${c.conversation_id}-summary`}>
+      {c.sender && <span style={{ color: K.ink, fontWeight: 600, overflowWrap: "anywhere" }}>{c.sender}</span>}
+      <span style={{ color: K.ink, overflowWrap: "anywhere" }}>{c.subject || t(lang, "inbox.noSubject")}</span>
+      {c.preview && <span style={{ color: K.muted, overflowWrap: "anywhere" }}>{c.preview}</span>}
+    </div>
+  );
+}
+
 function Row({ c, lang, locale }: { c: Conversation; lang: Lang; locale: DateLocale }) {
   const router = useRouter();
   const hydrated = useHydrated();
@@ -72,14 +84,7 @@ function Row({ c, lang, locale }: { c: Conversation; lang: Lang; locale: DateLoc
           </Button>
         )}
       </div>
-      {/* AA-1129 (S283 audit row 4): who wrote and about what, before the thread is opened (the list's own fields). */}
-      {!thread && (c.sender || c.subject || c.preview) && (
-        <div style={{ fontSize: 13, display: "grid", gap: 2, minWidth: 0 }} data-testid={`unmatched-${c.conversation_id}-summary`}>
-          {c.sender && <span style={{ color: K.ink, fontWeight: 600, overflowWrap: "anywhere" }}>{c.sender}</span>}
-          <span style={{ color: K.ink, overflowWrap: "anywhere" }}>{c.subject || tr("inbox.noSubject")}</span>
-          {c.preview && <span style={{ color: K.muted, overflowWrap: "anywhere" }}>{c.preview}</span>}
-        </div>
-      )}
+      <Summary c={c} lang={lang} opened={thread !== null} />
       {notice && (
         <p role="status" style={{ margin: 0, fontSize: 13, color: notice.ok ? K.ink : K.danger }}>
           {notice.text}
