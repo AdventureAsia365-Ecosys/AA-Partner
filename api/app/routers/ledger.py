@@ -146,7 +146,7 @@ class LineChange(_Body):
 
 
 class ExtraNightsIn(_Body):
-    """AA-1144 (B11): the bounds are the crm-079 CHECKs; the service words each refusal."""
+    """AA-1144 (B11): the bounds are the crm-080 CHECKs; the service words each refusal."""
 
     position: Literal["before", "after"]
     place: str = Field(min_length=1, max_length=80)

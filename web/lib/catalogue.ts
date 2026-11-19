@@ -4,7 +4,7 @@
 // tab and the trip's Bookings tab share. unit_net and the tiers arrive only for owner and agent (the API builds them
 // for view_margin roles; the margin serializer strips `*_net` as a backstop): a missing key means "not shown".
 
-// AA-1144 (crm-079): the closed list of agency items; transfers are Adventure Asia's (lib/agencyItems.ts).
+// AA-1144 (crm-080): the closed list of agency items; transfers are Adventure Asia's (lib/agencyItems.ts).
 export const CATEGORIES = ["flight", "visa", "insurance", "fee"] as const;
 export type Category = (typeof CATEGORIES)[number];
 export const QTY_BASES = ["per_person", "per_adult", "per_booking", "per_room", "per_night", "per_person_night"] as const;

@@ -1,4 +1,4 @@
-"""Ask Adventure Asia for extra hotel nights (AA-1144, S285 decision B11; crm-079 ``crm.aa_extra_night_request``).
+"""Ask Adventure Asia for extra hotel nights (AA-1144, S285 decision B11; crm-080 ``crm.aa_extra_night_request``).
 
 A hotel is an Adventure Asia product: an agency never sells a hotel night of its own (root ADR 0019 b6 as amended).
 When a client wants nights before or after the tour, the agent asks AA from the trip ("Ask AA for extra nights"):
@@ -14,7 +14,7 @@ When a client wants nights before or after the tour, the agent asks AA from the 
   through :func:`app.tenancy.ops_tx`, one ``extra_nights_list`` audit event per agency listed): agency name, trip
   reference, place, dates and counts.
 
-The bounds below are the crm-079 CHECK constraints worded for the member (technical constants, not business
+The bounds below are the crm-080 CHECK constraints worded for the member (technical constants, not business
 thresholds): the database refuses the same values.
 """
 
@@ -36,8 +36,8 @@ from app.tenancy import OpsContext, TenantContext, ops_tx
 TABLE = "aa_extra_night_request"
 POSITIONS = ("before", "after")
 CLOSE_REASONS = ("quoted", "not_needed")
-PLACE_CHARS = 80  # technical-constant: crm-079 aa_extra_night_request_values_chk (1..80 characters)
-# technical-constant: the crm-079 CHECK bounds of each count (the same as crm.option.aa_nights and the room list).
+PLACE_CHARS = 80  # technical-constant: crm-080 aa_extra_night_request_values_chk (1..80 characters)
+# technical-constant: the crm-080 CHECK bounds of each count (the same as crm.option.aa_nights and the room list).
 COUNTS = {"nights": (1, 60), "rooms": (1, 30), "adults": (1, 60), "children": (0, 60)}
 BOARD_MAX_PER_AGENCY = 200  # technical-constant: one page of the staff list per agency
 

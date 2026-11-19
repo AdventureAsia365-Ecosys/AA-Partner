@@ -32,7 +32,7 @@ from app.proposals import rules
 from app.tenancy import TenantContext
 
 TABLE = "agency_service"
-CATEGORIES = agency_items.CATEGORIES  # AA-1144 (crm-079): flight, visa, insurance, fee; transfers are AA's
+CATEGORIES = agency_items.CATEGORIES  # AA-1144 (crm-080): flight, visa, insurance, fee; transfers are AA's
 QTY_BASES = ("per_person", "per_adult", "per_booking", "per_room", "per_night", "per_person_night")
 MAX_UNIT = Decimal("99999999.99")
 MAX_OPTION = Decimal("999999999999.99")

@@ -1255,7 +1255,7 @@ CASCADE_ERASED = {
     "campaign": {"tenant_settings"},  # AA-968 crm-073: a campaign and the suppression list go with the settings row,
     "campaign_recipient": {"campaign", "traveler"},  # a recipient with its campaign or its client (erase, trash purge)
     "campaign_suppression": {"tenant_settings"},
-    "aa_extra_night_request": {"trip"},  # AA-1144 (crm-079): a request to AA for extra nights leaves with its trip
+    "aa_extra_night_request": {"trip"},  # AA-1144 (crm-080): a request to AA for extra nights leaves with its trip
 }
 
 

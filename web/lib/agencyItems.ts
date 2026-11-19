@@ -3,7 +3,7 @@
 // its own service fee, typed by hand, never sent to AA. Hotels and extra nights, transfers and vehicles, guides,
 // tickets, meals and activities are Adventure Asia's: a lodging / activity / transport / meal / guide block of the
 // builder takes AA items only (the API answers 422 agency_item_not_allowed / invalid_category). The same lists as the
-// API (api/app/ledger/agency_items.py) and the database (crm-079). Pure: no React.
+// API (api/app/ledger/agency_items.py) and the database (crm-080). Pure: no React.
 
 import type { BlockType } from "@/lib/builder";
 
@@ -28,7 +28,7 @@ export function asksAaForNights(blockType: BlockType): boolean {
 export const EXTRA_NIGHT_POSITIONS = ["before", "after"] as const;
 export type ExtraNightPosition = (typeof EXTRA_NIGHT_POSITIONS)[number];
 
-/** The bounds of the crm-079 CHECKs (the API words the same refusals). */
+/** The bounds of the crm-080 CHECKs (the API words the same refusals). */
 export const EXTRA_NIGHT_BOUNDS = { nights: [1, 60], rooms: [1, 30], adults: [1, 60], children: [0, 60] } as const;
 export const EXTRA_NIGHT_PLACE_MAX = 80;
 

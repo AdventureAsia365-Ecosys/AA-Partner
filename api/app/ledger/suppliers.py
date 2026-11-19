@@ -27,7 +27,7 @@ from app.travellers.fields import REVEAL_REASONS
 from app.vault import Vault
 
 TABLE = "agency_supplier"
-# AA-1144 (crm-079, root ADR 0019 b6 as amended): an own supplier provides a flight, insurance, a visa or other (the
+# AA-1144 (crm-080, root ADR 0019 b6 as amended): an own supplier provides a flight, insurance, a visa or other (the
 # agency fee, a consolidator); hotels, transfers, guides, restaurants, activities and DMCs are Adventure Asia's.
 CATEGORIES = agency_items.SUPPLIER_CATEGORIES
 CONTACT_FIELDS = {"contact_name": "contact_name_enc", "contact_email": "contact_email_enc"}

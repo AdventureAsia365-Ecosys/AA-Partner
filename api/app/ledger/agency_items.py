@@ -1,4 +1,4 @@
-"""What an agency may sell of its own (AA-1144, root ADR 0019 b6 as amended; crm-079).
+"""What an agency may sell of its own (AA-1144, root ADR 0019 b6 as amended; crm-080).
 
 Business rule of 19/11/2026 (S285 decisions B5, B9, B10): every product (hotel and extra nights, transfer and
 vehicle, guide, ticket and entrance, meal and restaurant, activity, DMC) is Adventure Asia's and its suppliers'; the
@@ -12,7 +12,7 @@ never sent to AA:
 
 One place holds the list so the proposal builder, the booking lines, the supplier directory, the service catalogue
 and the AI supplier confirmation all refuse the same things with the same words. The database holds the same lists
-(crm-079 CHECKs); "other" is a supplier category only (a consolidator, the agency itself), never an item type.
+(crm-080 CHECKs); "other" is a supplier category only (a consolidator, the agency itself), never an item type.
 """
 
 from __future__ import annotations

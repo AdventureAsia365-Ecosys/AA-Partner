@@ -334,7 +334,7 @@ def _line_view(row: Any, money: dict[str, Any] | None, trip_stage: str | None = 
         "status": row["status"],
         "aa_sub_status": row["aa_sub_status"],
         "title": row["title"],
-        "category": row.get("category"),  # AA-1144: an agency line's type (NULL = AA, or made before crm-079)
+        "category": row.get("category"),  # AA-1144: an agency line's type (NULL = AA, or made before crm-080)
         "confirmation_no": row["confirmation_no"],
         "service_from": row["service_from"].isoformat() if row["service_from"] else None,
         "service_to": row["service_to"].isoformat() if row["service_to"] else None,

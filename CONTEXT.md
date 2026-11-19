@@ -408,7 +408,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-073` | `api/migrations/073_crm_campaigns.sql` | AA-968 CRM-36 campaigns (**expand**: three new tables; migration-only PR first, crm-071 / crm-072 are other lanes' of the S282 wave): `crm.campaign` (base template; name, locale, subject / text under the mail DEK, the agency's own sending mailbox `channel_account_id`, the d21 AA subject `aa_tour_ids` / `aa_content_id` / `brand_only`, `audience_tags`, `state` draft -> scheduled -> sending -> sent, held (`hold_code`) -> scheduled, cancelled (a `state` column: no `status_transition` rows), `gate_codes`, schedule times, the `daily_limit` used, plan counts; cascades from `tenant_settings`), `crm.campaign_recipient` (one client of one campaign: `send_on`, planned -> queued (message + dispatch ids, the SHA-256 of the one-click unsubscribe token, the sealed List-Unsubscribe URL) or skipped with a code; SELECT-only lookup `campaign_recipient_unsubscribe_lookup` on `app.campaign_unsubscribe_hash`; cascades from the campaign and the client), `crm.campaign_suppression` (the agency's do-not-mail list by e-mail blind index, reason unsubscribed / bounced / complained; names no client, so it outlives a client erase; cascades from `tenant_settings`); no `erase_subject` change |
 | `crm-074` | `api/migrations/074_crm_campaign_settings.sql` | AA-968 CRM-36 (**contract**: config rows; ships in the code PR like crm-068 / crm-070, the settings lint binds seed, readers and compiled defaults): `crm.campaign.mailbox_daily_limit` (400 a day, platform+tenant, 1..10000) and `crm.campaign.max_recipients` (2000, platform+tenant, 1..50000), area `campaigns`, maker-checker |
 | `crm-078` | `api/migrations/078_crm_draft_route_haiku_acc1.sql` | AA-1138 (**contract**: ALTER of `crm.llm_stage_route` + a CHECK + an UPDATE of a config row, MIG-4; readiness raised by the code PR): `crm.llm_stage_route.connection_key` (NULL = the process's own Bedrock connection; `bedrock_acc1` = acc1's invoker role) and `sends_temperature` (default true); `crm_draft_reply` position 0 = Claude Haiku 5.5 (`us.anthropic.claude-haiku-5-5`, the US inference profile: the agency terms keep CRM text in US regions and root ADR 0009 decision 10 keeps tenant stages off `global.`; 0.11 / 0.55 USD per million tokens, the AWS regional price; no temperature) on `bedrock_acc1`, Nova Lite at position 2 stays the last fallback; the notes-options and supplier-confirm stages keep Nova Lite only |
-| `crm-079` | `api/migrations/079_crm_agency_lines_closed_list.sql` | AA-1144 (**contract**, MIG-4: ALTERs, new and narrowed CHECKs, an UPDATE of existing rows; one new table): `crm.option.category` / `crm.booking_line.category` (flight / visa / insurance / fee on agency items; NULL on AA items and on agency items made before crm-079); `crm.aa_extra_night_request` (B11: an agency asks AA for hotel nights before / after the tour; open -> closed `quoted` / `not_needed`; place, dates and counts only; cascades from the trip, hold guard); counts first (RAISE NOTICE), own suppliers of a blocked category re-typed to `other`, the unreferenced ones and the live `transfer` catalogue services moved to the trash (`deleted_by` `migration:crm-079`), then `agency_supplier_category_chk` (AA row `dmc`; own: flight / insurance / visa / other) and `agency_service_category_chk` (flight / insurance / visa / fee) narrowed; no `erase_subject` change |
+| `crm-080` | `api/migrations/080_crm_agency_lines_closed_list.sql` | AA-1144 (**contract**, MIG-4: ALTERs, new and narrowed CHECKs, an UPDATE of existing rows; one new table): `crm.option.category` / `crm.booking_line.category` (flight / visa / insurance / fee on agency items; NULL on AA items and on agency items made before crm-080); `crm.aa_extra_night_request` (B11: an agency asks AA for hotel nights before / after the tour; open -> closed `quoted` / `not_needed`; place, dates and counts only; cascades from the trip, hold guard); counts first (RAISE NOTICE), own suppliers of a blocked category re-typed to `other`, the unreferenced ones and the live `transfer` catalogue services moved to the trash (`deleted_by` `migration:crm-080`), then `agency_supplier_category_chk` (AA row `dmc`; own: flight / insurance / visa / other) and `agency_service_category_chk` (flight / insurance / visa / fee) narrowed; no `erase_subject` change |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -1012,7 +1012,7 @@ Design v3 §6.3 CRM-16 (M6 non-AA, M15, R17, R18), lane §2.7 / §3.1 / §3.2; m
   vault-encrypted contact name / e-mail, revealed one field at a time with a reason (`POST .../reveal`, one `reveal`
   event); one `list_view` event per list. `default_commission_pct` is a margin key (stripped for the assistant) and
   needs `money_fields_edit` to set. A supplier that live lines name is not trashed (409 `supplier_in_use`).
-  AA-1144 (crm-079): an own supplier is a flight, insurance, visa or other supplier (other = the agency's own fee, a
+  AA-1144 (crm-080): an own supplier is a flight, insurance, visa or other supplier (other = the agency's own fee, a
   consolidator); a hotel, transport, activity, guide, restaurant or DMC supplier is 422 `invalid_category` (those are
   Adventure Asia's). Section "Agency items: the closed list (AA-1144)".
 - **Lines** (`/crm/v1/trips/{id}/lines`, `/crm/v1/lines/{id}`, the trip's Bookings tab): status planning -> confirmed
@@ -1171,13 +1171,13 @@ invoice reads), `app/ledger/lines.py` (the line's actual cost); web `components/
 
 Business rule of 19/11/2026 (S285 decisions B5, B6, B9, B10, B11, T19; root ADR 0019 b6 as amended): every product
 (hotel and extra nights, transfer and vehicle, guide, ticket and entrance, meal, activity, DMC) is Adventure Asia's
-and its suppliers'; an agency only sells it. Migration crm-079; code `app/ledger/agency_items.py` (the one list the
+and its suppliers'; an agency only sells it. Migration crm-080; code `app/ledger/agency_items.py` (the one list the
 API uses), `app/booking/extra_nights.py`; web `lib/agencyItems.ts`, `components/proposals/AgencyBlockNote.tsx`,
 `components/staff/ExtraNightsBoard.tsx`; decisions in `docs/implementation-notes/AA-1144.md`.
 
 - **The agency's own items** are a closed list, typed by hand, no external integration, never sent to AA: `flight`,
   `visa`, `insurance` (travel insurance), `fee` (the agency's service fee). `crm.option.category` and
-  `crm.booking_line.category` hold it (NULL = an AA item, or an agency item made before crm-079: read and edited as
+  `crm.booking_line.category` hold it (NULL = an AA item, or an agency item made before crm-080: read and edited as
   before). A new agency option (`POST .../blocks/{block}/options`, "From catalogue") and a new agency line
   (`POST /trips/{id}/lines`) need one: anything else (a transfer, `other`, none) is 422 `invalid_category` with the
   reason and `allowed`; `PATCH /lines/{id}` takes the same list.
@@ -1186,7 +1186,7 @@ API uses), `app/booking/extra_nights.py`; web `lib/agencyItems.ts`, `components/
   `other` (the same 422 on a type change). The web drawer shows the agency and catalogue tabs on an Other block only,
   with the item type select.
 - **Suppliers and the catalogue**: an own supplier is flight / insurance / visa / other; a service is flight / visa /
-  insurance / fee (sections above). crm-079 re-typed the older own suppliers of a blocked category to `other`, moved
+  insurance / fee (sections above). crm-080 re-typed the older own suppliers of a blocked category to `other`, moved
   the ones nothing names to the trash and the live transfer services too (never a DELETE; the counts are the file's
   NOTICE lines).
 - **Ask AA for extra nights** (B11; `GET/POST /crm/v1/trips/{id}/aa-extra-nights`, `POST
@@ -1198,8 +1198,10 @@ API uses), `app/booking/extra_nights.py`; web `lib/agencyItems.ts`, `components/
   at a time, one `extra_nights_list` audit event per agency listed). AA quotes the nights from an AA supplier hotel in
   Booking; the agent then adds the AA room from the AA drawer and closes the request ("AA quoted").
 - **Facts Entries** (B6, the Content studio's Brand > Facts): the agency writes only its prices (its markup) and its
-  sale / booking terms; "Use my own" shows only on an Adventure Asia fact of those kinds. The CIS facts API does not
-  refuse the other kinds yet (another repo; see the implementation notes).
+  sale / booking terms; "Use my own" shows only on an Adventure Asia fact of those kinds. The tenant proxy
+  (`app/api/tenant/[...path]/route.ts`, `lib/studio/facts.ts` `factWriteRefusal`) refuses a facts create of another
+  kind and an edit that sets one (422) before CIS; the CIS facts API itself and the older own facts of tour kinds are
+  a follow-up in AA-CIS-App (see the implementation notes).
 - Not in this slice (the next one, T18): an accepted proposal writing its agency items as agency lines, attachments
   and due dates on a line, the invoice group "Services provided by <agency>".
 
@@ -1215,7 +1217,7 @@ only, no plugin code); migrations crm-052 (expand) and crm-053 (contract). Code:
 - **Catalogue** (`GET/POST /services`, `GET/PATCH/DELETE /services/{id}`): every role reads it; `unit_net` and the
   tiers only for owner / agent (built only for `view_margin`, stripped by the serializer as a backstop); writes are
   `MONEY_FIELDS_EDIT` (owner / agent) and CRM52 in the database. Categories are the agency items only (AA-1144,
-  crm-079: flight, visa, insurance, fee; transfers are AA's, the older transfer services went to the trash); a service names a live own supplier (never the AA row) or none (the agency's own
+  crm-080: flight, visa, insurance, fee; transfers are AA's, the older transfer services went to the trash); a service names a live own supplier (never the AA row) or none (the agency's own
   fee). Delete is a hard delete: options added from a service are copies.
 - **Add from catalogue** (`POST /proposals/{id}/blocks/{block}/catalogue-options`, `PROPOSAL_DRAFT`, every role: the
   prices are the owner's): the quantity follows the basis against the proposal's party (its room list, else the trip

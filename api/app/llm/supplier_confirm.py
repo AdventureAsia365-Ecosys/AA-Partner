@@ -52,7 +52,7 @@ KIND = "supplier_confirmation"
 PROMPT_VERSION = "crm-supplier-confirm-1"
 MAIL_PURPOSE = "mail"
 # Root ADR 0019 b6 as amended by AA-1144: the agency's own suppliers (flights, insurance, visas, fees = other), as the
-# crm.agency_supplier categories name them (crm-079).
+# crm.agency_supplier categories name them (crm-080).
 SUPPLIER_CATEGORIES = agency_items.SUPPLIER_CATEGORIES
 STATUSES = ("confirmed", "declined", "unclear")
 ACTIONS = ("confirm", "back_to_planning")
