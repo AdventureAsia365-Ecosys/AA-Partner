@@ -79,6 +79,8 @@ DESIGN: dict[str, tuple[str, str, str]] = {
     "onboarding_manage": (Y, N, N),  # AA-962 (Fix E2): "Later" / done marks on the agency's checklist — owner
     "ai_settings": (Y, N, N),  # AA-964 (A-18 AI): AI on / off and the monthly AI budget — owner
     "addon_request": (Y, N, N),  # AA-1036 (R3): ask Adventure Asia for an add-on (relayed to CIS) — owner
+    "tripplanner_view": (Y, Y, N),  # AA-1139: the Trip planner module (link, route, leads, usage) — owner, agent
+    "tripplanner_manage": (Y, N, N),  # AA-1139: change its lead route / appearance, rotate the webhook key — owner
     "discount_approve": (Y, N, N),  # AA-1066: approve a proposal discount above the agency limit — owner
     "sales_partner_manage": (Y, N, N),  # AA-1071: sales partners, their commission terms and links — owner
     "partner_commission_approve": (Y, N, N),  # AA-1071: approve, pay or cancel a partner commission — owner

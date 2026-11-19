@@ -134,6 +134,11 @@ class Action(StrEnum):
     # CIS tenant.addons.v1 (one store of requests in CIS). The owner, like the studio, where only the workspace owner
     # asks; reading the add-ons is PLAN_VIEW (owner).
     ADDON_REQUEST = "addon_request"
+    # AA-1139: the agency app's TripPlanner module (Settings > Add-ons > Trip planner): see the planner's link, lead
+    # route, appearance, leads and usage (owner, agent: they work the planner's leads) and change the lead route, the
+    # theme and locale or rotate the webhook signing key (owner, like the other Settings that bind the agency).
+    TRIPPLANNER_VIEW = "tripplanner_view"
+    TRIPPLANNER_MANAGE = "tripplanner_manage"
     # AA-1066 (crm-048): approve or reject a proposal discount above the agency limit (or a sale below cost). The
     # owner only: an agent asks (MONEY_FIELDS_EDIT), the database guard CRM48 lets only an owner decide too.
     DISCOUNT_APPROVE = "discount_approve"
@@ -212,6 +217,8 @@ _TABLE: dict[Action, tuple[Rule, Rule, Rule]] = {
     Action.ONBOARDING_MANAGE: (A, D, D),
     Action.AI_SETTINGS: (A, D, D),
     Action.ADDON_REQUEST: (A, D, D),
+    Action.TRIPPLANNER_VIEW: (A, A, D),
+    Action.TRIPPLANNER_MANAGE: (A, D, D),
     Action.DISCOUNT_APPROVE: (A, D, D),
     Action.SALES_PARTNER_MANAGE: (A, D, D),
     Action.PARTNER_COMMISSION_APPROVE: (A, D, D),

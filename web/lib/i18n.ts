@@ -24,6 +24,7 @@ import { staffEn, staffVi } from "./i18nStaff";
 import { academyEn, academyVi } from "./i18nAcademy";
 import { supportEn, supportVi } from "./i18nSupport";
 import { addOnsEn, addOnsVi } from "./i18nAddOns";
+import { tripPlannerEn, tripPlannerVi } from "./i18nTripPlanner";
 import { pluralsEn, pluralsVi } from "./i18nPlurals";
 import { tripClosedEn, tripClosedVi } from "./i18nTripClosed";
 import { tripCodesEn, tripCodesVi } from "./i18nTripCodes";
@@ -80,6 +81,7 @@ const en = {
   ...termsEn, // AA-1033: the terms of use page, its AI section and links (lib/i18nTerms.ts)
   ...supportEn, // AA-971: AA support access and the support / emergency banner (lib/i18nSupport.ts)
   ...addOnsEn, // AA-1036 (R3): Settings > Add-ons, the CRM owner's add-on request (lib/i18nAddOns.ts)
+  ...tripPlannerEn, // AA-1139: Settings > Add-ons > Trip planner (lib/i18nTripPlanner.ts)
   ...opsReleaseEn, // AA-956: the AA ground operations panel and its log lines (lib/i18nOpsRelease.ts)
   ...offlineEn, // AA-954: the installable, offline traveller page (lib/i18nOffline.ts)
   ...commissionEn, // AA-957: A-12 Commissions, commission follow-up, the cancel dialog (lib/i18nCommission.ts)
@@ -2837,6 +2839,7 @@ const vi: Record<MessageKey, string> = {
   ...termsVi,
   ...supportVi,
   ...addOnsVi,
+  ...tripPlannerVi,
   ...opsReleaseVi,
   ...offlineVi,
   ...commissionVi,

@@ -1,7 +1,7 @@
 // web/app/(crm)/settings/page.tsx — Settings (A-18). AA-935: agency and role, language and dates (R32) with a
 // live date reading; the other sections (team, channels, payments, forms, AI, data and privacy) arrive with their
 // cards. AA-939: Team & roles (owner). AA-945: Mailbox and Saved replies. AA-964: AI assistant. AA-958: SMS and
-// WhatsApp. AA-1036 (R3): Add-ons (owner; the CRM owner's add-on request). AA-1030: AA prices (owner, agent: /me
+// WhatsApp. AA-1036 (R3): Add-ons (owner; the CRM owner's add-on request); AA-1139: its Trip planner module (owner, agent). AA-1030: AA prices (owner, agent: /me
 // permissions.aa_tariff_view; nothing shown to the assistant). AA-1066: Pricing (owner) under Payments.
 // AA-1070 crm-35: Proposal lines (the inclusion library) under Payments.
 import Link from "next/link";
@@ -11,9 +11,23 @@ import { Panel, PageTitle } from "@/components/PageTitle";
 import { K } from "@/app/_kit";
 import { AA_TARIFF_PATH, seesAaTariff } from "@/lib/aaTariff";
 import { CRM_ADD_ONS_PATH } from "@/lib/addOns";
+import { TRIP_PLANNER_PATH } from "@/lib/tripPlannerModule";
 import { INCLUSIONS_SETTINGS_PATH } from "@/lib/inclusions";
 import { crmContext } from "@/lib/crmContext";
-import { t, type MessageKey } from "@/lib/i18n";
+import { type Lang, t, type MessageKey } from "@/lib/i18n";
+import type { Role } from "@/lib/nav";
+
+/** AA-1139: the Trip planner module (owner and agents see it; the owner changes it). */
+function TripPlannerLink({ role, lang }: { role: Role; lang: Lang }) {
+  if (role !== "owner" && role !== "agent") return null;
+  return (
+    <p style={{ margin: "8px 0 0" }}>
+      <Link href={TRIP_PLANNER_PATH} style={{ fontSize: 13.5 }} data-testid="settings-trip-planner-link">
+        {t(lang, "tp.manage")}
+      </Link>
+    </p>
+  );
+}
 
 export default async function SettingsPage() {
   const ctx = await crmContext();
@@ -141,6 +155,7 @@ export default async function SettingsPage() {
         ) : (
           <p style={{ margin: 0, fontSize: 13 }}>{t(lang, "addons.ownerOnly")}</p>
         )}
+        <TripPlannerLink role={ctx.role} lang={lang} />
       </Panel>
       <Panel title={t(lang, "ai.title")} testId="settings-ai">
         <Link href="/settings/ai" style={{ fontSize: 13.5 }} data-testid="settings-ai-link">

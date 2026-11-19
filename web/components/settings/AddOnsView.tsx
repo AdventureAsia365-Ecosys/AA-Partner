@@ -5,6 +5,7 @@
 // owner's only (the API answers the others 403 before CIS is asked). Data: GET /crm/v1/add-ons (the server page); the
 // request: POST /bff/add-on-requests (lib/bff.ts), relayed by the CRM API to CIS tenant.addons.v1. Kit: Section, Badge,
 // Button, Field, Textarea.
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, Field, K, Section, Textarea, useHydrated } from "@/app/_kit";
@@ -12,6 +13,7 @@ import { type AddOn, type AddOnList, decisionDate, decisionKey, orderAddOns, ref
 import { bffSend } from "@/lib/bffClient";
 import { type DateLocale, formatDate } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
+import { TRIP_PLANNER_PATH } from "@/lib/tripPlannerModule";
 
 const small = { margin: 0, fontSize: 12.5, color: K.muted, lineHeight: 1.55 } as const;
 
@@ -19,6 +21,19 @@ function stateBadge(lang: Lang, state: AddOn["state"]) {
   if (state === "active") return <Badge tone="success" dot>{t(lang, "addons.state.active")}</Badge>;
   if (state === "requested") return <Badge tone="warning" dot>{t(lang, "addons.state.requested")}</Badge>;
   return <Badge tone="neutral">{t(lang, "addons.state.available")}</Badge>;
+}
+
+/** An add-on that is on: its note, and for the Trip planner the link to its module (AA-1139). */
+function ActiveNote({ product, lang }: { product: AddOn["product"]; lang: Lang }) {
+  if (product === "crm") return <p style={small}>{t(lang, "addons.activeNote")}</p>;
+  return (
+    <>
+      <p style={small}>{t(lang, "addons.plannerActiveNote")}</p>
+      <Link href={TRIP_PLANNER_PATH} data-testid="addon-manage-tripplanner" style={{ fontSize: 13 }}>
+        {t(lang, "tp.manage")} →
+      </Link>
+    </>
+  );
 }
 
 function AddOnCard({ addOn, inService, lang, locale }: { addOn: AddOn; inService: boolean; lang: Lang; locale: DateLocale }) {
@@ -57,9 +72,7 @@ function AddOnCard({ addOn, inService, lang, locale }: { addOn: AddOn; inService
       }
     >
       <div style={{ display: "grid", gap: 12 }} data-testid={`addon-${addOn.product}`}>
-        {addOn.state === "active" && (
-          <p style={small}>{tr(addOn.product === "crm" ? "addons.activeNote" : "addons.plannerActiveNote")}</p>
-        )}
+        {addOn.state === "active" && <ActiveNote product={addOn.product} lang={lang} />}
         {addOn.state === "requested" && addOn.request && (
           <>
             <p style={small}>{tr("addons.requestedNote", { date: date(addOn.request.requested_at) })}</p>

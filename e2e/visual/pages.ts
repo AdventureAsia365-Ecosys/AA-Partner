@@ -75,6 +75,7 @@ export const PAGES: VisualPage[] = [
   crm("settings", "/settings"),
   crm("settings-access-log", "/settings/access-log"),
   crm("settings-add-ons", "/settings/add-ons"),
+  crm("settings-trip-planner", "/settings/add-ons/trip-planner"), // AA-1139
   crm("settings-agreements", "/settings/agreements"),
   crm("settings-ai", "/settings/ai"),
   crm("settings-travel", "/settings/travel"), // AA-1070

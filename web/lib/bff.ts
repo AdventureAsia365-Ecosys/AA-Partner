@@ -97,6 +97,11 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   // AA-1036 (R3): Settings > Add-ons, the owner's add-on request relayed by the API to CIS tenant.addons.v1.
   { method: "GET", pattern: /^add-ons$/, tenant: true, card: "AA-1036" },
   { method: "POST", pattern: /^add-on-requests$/, tenant: true, card: "AA-1036" },
+  // AA-1139: Settings > Add-ons > Trip planner (CIS site settings and TripPlanner leads, usage, key; roles: the API's).
+  { method: "GET", pattern: /^trip-planner$/, tenant: true, card: "AA-1139" },
+  { method: "GET", pattern: /^trip-planner\/leads$/, tenant: true, card: "AA-1139" },
+  { method: "PUT", pattern: /^trip-planner\/(lead-route|appearance)$/, tenant: true, card: "AA-1139" },
+  { method: "POST", pattern: /^trip-planner\/webhook-key$/, tenant: true, card: "AA-1139" },
   { method: "GET", pattern: /^recovery$/, tenant: true, card: "AA-939" },
   { method: "POST", pattern: new RegExp(`^recovery/${UUID}/cancel$`), tenant: true, card: "AA-939" },
   { method: "POST", pattern: /^invitations\/accept$/, tenant: false, card: "AA-939" },
