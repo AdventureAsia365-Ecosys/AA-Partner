@@ -1,6 +1,6 @@
 """AA-1144: the closed list of agency items (app.ledger.agency_items) and the B11 request to AA for extra nights
 (app.booking.extra_nights), without a database (the integration tests hold the SQL: test_aa1144_agency_items_api.py,
-test_crm079_schema.py)."""
+test_crm080_schema.py)."""
 
 from __future__ import annotations
 
