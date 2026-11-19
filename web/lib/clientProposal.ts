@@ -26,6 +26,8 @@ export type HoldStatus = "none" | "missing" | "active" | "expired" | "stale";
 export interface ClientOption {
   option_id: string;
   title: string;
+  /** AA-1144 (D9): the agency's one line under the item (null = none). */
+  note?: string | null;
   is_default: boolean;
   chosen: boolean;
   availability: "instant" | "on_request" | "sold_out" | "agency";

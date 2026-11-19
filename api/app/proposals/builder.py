@@ -57,7 +57,8 @@ from app.intake import completeness, stage2
 from app.ledger import agency_items
 from app.margin import sees_margin
 from app.payments import schedule_plan
-from app.proposals import aa_days, discount, inclusions, prep_packs, pricing, retail, rules
+from app.proposals import aa_days, discount, inclusions, option_fields, prep_packs, pricing, retail, rules
+from app.proposals.option_fields import rules_json as _rules_json
 from app.proposals.service import (
     ACCEPTED_EXISTS_SQL,
     DRAFTABLE_STAGES,
@@ -124,7 +125,7 @@ SELECT o.option_id, o.option_block_id, o.sort_order, o.source, o.title, o.tier, 
        o.net_amount, o.pay_on_arrival, o.choose_later_allowed, o.availability, o.availability_checked_at,
        o.aa_tour_source_id, o.aa_component_id, o.aa_component_kind, o.aa_departure_id, o.aa_nights, o.aa_quote_id,
        o.aa_quote_valid_until, o.aa_from_price, o.below_from_price, o.source_option_id, o.price_rules, o.category,
-       c.served_state AS aa_served_state
+       o.display_note, c.served_state AS aa_served_state
   FROM crm.option o
   LEFT JOIN crm.aa_catalog_tour c ON c.source_system = 'cis' AND c.source_id = o.aa_tour_source_id
  WHERE o.proposal_id = $1 ORDER BY o.sort_order, o.created_at
@@ -204,8 +205,8 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $
 """
 UPDATE_OPTION_SQL = """
 UPDATE crm.option SET title = $2, tier = $3, agency_supplier_id = $4, sell_amount = $5, net_amount = $6,
-       pay_on_arrival = $7, choose_later_allowed = $8, below_from_price = $9, price_rules = $10::jsonb
- WHERE option_id = $1
+       pay_on_arrival = $7, choose_later_allowed = $8, below_from_price = $9, price_rules = $10::jsonb,
+       display_note = $11 WHERE option_id = $1
 """
 # AA-1066: an option priced from its per-traveller rows (sell = their sum) or from the suggestion with the rules used.
 OPTION_PRICE_SQL = """
@@ -480,6 +481,7 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
             "title": o["title"],
             "tier": o["tier"],
             "category": o.get("category"),  # AA-1144: flight | visa | insurance | fee (agency items; NULL = AA / older)
+            "display_note": o.get("display_note"),  # AA-1144 (D9, crm-081): the agency's one line under the item
             "agency_supplier_id": str(o["agency_supplier_id"]) if o["agency_supplier_id"] else None,
             "sell_amount": _amount(o["sell_amount"]),
             "sell_delta": _amount(Decimal(o["sell_amount"]) - Decimal(default["sell_amount"])) if default else None,
@@ -933,6 +935,7 @@ async def _copy(
             o["aa_departure_id"], o["aa_quote_id"], o["aa_quote_valid_until"], o["aa_from_price"],
             o["below_from_price"], o["option_id"], o["aa_nights"], _rules_json(o.get("price_rules")), o.get("category"),
         )  # fmt: skip
+        await option_fields.copy_note(ctx, option_id, o)  # AA-1144 (D9): the next version keeps the note
         # AA-1066: the per-traveller rows go with their option.
         await pricing.replace(ctx, proposal_id, option_id, s["prices"].get(str(o["option_id"]), []))
     if s["discount_pct"]:
@@ -1440,6 +1443,7 @@ async def update_option(
     s = await _structure(ctx, proposal_id)
     o = _option(s, option_id)
     aa = o["source"] == "aa"
+    option_fields.check_title(o, changes)  # AA-1144 (D9): an AA item keeps its name (403 aa_title_read_only)
     if aa and "net_amount" in changes:
         raise Forbidden("aa_net_from_quote", "an AA item's net price comes from the live quote (Refresh AA prices)")
     if aa and changes.get("choose_later_allowed"):
@@ -1473,17 +1477,11 @@ async def update_option(
         _tier_in(changes["tier"]) if "tier" in changes else o["tier"], supplier, sell, net,
         _flag(changes, "pay_on_arrival", o), _flag(changes, "choose_later_allowed", o),
         _below_from(o, Decimal(sell), _party(row)) if aa else None, _rules_json(applied),
+        option_fields.note_after(changes, o),
     )  # fmt: skip
     if "tier" in changes:
         await _settle_default(ctx, proposal_id, o["option_block_id"], await _tier(ctx, vault, row))
     return await _done(ctx, vault, proposal_id, "option_edit")
-
-
-def _rules_json(value: Any) -> str | None:
-    """``option.price_rules`` for a write: the rules used (a list), as stored (JSON text), or None."""
-    if value is None:
-        return None
-    return value if isinstance(value, str) else json.dumps(value)
 
 
 async def set_option_prices(

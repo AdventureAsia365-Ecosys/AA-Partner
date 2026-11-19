@@ -174,6 +174,12 @@ export function ClientInclusionsContent({ data, lang, t }: { data: ClientInclusi
   );
 }
 
+/** AA-1144 (D9): the agency's one line under an item (nothing when it has none). */
+function OptionNote({ note }: { note?: string | null }) {
+  if (!note) return null;
+  return <span data-testid="client-option-note" style={{ fontSize: 13, color: K.body, overflowWrap: "anywhere" }}>{note}</span>;
+}
+
 export function ClientBuilderProposal({ initial, dict, locale }: { initial: ClientBuilderPage; dict: Partial<Record<MessageKey, string>>; locale: DateLocale }) {
   const t = (k: string) => dict[k as MessageKey] ?? k;
   const [page, setPage] = useState<ClientBuilderPage>(initial);
@@ -314,6 +320,8 @@ export function ClientBuilderProposal({ initial, dict, locale }: { initial: Clie
                       <strong style={{ fontSize: 14.5, color: K.ink, overflowWrap: "anywhere", minWidth: 0 }}>{o.title}</strong>
                       {delta !== null && <span data-testid="client-delta" style={{ fontSize: 13.5, color: K.body, whiteSpace: "nowrap" }}>{delta === "" ? t("client.included") : fmt(t("client.deltaPp"), { delta })}</span>}
                     </div>
+                    {/* AA-1144 (D9): the agency's one line under the item */}
+                    <OptionNote note={o.note} />
                     <span style={{ fontSize: 12.5, color: K.muted }}>
                       {t(`client.confirm.${o.confirm_class}`)}
                       {o.availability === "on_request" ? ` · ${t("client.onRequest")}` : ""}

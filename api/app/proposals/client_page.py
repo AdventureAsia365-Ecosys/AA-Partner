@@ -211,6 +211,7 @@ async def view(ctx: AnyContext, vault: Any, row: Any, s: dict[str, Any], pick_ro
         item: dict[str, Any] = {
             "option_id": oid,
             "title": o["title"],
+            "note": o.get("display_note"),  # AA-1144 (D9): the agency's line under the item (crm-081)
             "is_default": defaults.get(bid) == oid,
             "chosen": choice.get(bid) == oid,
             "availability": "agency" if o["source"] == "agency" else o["availability"],

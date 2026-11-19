@@ -1208,11 +1208,19 @@ API uses), `app/booking/extra_nights.py`; web `lib/agencyItems.ts`, `components/
   on the staff console's Ops page (`GET /crm/staff/v1/aa-extra-nights`, group `crm-ops`, read with `ops_tx` one agency
   at a time, one `extra_nights_list` audit event per agency listed). AA quotes the nights from an AA supplier hotel in
   Booking; the agent then adds the AA room from the AA drawer and closes the request ("AA quoted").
-- **Facts Entries** (B6, the Content studio's Brand > Facts): the agency writes only its prices (its markup) and its
-  sale / booking terms; "Use my own" shows only on an Adventure Asia fact of those kinds. The tenant proxy
+- **Facts Entries** (B6, D7, the Content studio's Brand > Facts): the agency writes only its sale / booking terms
+  (`booking_terms`); prices, seasons, visas, transfer times and other tour facts are Adventure Asia's (the agency's
+  markup is a CRM price rule). "Use my own" shows only on an Adventure Asia fact of that kind. The tenant proxy
   (`app/api/tenant/[...path]/route.ts`, `lib/studio/facts.ts` `factWriteRefusal`) refuses a facts create of another
-  kind and an edit that sets one (422) before CIS; the CIS facts API itself and the older own facts of tour kinds are
-  a follow-up in AA-CIS-App (see the implementation notes).
+  kind and an edit that sets one (422) before CIS, and CIS refuses the same itself; an older own fact of another kind
+  is read only (CIS `read_only`, `factReadOnly`: shown, deletable, never edited) and no CIS writer reads it.
+- **AA item names in a quote** (D9, crm-081; `app/proposals/option_fields.py`): an Adventure Asia item keeps the name
+  AA books (`PATCH /crm/v1/proposals/{id}/options/{option}` with another `title` is 403 `aa_title_read_only`; the same
+  name, spacing aside, passes); every item may carry one display note line (`display_note`, 1..200 characters, "" or
+  null removes it), shown under the name in the builder (`components/proposals/OptionTitle.tsx`, "Add note") and on
+  the client page (`note`), and carried into the next version of the quote.
+- **The agency's tour copy** (D8, Content studio > Tours): CIS refuses an edit that changes a tour fact (422
+  `fact_locked`, CIS `services/content_generation/t2_fact_lock.py`); the studio shows the `factLocked` sentence.
 - Not in this slice (the next one, T18): an accepted proposal writing its agency items as agency lines, attachments
   and due dates on a line, the invoice group "Services provided by <agency>".
 

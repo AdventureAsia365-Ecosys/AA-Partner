@@ -12,11 +12,12 @@ import { FACTS_LIB_MESSAGES } from "./lib.messages";
 export const FACT_KINDS = ["price", "season", "visa_entry", "transfer_time", "booking_terms", "other"] as const;
 export type FactKind = (typeof FACT_KINDS)[number];
 
-// AA-1144 (S285 decision B6): an agency's own facts are its markup (price) and its sale terms only; tour facts
-// (seasons, visas and entry, transfer times, anything else) are Adventure Asia's. The form offers these kinds, and
-// "Use my own" only on an Adventure Asia fact of these kinds. An older own fact of another kind still shows (and can
-// be deleted); the CIS facts API itself is a follow-up (another repo).
-export const AGENCY_FACT_KINDS = ["price", "booking_terms"] as const satisfies readonly FactKind[];
+// AA-1144 (S285 decisions B6, D7): an agency's own facts are its sale and booking terms only; prices, seasons, visas
+// and entry, transfer times and anything else about a tour are Adventure Asia's (the agency's markup is a CRM price
+// rule). The form offers this kind, and "Use my own" only on an Adventure Asia fact of it. An older own fact of another
+// kind still shows, read only (CIS marks it `read_only` and refuses its edit), and can be deleted. CIS
+// (services/acp_shared/facts_store.AGENCY_FACT_KINDS) holds the same list and refuses the rest itself.
+export const AGENCY_FACT_KINDS = ["booking_terms"] as const satisfies readonly FactKind[];
 
 /** Whether the agency may write a fact of this kind (a new one, or its own version of an Adventure Asia fact). */
 export function agencyMayWrite(kind: unknown): boolean {
@@ -30,8 +31,8 @@ export interface FactWriteRefusal {
 }
 
 export const FACT_KIND_REFUSAL =
-  "An agency's own facts are its price and its booking terms only. Seasons, visas and entry, transfer times and " +
-  "other tour facts come from Adventure Asia.";
+  "An agency's own facts are its booking terms only. Prices, seasons, visas and entry, transfer times and other " +
+  "tour facts come from Adventure Asia.";
 
 const NOT_JSON: FactWriteRefusal = { status: 400, detail: "A fact is sent as JSON." };
 
@@ -56,10 +57,11 @@ function factJsonObject(contentType: string, body: ArrayBuffer | string | undefi
 }
 
 /**
- * AA-1144 (B6) in the tenant proxy (app/api/tenant/[...path]/route.ts): the CIS facts API takes every kind, so the
- * proxy refuses a new own fact (POST v1/facts) whose kind is not the agency's (a missing kind would be "other" in
- * CIS), and an edit (PATCH v1/facts/{id}) that sets such a kind. An edit that leaves the kind alone (an older fact of
- * another kind) and a delete pass. A body the proxy cannot read is refused too: what passes is what the check saw.
+ * AA-1144 (B6, D7) in the tenant proxy (app/api/tenant/[...path]/route.ts), a first gate before CIS refuses the same
+ * itself: a new own fact (POST v1/facts) whose kind is not the agency's (a missing kind would be "other" in CIS), and
+ * an edit (PATCH v1/facts/{id}) that sets such a kind. An edit that leaves the kind alone passes here (the proxy does
+ * not know the stored kind: CIS refuses the edit of an older fact of another kind) and a delete passes. A body the
+ * proxy cannot read is refused too: what passes is what the check saw.
  */
 export function factWriteRefusal(
   method: string, segments: readonly string[], contentType: string, body: ArrayBuffer | string | undefined,
@@ -72,7 +74,7 @@ export function factWriteRefusal(
   return setsKind && !agencyMayWrite(fields.kind) ? { status: 422, detail: FACT_KIND_REFUSAL } : null;
 }
 
-/** The kinds the form offers: the agency's two, plus the fact's own kind when an older fact of another kind is edited. */
+/** The kinds the form offers: the agency's, plus the fact's own kind when it shows an older fact of another kind. */
 export function formKinds(current: FactKind): readonly FactKind[] {
   return agencyMayWrite(current) ? AGENCY_FACT_KINDS : [...AGENCY_FACT_KINDS, current];
 }
@@ -114,7 +116,14 @@ export interface TenantFact {
   created_at: string | null;
   updated_at: string | null;
   expired: boolean;
+  /** AA-1144 (D7): an older own fact of a kind that is now Adventure Asia's (listed, deletable, never edited). */
+  read_only?: boolean;
   overridden_by?: string | null;
+}
+
+/** Whether an own fact is read only (CIS says so, or its kind is no longer the agency's). */
+export function factReadOnly(f: Pick<TenantFact, "kind" | "read_only">): boolean {
+  return f.read_only === true || !agencyMayWrite(f.kind);
 }
 
 export interface TenantFactList {
@@ -138,7 +147,7 @@ export interface FactForm {
 }
 
 export const EMPTY_FORM: FactForm = {
-  kind: "price", title: "", body: "", provenance: "", country: "", stated_on: "", valid_until: "",
+  kind: "booking_terms", title: "", body: "", provenance: "", country: "", stated_on: "", valid_until: "",
 };
 
 export function formOf(f: TenantFact): FactForm {

@@ -22,7 +22,7 @@ import { FACTS_MESSAGES } from "./brand.messages";
 
 type FactsT = Translator<typeof FACTS_MESSAGES.en>;
 import {
-  EMPTY_FORM, FACTS_API, agencyMayWrite, formKinds, MAX_BODY, MAX_COUNTRY, MAX_SOURCE, MAX_TITLE, kindLabel, problemText,
+  EMPTY_FORM, FACTS_API, agencyMayWrite, factReadOnly, formKinds, MAX_BODY, MAX_COUNTRY, MAX_SOURCE, MAX_TITLE, kindLabel, problemText,
   changedFields, createBody, factCall, formOf, formProblem, overrideForm, ownOnSubject,
   type FactForm, type FactKind, type TenantFact, type TenantFactList,
 } from "@/lib/studio/facts";
@@ -123,7 +123,7 @@ export function BrandFacts() {
             </Button>
           );
         }
-        // AA-1144 (B6): only a price or sale terms of the agency's own; tour facts stay Adventure Asia's.
+        // AA-1144 (B6, D7): only the agency's own booking terms; prices and tour facts stay Adventure Asia's.
         if (!agencyMayWrite(f.kind)) return null;
         return <Button size="sm" variant="secondary" onClick={() => setCreating(overrideForm(f))}>{t("useMyOwn")}</Button>;
       },
@@ -305,6 +305,27 @@ function CreateFact({ initial, own, onClose, onCreated }: {
   );
 }
 
+/** The drawer's buttons: Delete, Cancel and Save (no Save on a read-only fact: canSave null). */
+function EditFooter({ t, busy, canSave, onDelete, onCancel, onSave }: {
+  t: FactsT; busy: boolean; canSave: boolean | null; onDelete: () => void; onCancel: () => void; onSave: () => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: 8, justifyContent: "space-between", width: "100%", flexWrap: "wrap" }}>
+      <Button variant="danger" onClick={onDelete} disabled={busy}>
+        <Trash2 size={13} aria-hidden /> {t("delete")}
+      </Button>
+      <span style={{ display: "inline-flex", gap: 8 }}>
+        <Button variant="ghost" onClick={onCancel} disabled={busy}>{t("cancel")}</Button>
+        {canSave !== null && (
+          <Button variant="primary" onClick={onSave} disabled={busy || !canSave}>
+            {busy ? t("saving") : t("save")}
+          </Button>
+        )}
+      </span>
+    </div>
+  );
+}
+
 function EditFact({ fact, own, onClose, onChanged }: {
   fact: TenantFact; own: TenantFact[]; onClose: () => void; onChanged: (next: TenantFact | null) => void;
 }) {
@@ -316,7 +337,8 @@ function EditFact({ fact, own, onClose, onChanged }: {
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const changes = changedFields(fact, form);
-  const dirty = Object.keys(changes).length > 0;
+  const locked = factReadOnly(fact); // AA-1144 (D7): an older fact of another kind: delete only
+  const dirty = !locked && Object.keys(changes).length > 0;
   const problem = formProblem(form);
   const duplicate = ownOnSubject(own, form, fact.fact_id);
 
@@ -351,24 +373,16 @@ function EditFact({ fact, own, onClose, onChanged }: {
   return (
     <>
       <Drawer open onClose={close} title={t("yourFact")} width={560}
-        footer={
-          <div style={{ display: "flex", gap: 8, justifyContent: "space-between", width: "100%", flexWrap: "wrap" }}>
-            <Button variant="danger" onClick={() => setConfirmDelete(true)} disabled={busy}>
-              <Trash2 size={13} aria-hidden /> {t("delete")}
-            </Button>
-            <span style={{ display: "inline-flex", gap: 8 }}>
-              <Button variant="ghost" onClick={close} disabled={busy}>{t("cancel")}</Button>
-              <Button variant="primary" onClick={() => void save()} disabled={busy || !dirty || !!problem}>
-                {busy ? t("saving") : t("save")}
-              </Button>
-            </span>
-          </div>
-        }>
+        footer={<EditFooter t={t} busy={busy} canSave={locked ? null : dirty && !problem} onDelete={() => setConfirmDelete(true)}
+          onCancel={close} onSave={() => void save()} />}>
         <div data-testid="brand-fact-drawer" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {fact.expired && (
             <div style={noteStyle}><Badge tone="warning">{t("expired")}</Badge> {t("expiredNote")}</div>
           )}
-          <FactFields form={form} setForm={setForm} disabled={busy} idPrefix="brand-fact-edit" />
+          {locked && (
+            <div style={noteStyle} data-testid="brand-fact-read-only"><Badge tone="neutral">{t("readOnly")}</Badge> {t("readOnlyNote")}</div>
+          )}
+          <FactFields form={form} setForm={setForm} disabled={busy || locked} idPrefix="brand-fact-edit" />
           {duplicate && (
             <div style={noteStyle}>{t("duplicateEdit", duplicate.title)}</div>
           )}

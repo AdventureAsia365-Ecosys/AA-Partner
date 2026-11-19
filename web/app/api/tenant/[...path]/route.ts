@@ -17,8 +17,8 @@
 //     renews an exchanged (partner) studio token that is about to expire (lib/studio/auth-server.ts requireStudio).
 //   - AA-1036 (R3 slice 1, root ADR 0019 d6): moved into the one agency app; CIS is the app's CIS_API_URL, the write
 //     guard is the app's own (lib/writeGuard.ts, the request's public origin).
-//   - AA-1144 (B6): a facts write of a kind that is not the agency's (price, booking terms) is refused here, before
-//     CIS (lib/studio/facts.ts factWriteRefusal); CIS's own check is a follow-up in AA-CIS-App.
+//   - AA-1144 (B6, D7): a facts write of a kind that is not the agency's (booking terms) is refused here, before
+//     CIS (lib/studio/facts.ts factWriteRefusal); CIS refuses it too (and the edit of an older fact of another kind).
 import { NextRequest, NextResponse } from "next/server";
 import { requestConfig } from "@/lib/config";
 import { requireStudio, withRenewed } from "@/lib/studio/auth-server";
