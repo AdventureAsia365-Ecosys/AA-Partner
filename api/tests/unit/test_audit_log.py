@@ -149,10 +149,15 @@ async def test_the_download_is_csv_or_json_lines_and_audited() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("stored", "expected"),
-    [("Asia/Bangkok", "Asia/Bangkok"), (None, "Asia/Ho_Chi_Minh"), ("", "Asia/Ho_Chi_Minh"), ("Not/AZone", "Asia/Ho_Chi_Minh")],
+    [
+        ("Asia/Bangkok", "Asia/Bangkok"),
+        (None, "Asia/Ho_Chi_Minh"),
+        ("", "Asia/Ho_Chi_Minh"),
+        ("Not/AZone", "Asia/Ho_Chi_Minh"),
+    ],
 )
 async def test_the_page_carries_the_agency_timezone(stored: str | None, expected: str) -> None:
-    """AA-1129 (S283 row 10): the web prints each line's time in this zone, so the server render and the browser match."""
+    """AA-1129 (S283 row 10): the web prints each line's time in this zone (server render = browser render)."""
     conn = ScriptedConn([("FROM crm.audit_event", [_row(1)]), ("FROM crm.tenant_settings", stored)])
     page = await audit_log.list_events(tenant_ctx(conn), audit_log.AuditFilter(), cursor=None, limit=5, now=NOW)
     assert page["timezone"] == expected
