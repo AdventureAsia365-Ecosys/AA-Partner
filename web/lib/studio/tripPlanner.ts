@@ -35,17 +35,18 @@ export function studioMay(role: string | null | undefined, action: PlannerAction
   return role === "owner";
 }
 
-/** The refusal code of a CIS answer: X-Error-Code first, then the body's detail (a string, or {detail} of a refusal);
- * the tenant role middleware's studio_role_forbidden is the module's role_forbidden. */
+/** The code a CIS body carries: its detail (a string, or {detail} of a structured refusal), else "". */
+function bodyCode(body: unknown): string {
+  const detail = body && typeof body === "object" ? (body as { detail?: unknown }).detail : undefined;
+  if (typeof detail === "string") return detail;
+  const inner = detail && typeof detail === "object" ? (detail as { detail?: unknown }).detail : undefined;
+  return typeof inner === "string" ? inner : "";
+}
+
+/** The refusal code of a CIS answer: X-Error-Code first, then the body's detail; the tenant role middleware's
+ * studio_role_forbidden is the module's role_forbidden. */
 export function cisDetail(headerCode: string | null, body: unknown): string {
-  let code = headerCode ?? "";
-  if (!code && body && typeof body === "object") {
-    const detail = (body as { detail?: unknown }).detail;
-    if (typeof detail === "string") code = detail;
-    else if (detail && typeof detail === "object" && typeof (detail as { detail?: unknown }).detail === "string") {
-      code = (detail as { detail: string }).detail;
-    }
-  }
+  const code = headerCode || bodyCode(body);
   if (code === "studio_role_forbidden") return "role_forbidden";
   return /^[a-z][a-z0-9_]{0,63}$/.test(code) ? code : "error";
 }

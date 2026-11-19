@@ -75,8 +75,9 @@ describe("the CRM API routes of the studio page", () => {
 
   it("the handler checks the role before any upstream and sends the studio tenant, not the request's", () => {
     const src = readFileSync(path.join(__dirname, "..", "app", "api", "studio", "trip-planner", "[[...path]]", "route.ts"), "utf8");
-    expect(src.indexOf("studioMay(")).toBeGreaterThan(src.indexOf("requireStudio(req)"));
-    expect(src.indexOf("studioMay(")).toBeLessThan(src.indexOf("await cis("));
+    const handler = src.slice(src.indexOf("async function handler("));
+    expect(handler.indexOf("studioMay(")).toBeGreaterThan(handler.indexOf("requireStudio(req)"));
+    expect(handler).toContain("studioMay(studioClaims(auth.token).csr, action) ? await run(req, auth, action)");
     expect(src).toContain("tid: auth.tenantId");
     expect(src).toContain("refuseForeignWrite(");
     expect(src).not.toMatch(/console\.(log|info)/);

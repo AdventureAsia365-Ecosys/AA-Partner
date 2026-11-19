@@ -11,7 +11,7 @@ import { ApiError, apiGet, apiSend, ErrorState, PageHeader, SkeletonBar, sans, u
 import { useStudioRole } from "@/app/_kit/local/studio/useShellData";
 import { TripPlannerModuleView, type PlannerSend } from "@/components/settings/TripPlannerModuleView";
 import { ADD_ONS_PATH } from "@/lib/apps";
-import { t } from "@/lib/i18n";
+import { type Lang, t } from "@/lib/i18n";
 import { STUDIO_TRIP_PLANNER_API, studioPlannerUrl } from "@/lib/studio/tripPlanner";
 import { loadErrorKey, type PlannerLeadList, type PlannerPage } from "@/lib/tripPlannerModule";
 
@@ -31,46 +31,55 @@ const studioSend: PlannerSend = async <T,>(method: "PUT" | "POST", path: string,
   }
 };
 
-export default function StudioTripPlannerPage() {
-  const lang = useLang();
-  const role = useStudioRole();
-  const qc = useQueryClient();
-  const canSee = role === "owner" || role === "editor";
+function usePlanner(canSee: boolean) {
   const page = useQuery({
     queryKey: PAGE_KEY,
     queryFn: () => apiGet<PlannerPage>(STUDIO_TRIP_PLANNER_API),
     enabled: canSee,
     retry: false,
   });
-  const active = page.data?.module.active === true;
   const leads = useQuery({
     queryKey: LEADS_KEY,
     queryFn: () => apiGet<PlannerLeadList>(`${STUDIO_TRIP_PLANNER_API}/leads`),
-    enabled: canSee && active,
+    enabled: canSee && page.data?.module.active === true,
     retry: false,
   });
-  const err = page.error ? failure(page.error) : null;
+  return { page, leads };
+}
+
+function Body({ role, lang }: { role: string | null; lang: Lang }) {
+  const qc = useQueryClient();
+  const canSee = role === "owner" || role === "editor";
+  const { page, leads } = usePlanner(canSee);
+  if (role === null || (canSee && page.isLoading)) return <SkeletonBar h={160} r={12} />;
+  if (!canSee) return <p data-testid="tp-no-access" style={{ margin: 0, fontSize: 13 }}>{t(lang, "tp.err.noAccess")}</p>;
+  if (page.error) {
+    const err = failure(page.error);
+    return <ErrorState message={t(lang, loadErrorKey(err.status, err.detail))} onRetry={() => void page.refetch()} />;
+  }
+  if (!page.data) return null;
+  return (
+    <TripPlannerModuleView
+      page={page.data}
+      leads={leads.data ?? null}
+      owner={role === "owner"}
+      lang={lang}
+      locale={lang === "vi" ? "vi-VN" : "en-GB"}
+      send={studioSend}
+      onRefresh={() => void qc.invalidateQueries({ queryKey: PAGE_KEY })}
+    />
+  );
+}
+
+export default function StudioTripPlannerPage() {
+  const lang = useLang();
+  const role = useStudioRole();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12, fontFamily: sans, maxWidth: 960 }}
          data-testid="studio-trip-planner">
       <PageHeader title={t(lang, "tp.title")} description={t(lang, "tp.subtitle")}
                   breadcrumbs={[{ label: t(lang, "addons.title"), href: ADD_ONS_PATH }, { label: t(lang, "tp.title") }]} />
-      {role !== null && !canSee && (
-        <p data-testid="tp-no-access" style={{ margin: 0, fontSize: 13 }}>{t(lang, "tp.err.noAccess")}</p>
-      )}
-      {(role === null || (canSee && page.isLoading)) && <SkeletonBar h={160} r={12} />}
-      {err && <ErrorState message={t(lang, loadErrorKey(err.status, err.detail))} onRetry={() => void page.refetch()} />}
-      {page.data && (
-        <TripPlannerModuleView
-          page={page.data}
-          leads={leads.data ?? null}
-          owner={role === "owner"}
-          lang={lang}
-          locale={lang === "vi" ? "vi-VN" : "en-GB"}
-          send={studioSend}
-          onRefresh={() => void qc.invalidateQueries({ queryKey: PAGE_KEY })}
-        />
-      )}
+      <Body role={role} lang={lang} />
     </div>
   );
 }

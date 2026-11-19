@@ -62,41 +62,60 @@ async function readBody(req: NextRequest): Promise<Record<string, unknown> | nul
   }
 }
 
+type Studio = Extract<Awaited<ReturnType<typeof requireStudio>>, { ok: true }>;
+
+/** The CRM API call of the studio page: the person's own partner token, the studio's tenant (never the request's). */
+function crmFor(req: NextRequest, auth: Studio) {
+  const session = readSession(auth.cfg, req.cookies);
+  return <T,>(method: "GET" | "POST", sub: string) =>
+    session && accessValid(session)
+      ? crmCall<T>(auth.cfg, { ...session, tid: auth.tenantId }, method, sub)
+      : Promise.resolve({ ok: false as const, status: 401, detail: "session_expired" });
+}
+
+/** GET "": CIS's module, plus TripPlanner's usage and key version (null when not active or not answering). */
+async function page(req: NextRequest, auth: Studio): Promise<NextResponse> {
+  const site = await cis(auth.cfg.cisApiUrl, auth.token, "GET", "");
+  if (!site.ok) return answer({ detail: site.detail }, site.status);
+  const active = (site.data as { active?: unknown } | null)?.active === true;
+  const tp = active ? await crmFor(req, auth)<{ usage: unknown; webhook_key: unknown }>("GET", "studio/trip-planner") : null;
+  const parts = tp?.ok ? tp.data : { usage: null, webhook_key: null };
+  return answer({ module: site.data, usage: parts.usage ?? null, webhook_key: parts.webhook_key ?? null });
+}
+
+/** PUT "lead-route" / "appearance": the owner's change, at CIS -> {module}. */
+async function siteWrite(req: NextRequest, auth: Studio, action: "lead-route" | "appearance"): Promise<NextResponse> {
+  const body = await readBody(req);
+  if (!body) return answer({ detail: "invalid_body" }, 400);
+  const site = await cis(auth.cfg.cisApiUrl, auth.token, "PUT", `/${action}`, body);
+  return site.ok ? answer({ module: site.data }) : answer({ detail: site.detail }, site.status);
+}
+
+/** GET "leads" / POST "webhook-key": TripPlanner's part, through the CRM API. */
+async function plannerPart(req: NextRequest, auth: Studio, action: "leads" | "webhook-key"): Promise<NextResponse> {
+  const crm = crmFor(req, auth);
+  const out = action === "leads"
+    ? await crm<unknown>("GET", "studio/trip-planner/leads")
+    : await crm<unknown>("POST", "studio/trip-planner/webhook-key");
+  return out.ok ? answer(out.data) : answer({ detail: out.detail }, out.status === 0 ? 503 : out.status);
+}
+
+function run(req: NextRequest, auth: Studio, action: PlannerAction): Promise<NextResponse> {
+  if (action === "page") return page(req, auth);
+  if (action === "lead-route" || action === "appearance") return siteWrite(req, auth, action);
+  return plannerPart(req, auth, action);
+}
+
 async function handler(req: NextRequest, { params }: { params: Promise<{ path?: string[] }> }) {
   const refused = refuseForeignWrite(requestConfig(req), req);
   if (refused) return refused;
   const { path } = await params;
-  const action: PlannerAction | null = plannerAction(req.method, path ?? []);
+  const action = plannerAction(req.method, path ?? []);
   if (!action) return answer({ detail: "not_found" }, 404);
   const auth = await requireStudio(req);
   if (!auth.ok) return auth.response;
-  const done = (res: NextResponse) => withRenewed(res, auth.renewed, auth.cfg);
-  if (!studioMay(studioClaims(auth.token).csr, action)) return done(answer({ detail: "role_forbidden" }, 403));
-
-  const session = readSession(auth.cfg, req.cookies);
-  const crm = <T,>(method: "GET" | "POST", sub: string) =>
-    session && accessValid(session)
-      ? crmCall<T>(auth.cfg, { ...session, tid: auth.tenantId }, method, sub)
-      : Promise.resolve({ ok: false as const, status: 401, detail: "session_expired" });
-
-  if (action === "page") {
-    const site = await cis(auth.cfg.cisApiUrl, auth.token, "GET", "");
-    if (!site.ok) return done(answer({ detail: site.detail }, site.status));
-    const active = (site.data as { active?: unknown } | null)?.active === true;
-    const tp = active ? await crm<{ usage: unknown; webhook_key: unknown }>("GET", "studio/trip-planner") : null;
-    const parts = tp?.ok ? tp.data : { usage: null, webhook_key: null };
-    return done(answer({ module: site.data, usage: parts.usage ?? null, webhook_key: parts.webhook_key ?? null }));
-  }
-  if (action === "lead-route" || action === "appearance") {
-    const body = await readBody(req);
-    if (!body) return done(answer({ detail: "invalid_body" }, 400));
-    const site = await cis(auth.cfg.cisApiUrl, auth.token, "PUT", `/${action}`, body);
-    return done(site.ok ? answer({ module: site.data }) : answer({ detail: site.detail }, site.status));
-  }
-  const out = action === "leads"
-    ? await crm<unknown>("GET", "studio/trip-planner/leads")
-    : await crm<unknown>("POST", "studio/trip-planner/webhook-key");
-  return done(out.ok ? answer(out.data) : answer({ detail: out.detail }, out.status === 0 ? 503 : out.status));
+  const res = studioMay(studioClaims(auth.token).csr, action) ? await run(req, auth, action) : answer({ detail: "role_forbidden" }, 403);
+  return withRenewed(res, auth.renewed, auth.cfg);
 }
 
 export const GET = handler;
