@@ -7,9 +7,11 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, Field, Input, K, Select } from "@/app/_kit";
+import { FoldToggle } from "@/components/FoldToggle";
 import { Panel } from "@/components/PageTitle";
 import { type BffResult, bffDownload, bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
+import { fold } from "@/lib/fold";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import {
   addDays,
@@ -50,6 +52,7 @@ export function DataPortabilityView({
   const tr = (key: string) => t(lang, key as MessageKey);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [allExports, setAllExports] = useState(false); // AA-1129 (S283 row 14): the first rows, then "Show all n"
 
   async function send<T>(method: "POST", path: string, body?: unknown, opts: { renew?: boolean } = {}) {
     setError(null);
@@ -116,59 +119,62 @@ export function DataPortabilityView({
           {exportsList.length === 0 ? (
             <p style={{ ...muted, margin: "10px 0 0" }}>{t(lang, "data.exp.none")}</p>
           ) : (
-            <ul style={{ listStyle: "none", padding: 0, margin: "10px 0 0" }}>
-              {exportsList.map((e) => (
-                <li key={e.export_id} data-testid="data-export" style={item}>
-                  <div style={row}>
-                    <Badge tone={statusTone(e.status)}>{tr(`data.exp.status.${e.status}`)}</Badge>
-                    <span style={{ color: K.ink }}>{tr(`data.exp.scope.${e.scope}`)}</span>
-                    <span style={muted}>{formatDate(e.created_at, locale, { year: true })}</span>
-                    {e.status === "ready" && (
-                      <Button size="sm" disabled={busy} onClick={() => download(e)}>
-                        {t(lang, "data.exp.download")}
-                      </Button>
-                    )}
-                  </div>
-                  {OPEN_EXPORT.includes(e.status) && (
-                    <div style={{ display: "grid", gap: 4, maxWidth: 420 }}>
-                      <div
-                        role="progressbar"
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuenow={progressPercent(e)}
-                        style={{ height: 6, borderRadius: 3, background: K.line, overflow: "hidden" }}
-                      >
-                        <div style={{ width: `${progressPercent(e)}%`, height: "100%", background: K.accent }} />
-                      </div>
-                      <span style={muted}>{fmt(t(lang, "data.exp.progress"), { done: e.progress.done, total: e.progress.total })}</span>
+            <>
+              <ul style={{ listStyle: "none", padding: 0, margin: "10px 0 0" }}>
+                {fold(exportsList, allExports).shown.map((e) => (
+                  <li key={e.export_id} data-testid="data-export" style={item}>
+                    <div style={row}>
+                      <Badge tone={statusTone(e.status)}>{tr(`data.exp.status.${e.status}`)}</Badge>
+                      <span style={{ color: K.ink }}>{tr(`data.exp.scope.${e.scope}`)}</span>
+                      <span style={muted}>{formatDate(e.created_at, locale, { year: true })}</span>
+                      {e.status === "ready" && (
+                        <Button size="sm" disabled={busy} onClick={() => download(e)}>
+                          {t(lang, "data.exp.download")}
+                        </Button>
+                      )}
                     </div>
-                  )}
-                  {e.status === "ready" && (
-                    <>
-                      <span style={muted}>
-                        {fmt(t(lang, "data.exp.summary"), {
-                          rows: e.rows,
-                          tables: e.tables,
-                          docs: e.documents_included,
-                          size: formatBytes(e.size_bytes),
-                        })}
-                      </span>
-                      {e.documents_skipped > 0 && <span style={muted}>{fmt(t(lang, "data.exp.skipped"), { n: e.documents_skipped })}</span>}
-                      <span style={muted} title={e.content_sha256 ?? undefined}>
-                        {t(lang, "data.exp.checksum")} <code style={{ fontSize: 12 }}>{shortDigest(e.content_sha256)}…</code>
-                      </span>
-                      <span style={muted}>
-                        {e.expires_at && fmt(t(lang, "data.exp.expires"), { date: formatDate(e.expires_at, locale, { year: true }) })}
-                        {e.downloaded_at && ` · ${fmt(t(lang, "data.exp.downloaded"), { date: formatDate(e.downloaded_at, locale, { year: true }) })}`}
-                      </span>
-                    </>
-                  )}
-                  {e.status === "failed" && (
-                    <span style={{ fontSize: 13, color: K.danger }}>{fmt(t(lang, "data.exp.failed"), { code: e.failure_class ?? "error" })}</span>
-                  )}
-                </li>
-              ))}
-            </ul>
+                    {OPEN_EXPORT.includes(e.status) && (
+                      <div style={{ display: "grid", gap: 4, maxWidth: 420 }}>
+                        <div
+                          role="progressbar"
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={progressPercent(e)}
+                          style={{ height: 6, borderRadius: 3, background: K.line, overflow: "hidden" }}
+                        >
+                          <div style={{ width: `${progressPercent(e)}%`, height: "100%", background: K.accent }} />
+                        </div>
+                        <span style={muted}>{fmt(t(lang, "data.exp.progress"), { done: e.progress.done, total: e.progress.total })}</span>
+                      </div>
+                    )}
+                    {e.status === "ready" && (
+                      <>
+                        <span style={muted}>
+                          {fmt(t(lang, "data.exp.summary"), {
+                            rows: e.rows,
+                            tables: e.tables,
+                            docs: e.documents_included,
+                            size: formatBytes(e.size_bytes),
+                          })}
+                        </span>
+                        {e.documents_skipped > 0 && <span style={muted}>{fmt(t(lang, "data.exp.skipped"), { n: e.documents_skipped })}</span>}
+                        <span style={muted} title={e.content_sha256 ?? undefined}>
+                          {t(lang, "data.exp.checksum")} <code style={{ fontSize: 12 }}>{shortDigest(e.content_sha256)}…</code>
+                        </span>
+                        <span style={muted}>
+                          {e.expires_at && fmt(t(lang, "data.exp.expires"), { date: formatDate(e.expires_at, locale, { year: true }) })}
+                          {e.downloaded_at && ` · ${fmt(t(lang, "data.exp.downloaded"), { date: formatDate(e.downloaded_at, locale, { year: true }) })}`}
+                        </span>
+                      </>
+                    )}
+                    {e.status === "failed" && (
+                      <span style={{ fontSize: 13, color: K.danger }}>{fmt(t(lang, "data.exp.failed"), { code: e.failure_class ?? "error" })}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <FoldToggle total={exportsList.length} open={allExports} onToggle={() => setAllExports(!allExports)} lang={lang} testId="data-exports-fold" />
+            </>
           )}
         </Panel>
       )}
@@ -201,6 +207,7 @@ function DataRequestsPanel({
   const [received, setReceived] = useState(view.today);
   const [due, setDue] = useState(addDays(view.today, view.default_due_days));
   const [client, setClient] = useState("");
+  const [all, setAll] = useState(false); // AA-1129 (S283 row 14): the first rows, then "Show all n"
 
   return (
     <Panel title={t(lang, "data.req.title")} testId="data-requests">
@@ -208,11 +215,14 @@ function DataRequestsPanel({
       {view.requests.length === 0 ? (
         <p style={{ ...muted, margin: "0 0 10px" }}>{t(lang, "data.req.none")}</p>
       ) : (
-        <ul style={{ listStyle: "none", padding: 0, margin: "0 0 10px" }}>
-          {view.requests.map((r) => (
-            <RequestItem key={r.data_request_id} r={r} view={view} lang={lang} locale={locale} busy={busy} send={send} onDone={onDone} />
-          ))}
-        </ul>
+        <div style={{ margin: "0 0 10px" }}>
+          <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+            {fold(view.requests, all).shown.map((r) => (
+              <RequestItem key={r.data_request_id} r={r} view={view} lang={lang} locale={locale} busy={busy} send={send} onDone={onDone} />
+            ))}
+          </ul>
+          <FoldToggle total={view.requests.length} open={all} onToggle={() => setAll(!all)} lang={lang} testId="data-requests-fold" />
+        </div>
       )}
       <form
         onSubmit={async (e) => {

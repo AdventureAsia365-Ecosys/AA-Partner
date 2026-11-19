@@ -20,7 +20,7 @@ import {
   type PipelineSettings,
   type SlotWindow,
 } from "@/lib/intakeForms";
-import { memberLabel, type TeamMember } from "@/lib/team";
+import { memberLabel, roleSeq, type TeamMember } from "@/lib/team";
 
 export interface FormRow {
   intake_form_id: string;
@@ -265,6 +265,7 @@ function FormDetails({ form: f, isOwner, lang, team, send }: FormPartProps & { t
   const [privacy, setPrivacy] = useState(f.privacy_notice_url ?? "");
   const [owner, setOwner] = useState(f.default_owner_member_id ?? "");
   const owners = isOwner ? team.filter((m) => m.status === "active" || m.member_id === f.default_owner_member_id) : [];
+  const seq = roleSeq(team); // AA-1129 (S283 audit row 15): "Agent 2", never "#a78e8cf1"
   const helpId = `forms-privacy-help-${f.intake_form_id}`;
   const body = () => formDetailsBody(f, privacy, owners.length > 0 ? owner : undefined);
   return (
@@ -291,7 +292,7 @@ function FormDetails({ form: f, isOwner, lang, team, send }: FormPartProps & { t
             <option value="">{t(lang, "forms.ownerNone")}</option>
             {owners.map((m) => (
               <option key={m.member_id} value={m.member_id}>
-                {memberLabel(m)}
+                {memberLabel(m, lang, seq.get(m.member_id))}
               </option>
             ))}
           </select>

@@ -17,6 +17,7 @@ import uuid
 import asyncpg
 import pytest
 
+from app import pipeline
 from app.auth.route_guard import Caller
 from app.errors import Conflict, Forbidden
 from app.members import invitations, recovery, team
@@ -76,6 +77,22 @@ async def test_done_when_invite_to_active_in_under_five_minutes(
         page = await team.team(ctx, Vault(keys, ctx))
     assert [m["email"] for m in page["members"] if m["role"] == "agent"] == ["lan.nguyen@agency.example"]
     assert page["invitations"] == [] and page["plan"]["seats_used"] == 2
+    # AA-1129: every member's assign menu names the invited agent by the address before the "@" (never the full
+    # address) and the owner, made without an invitation, by its place in its role; the opening is audited.
+    async with tenant_tx(app_pool, person, tenant_id, action=Action.MEMBERS_LIST) as ctx:
+        listed = await pipeline.members(ctx, Vault(keys, ctx))
+    assert sorted((m["role"], m["display_name"], m["seq"], m["is_me"]) for m in listed) == [
+        ("agent", "lan.nguyen", 1, True),
+        ("owner", None, 1, False),
+    ]
+    [members_event] = await _owner_fetch(
+        admin, tenant_id,
+        "SELECT object_ids, fields, reason FROM crm.audit_event "
+        "WHERE action = 'list_view' AND object_kind = 'member' AND reason = 'members'",
+    )  # fmt: skip
+    assert (members_event["object_ids"], members_event["fields"], members_event["reason"]) == (
+        [accepted["member_id"]], ["email_enc"], "members",
+    )  # fmt: skip
     assert [e["outcome"] for e in await _events(admin, tenant_id, "invite")] == ["allowed"]
     [claim_event] = await _events(admin, tenant_id, "invitation_claim")
     assert (claim_event["actor_kind"], claim_event["actor_ref"]) == ("user", f"invitation:{invited['invitation_id']}")

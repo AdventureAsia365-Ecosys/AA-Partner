@@ -54,7 +54,7 @@ function view(offboarding: Offboarding | null): LifecycleView {
 
 function render(offboarding: Offboarding | null, lang: "en" | "vi" = "en"): string {
   return renderToString(
-    createElement(DataLifecycleView, { view: view(offboarding), trash: [], tenantId: TENANT, lang, locale: "en-AU" }),
+    createElement(DataLifecycleView, { view: view(offboarding), trash: [], tenantId: TENANT, now: "2026-11-19T00:00:00Z", lang, locale: "en-AU" }),
   );
 }
 

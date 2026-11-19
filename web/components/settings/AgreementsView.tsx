@@ -10,7 +10,7 @@ import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { MESSAGES, t, type Lang, type MessageKey } from "@/lib/i18n";
-import { AGREEMENT_KINDS, proposalErrorKey, type Agreement, type MergeField } from "@/lib/proposals";
+import { AGREEMENT_KINDS, proposalErrorKey, splitVersions, type Agreement, type MergeField } from "@/lib/proposals";
 
 const field: React.CSSProperties = {
   font: "inherit",
@@ -68,6 +68,26 @@ export function AgreementsView({
     if (ok) form.reset();
   }
 
+  const { current, older } = splitVersions(docs);
+  const row = (d: Agreement) => (
+    <section key={d.doc_id} data-testid="agreement-row" data-kind={d.kind} data-status={d.status} style={{ display: "grid", gap: 6, padding: 12, border: `1px solid ${K.line}`, borderRadius: 10, background: K.card }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <strong style={{ fontSize: 14, color: K.ink }}>{tr(`agreements.kind.${d.kind}`)}</strong>
+        <span style={{ fontSize: 13 }}>{d.version_label}</span>
+        <Badge tone={TONE[d.status]}>{tr(`agreements.status.${d.status}`)}</Badge>
+        {d.published_at && <span style={{ fontSize: 12.5, color: K.muted }}>{formatDate(d.published_at.slice(0, 10), locale)}</span>}
+      </div>
+      <p style={{ margin: 0, fontSize: 13, color: K.body, whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 160, overflowY: "auto" }}>{d.body_text}</p>
+      {d.status === "draft" && (
+        <div>
+          <Button size="sm" disabled={!hydrated || busy} onClick={() => run("POST", `agreements/${d.doc_id}/publish`)}>
+            {tr("agreements.publish")}
+          </Button>
+        </div>
+      )}
+    </section>
+  );
+
   return (
     <div data-testid="agreements-view" data-hydrated={hydrated ? "true" : undefined} style={{ display: "grid", gap: 14 }}>
       {error && (
@@ -75,25 +95,6 @@ export function AgreementsView({
           {error}
         </p>
       )}
-      {docs.length === 0 && <p style={{ margin: 0, fontSize: 13, color: K.muted }}>{tr("agreements.empty")}</p>}
-      {docs.map((d) => (
-        <section key={d.doc_id} data-testid="agreement-row" data-kind={d.kind} data-status={d.status} style={{ display: "grid", gap: 6, padding: 12, border: `1px solid ${K.line}`, borderRadius: 10, background: K.card }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <strong style={{ fontSize: 14, color: K.ink }}>{tr(`agreements.kind.${d.kind}`)}</strong>
-            <span style={{ fontSize: 13 }}>{d.version_label}</span>
-            <Badge tone={TONE[d.status]}>{tr(`agreements.status.${d.status}`)}</Badge>
-            {d.published_at && <span style={{ fontSize: 12.5, color: K.muted }}>{formatDate(d.published_at.slice(0, 10), locale)}</span>}
-          </div>
-          <p style={{ margin: 0, fontSize: 13, color: K.body, whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 160, overflowY: "auto" }}>{d.body_text}</p>
-          {d.status === "draft" && (
-            <div>
-              <Button size="sm" disabled={!hydrated || busy} onClick={() => run("POST", `agreements/${d.doc_id}/publish`)}>
-                {tr("agreements.publish")}
-              </Button>
-            </div>
-          )}
-        </section>
-      ))}
       <form onSubmit={create} data-testid="agreement-form" style={{ display: "grid", gap: 8, padding: 12, border: `1px dashed ${K.line2}`, borderRadius: 10 }}>
         <strong style={{ fontSize: 13.5, color: K.ink }}>{tr("agreements.new")}</strong>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -133,6 +134,19 @@ export function AgreementsView({
           </Button>
         </div>
       </form>
+      {/* AA-1129 (S283 P4): the New version form first, then the current versions (drafts and the published ones);
+          retired versions fold under "Older versions" so the page stays short. */}
+      <strong style={{ fontSize: 13.5, color: K.ink }}>{tr("agreements.versions")}</strong>
+      {docs.length === 0 && <p style={{ margin: 0, fontSize: 13, color: K.muted }}>{tr("agreements.empty")}</p>}
+      {current.map(row)}
+      {older.length > 0 && (
+        <details data-testid="agreement-older">
+          <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}>
+            {tr("agreements.olderVersions")} ({older.length})
+          </summary>
+          <div style={{ display: "grid", gap: 10, marginTop: 10 }}>{older.map(row)}</div>
+        </details>
+      )}
     </div>
   );
 }

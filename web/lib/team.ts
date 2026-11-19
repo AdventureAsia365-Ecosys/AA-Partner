@@ -1,6 +1,8 @@
 // web/lib/team.ts — shapes of the Team & roles API (AA-939, /crm/v1/team, /plan, /recovery) and small helpers the
 // Team page and the recovery banner share. Edge-safe (no node imports).
+import type { Lang } from "./i18n";
 import type { Role } from "./nav";
+import { nameFromEmail, personLabel } from "./people";
 
 export interface TeamMember {
   member_id: string;
@@ -48,9 +50,23 @@ export interface Recovery {
   is_candidate: boolean;
 }
 
-/** How a member is named on the Team page: the address they were invited with, else a short id. */
-export function memberLabel(m: Pick<TeamMember, "email" | "member_id">): string {
-  return m.email ?? `#${m.member_id.slice(0, 8)}`;
+/** Each member's place among the members of its role, 1-based, in the order the Team API lists them (join time). */
+export function roleSeq(members: Pick<TeamMember, "member_id" | "role">[]): Map<string, number> {
+  const seen = new Map<string, number>();
+  const out = new Map<string, number>();
+  for (const m of members) {
+    const n = (seen.get(m.role) ?? 0) + 1;
+    seen.set(m.role, n);
+    out.set(m.member_id, n);
+  }
+  return out;
+}
+
+/** How a member is named on the Team page and the forms' owner picker (AA-1129, S283 audit row 15, S285 live check):
+ *  the one rule of lib/people.ts, "lan.nguyen · Agent" from the address they were invited with (its part before the
+ *  "@"), else "Agent 2", never the full address nor an id. */
+export function memberLabel(m: Pick<TeamMember, "email" | "role">, lang: Lang = "en", seq?: number): string {
+  return personLabel(lang, { role: m.role, display_name: nameFromEmail(m.email), seq });
 }
 
 /** Active members other than `exclude`, as reassign targets. */

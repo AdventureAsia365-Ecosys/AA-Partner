@@ -60,6 +60,10 @@ export interface Conversation {
   /** AA-1069: a supplier request thread of the trip (no client): the supplier it is with. */
   agency_supplier_id?: string | null;
   supplier_name?: string | null;
+  /** AA-1129: on the Unmatched list only, the latest inbound message's sender, subject and the start of its text. */
+  sender?: string | null;
+  subject?: string | null;
+  preview?: string | null;
 }
 
 export interface MailMessage {

@@ -3,7 +3,8 @@
 //
 //   /healthz                 any Host (the ALB target-group health check sends the task IP as Host)
 //   unknown Host             404 (the ALB host rule already sends only the partner host here)
-//   client host              /c/* and /trip/* only (+ static assets); everything else 404 (lib/hosts.ts). The inquiry form page
+//   client host              /c/* and /trip/* only (+ static assets); everything else the app's neutral 404 page (rewrite to
+//                            CLIENT_NOT_FOUND_PATH, HTTP 404, no brand; lib/hosts.ts). The inquiry form page
 //                            /c/f/<key> (AA-936) may be framed by the form's own allowed origins: its CSP
 //                            frame-ancestors comes from the form definition (lib/intakeForms.ts, 60 s memo)
 //   partner host, public     /auth/*, /prefs/*, /health, /signed-out, static: through
@@ -128,6 +129,22 @@ function notFound(): NextResponse {
   return new NextResponse("Not Found", { status: 404, headers: { "Content-Type": "text/plain", "Cache-Control": "no-store" } });
 }
 
+/** AA-1129 (S285 live check): the path an unknown client-host path is rewritten to. No route serves it (a private
+ *  `_` segment, and `/c` has no catch-all), so Next renders the app's own 404 page with HTTP 404: on the client host
+ *  that page has no brand mark, no Home link and the neutral tab title (app/not-found.tsx, root generateMetadata). */
+export const CLIENT_NOT_FOUND_PATH = "/c/_not-found";
+
+/** An unknown path on the client host: the neutral 404 page (white-label) instead of a plain-text "Not Found". The
+ *  rewrite target is fixed, so nothing but the 404 page can render; the host kind travels in the request headers. */
+function clientNotFound(request: NextRequest, cognitoDomain: string): NextResponse {
+  const url = request.nextUrl.clone();
+  url.pathname = CLIENT_NOT_FOUND_PATH;
+  url.search = "";
+  const res = NextResponse.rewrite(url, { request: { headers: forwardHeaders(request, "client") } });
+  res.headers.set("Cache-Control", "no-store");
+  return secure(request, res, cognitoDomain);
+}
+
 function pass(request: NextRequest, kind: HostKind, cognitoDomain = "", ancestors?: string): NextResponse {
   return secure(request, NextResponse.next({ request: { headers: forwardHeaders(request, kind) } }), cognitoDomain, ancestors);
 }
@@ -166,7 +183,9 @@ export function gate(request: NextRequest): NextResponse {
   const early = hostRoute(request, cfg, kind);
   if (early) return early;
   const ancestors = formKey(pathname) ? "'self'" : undefined;
-  if (kind === "client") return clientPathAllowed(pathname) ? pass(request, kind, cfg.cognitoDomain, ancestors) : notFound();
+  if (kind === "client") {
+    return clientPathAllowed(pathname) ? pass(request, kind, cfg.cognitoDomain, ancestors) : clientNotFound(request, cfg.cognitoDomain);
+  }
 
   // Partner host. Client pages (/c/*, the trip page /trip/*) live only on the client host (local development serves
   // both on localhost).

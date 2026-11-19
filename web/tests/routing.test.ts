@@ -5,7 +5,7 @@ import { matchBff, upstreamHeaders, BFF_ROUTES } from "@/lib/bff";
 import { classifyHost, clientPathAllowed, hasRefreshMarker, isPublicPartnerPath, safeNext, withRefreshMarker } from "@/lib/hosts";
 import { activeSection, contentStudioHref, isRole, sectionByKey, visibleSections } from "@/lib/nav";
 import { cookieNames, sessionCookie } from "@/lib/session";
-import { contentSecurityPolicy, gate, nonceFor, proxy } from "@/proxy";
+import { CLIENT_NOT_FOUND_PATH, contentSecurityPolicy, gate, nonceFor, proxy } from "@/proxy";
 import { testConfig } from "./helpers";
 
 let cfg = testConfig();
@@ -53,7 +53,15 @@ describe("proxy", () => {
 
   it("404s unknown hosts and non-client paths on the client host", () => {
     expect(gate(req("https://evil.example.test/")).status).toBe(404);
-    expect(gate(req("https://go.example.test/settings")).status).toBe(404);
+    // AA-1129 (S285): an unknown client-host path renders the app's neutral 404 page (a rewrite to a path no route
+    // serves; Next answers 404 there), with the client host kind for that page, never the plain-text "Not Found".
+    const unknown = gate(req("https://go.example.test/settings?x=1"));
+    expect(new URL(unknown.headers.get("x-middleware-rewrite")!).pathname).toBe(CLIENT_NOT_FOUND_PATH);
+    expect(new URL(unknown.headers.get("x-middleware-rewrite")!).search).toBe("");
+    expect(unknown.headers.get("x-middleware-request-x-aa-host-kind")).toBe("client");
+    expect(unknown.headers.get("cache-control")).toBe("no-store");
+    expect(unknown.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(clientPathAllowed(CLIENT_NOT_FOUND_PATH)).toBe(true);
     expect(gate(req("https://go.example.test/c/inquiry")).headers.get("x-middleware-next")).toBe("1");
     expect(gate(req("https://go.example.test/robots.txt")).headers.get("x-middleware-next")).toBe("1");
     expect(gate(req("https://partner.example.test/c/inquiry")).status).toBe(404);

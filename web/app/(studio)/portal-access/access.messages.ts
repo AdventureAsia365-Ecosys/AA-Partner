@@ -21,6 +21,8 @@ export const ACCESS_MESSAGES = defineMessages(
     roleViewer: "Viewer",
     open: "Open",
     goToPartner: "Go to AA Partner",
+    crmReady: "Your agency's CRM is open to you: pipeline, clients, messages and payments.",
+    openCrm: "Open the CRM",
   },
   {
     logoAlt: "Adventure Asia",
@@ -40,5 +42,7 @@ export const ACCESS_MESSAGES = defineMessages(
     roleViewer: "Người xem",
     open: "Mở",
     goToPartner: "Về AA Partner",
+    crmReady: "CRM của đại lý bạn đã sẵn sàng: quy trình bán, khách hàng, tin nhắn và thanh toán.",
+    openCrm: "Mở CRM",
   },
 );

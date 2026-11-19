@@ -21,7 +21,7 @@ import { cache } from "react";
 import { AiNotice, K, PageFrame, sans, serif } from "@/app/_kit";
 import { SUPPORT_EMAIL } from "@/app/_kit/core/brand";
 import { config } from "@/lib/config";
-import { itineraryParagraphs, loadTrip, TOUR_ID, type TripLookup } from "@/lib/tripPage";
+import { dayBlock, itineraryParagraphs, loadTrip, TOUR_ID, type TripLookup } from "@/lib/tripPage";
 import { TripHeader, tripLabel as label } from "./TripHeader";
 import { BookNowWidget } from "@/components/booking/BookNowWidget";
 import { bookingLink, widgetTour } from "@/lib/bookNow";
@@ -114,7 +114,7 @@ export default async function TripPage({ params, searchParams }: { params: Promi
               borderRadius: 6,
             }}
           >
-            <div style={{ ...label, marginBottom: 14 }}>Journey Highlights</div>
+            <h2 style={{ ...label, margin: "0 0 14px" }}>Journey Highlights</h2>
             <ul style={{ margin: 0, padding: 0, listStyle: "none" }}>
               {trip.highlights.map((h, i) => (
                 <li key={i} style={{ display: "flex", gap: 10, marginBottom: 10, fontSize: 15, lineHeight: 1.6, color: K.ink2 }}>
@@ -128,12 +128,25 @@ export default async function TripPage({ params, searchParams }: { params: Promi
 
         {trip.itineraries && (
           <div style={{ marginBottom: 40 }}>
-            <div style={{ ...label, marginBottom: 18 }}>The Itinerary</div>
-            {itineraryParagraphs(trip.itineraries).map((block, i) => (
-              <p key={i} style={{ margin: "0 0 18px", lineHeight: 1.75, color: K.ink2, fontSize: 15.5 }}>
-                {block}
-              </p>
-            ))}
+            <h2 style={{ ...label, margin: "0 0 18px" }}>The Itinerary</h2>
+            {itineraryParagraphs(trip.itineraries).map((paragraph, i) => {
+              // AA-1129 (P5): "Day N — title" is a heading, its text a paragraph that keeps its own line breaks.
+              const { heading, body } = dayBlock(paragraph);
+              return (
+                <div key={i} data-testid={heading ? "trip-day" : undefined}>
+                  {heading && (
+                    <h3 style={{ fontFamily: serif, fontSize: 18, lineHeight: 1.35, color: K.ink, margin: "26px 0 6px", fontWeight: 700, overflowWrap: "anywhere" }}>
+                      {heading}
+                    </h3>
+                  )}
+                  {body && (
+                    <p style={{ margin: "0 0 18px", lineHeight: 1.75, color: K.ink2, fontSize: 15.5, whiteSpace: "pre-line" }}>
+                      {body}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
 

@@ -2,6 +2,7 @@
 // AA-942 (card CRM-14) — Settings > Data and privacy: the shapes of GET /crm/v1/lifecycle and GET /crm/v1/trash, and
 // the pure helpers the page uses to word them (the API returns codes and numbers only; EN default, VI optional).
 
+import { formatDate, type DateLocale } from "./dates";
 import { fmt, t, type Lang, type MessageKey } from "./i18n";
 
 export type RuleWindow = "until_deleted" | "days" | "months" | "with_parent" | "setting";
@@ -177,4 +178,23 @@ export function deleteRefusal(detail: string): MessageKey {
   return ["has_money", "has_signature", "has_commission", "has_aa_line", "legal_hold"].includes(detail)
     ? (`trip.blocked.${detail}` as MessageKey)
     : "trip.error";
+}
+
+/**
+ * AA-1129 (S283 audit row 13): the removal line of one trash item. While deletion is a dry run (`deletion_dry_run`,
+ * the environment's switch the lifecycle API reports) nothing is removed for good, so a past date reads "Would have
+ * been removed on …" and a future one "Would be removed on …"; with deletion on, a past date means the daily run has not
+ * reached it yet. `now` is an ISO instant the server render passes, so the server and the browser word it the same.
+ */
+export function trashPurgeLine(
+  purgeAfter: string,
+  dryRun: boolean,
+  now: string,
+  lang: Lang,
+  locale: DateLocale,
+): string {
+  const due = new Date(purgeAfter).getTime() <= new Date(now).getTime();
+  const date = formatDate(purgeAfter, locale, { year: true });
+  if (dryRun) return fmt(t(lang, due ? "data.trash.wouldHavePurged" : "data.trash.wouldPurgeOn"), { date });
+  return due ? t(lang, "data.trash.purgeDue") : fmt(t(lang, "data.trash.purgeOn"), { date });
 }

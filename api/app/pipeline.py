@@ -150,8 +150,21 @@ SUBMISSIONS_SQL = """
 SELECT submission_id, payload_enc, outcome, status, created_at FROM crm.form_submission
  WHERE trip_id = $1 AND deleted_at IS NULL ORDER BY created_at, submission_id LIMIT 20
 """
+# AA-1129 (P2): with the address each member was invited with (the latest accepted invitation; null for a member made by
+# the seeder, the L1 console or the CIS account feed), and its place among the members of the same role (seq, 1-based,
+# by join time) so the web never has to name a person by an id.
 MEMBERS_SQL = """
-SELECT member_id, role, status FROM crm.member WHERE deleted_at IS NULL ORDER BY role, created_at, member_id
+SELECT m.member_id, m.role, m.status,
+       row_number() OVER (PARTITION BY m.role ORDER BY m.created_at, m.member_id)::int AS seq,
+       i.invitation_id, i.email_enc
+  FROM crm.member m
+  LEFT JOIN LATERAL (
+        SELECT inv.invitation_id, inv.email_enc FROM crm.member_invitation inv
+         WHERE inv.member_id = m.member_id AND inv.status = 'accepted'
+         ORDER BY inv.accepted_at DESC LIMIT 1
+       ) i ON true
+ WHERE m.deleted_at IS NULL
+ ORDER BY m.role, m.created_at, m.member_id
 """
 ACTIVE_MEMBER_SQL = "SELECT 1 FROM crm.member WHERE member_id = $1 AND status = 'active' AND deleted_at IS NULL"
 LOCK_TRIP_SQL = "SELECT stage, owner_member_id FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL FOR UPDATE"
@@ -668,13 +681,47 @@ async def set_task_status(ctx: TenantContext, task_id: uuid.UUID, status: str) -
     return _task(row)
 
 
-async def members(ctx: TenantContext) -> list[dict[str, Any]]:
-    return [
-        {
-            "member_id": str(r["member_id"]),
-            "role": r["role"],
-            "status": r["status"],
-            "is_me": r["member_id"] == ctx.member_id,
-        }
-        for r in await ctx.conn.fetch(MEMBERS_SQL)
-    ]
+def display_name(email: str | None) -> str | None:
+    """A member's name in the agency's menus: the part of their invitation address before the "@" ("lan.nguyen"), never
+    the full address (the owner's Team page shows that one)."""
+    local = (email or "").partition("@")[0].strip()
+    return local[:64] or None
+
+
+async def members(ctx: TenantContext, vault: Vault) -> list[dict[str, Any]]:
+    """The agency's members for the assign menus, filters and labels (every role, ``MEMBERS_LIST``). AA-1129 (P2, S283
+    audit rows 8 and 15): each carries ``display_name`` (:func:`display_name` of the invitation address, opened by the
+    vault; one ``list_view`` event naming the members whose address was opened) and ``seq``, its place among the
+    members of its role, so a member with no invitation reads "Agent 2", never a bare id."""
+    rows = await ctx.conn.fetch(MEMBERS_SQL)
+    out, opened = [], []
+    for r in rows:
+        name = None
+        if r["email_enc"] is not None:
+            name = display_name(
+                await vault.decrypt(
+                    "member_invitation", "email_enc", r["invitation_id"], bytes(r["email_enc"]), tenant_id=ctx.tenant_id
+                )
+            )
+            opened.append(str(r["member_id"]))
+        out.append(
+            {
+                "member_id": str(r["member_id"]),
+                "role": r["role"],
+                "status": r["status"],
+                "is_me": r["member_id"] == ctx.member_id,
+                "display_name": name,
+                "seq": int(r["seq"]),
+            }
+        )
+    if opened:
+        ctx.audit(
+            "list_view",
+            "allowed",
+            "member",
+            None,
+            fields=("email_enc",),
+            reason="members",
+            object_ids=tuple(opened)[:MAX_OBJECT_IDS],
+        )
+    return out

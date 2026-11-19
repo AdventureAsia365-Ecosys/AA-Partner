@@ -12,17 +12,26 @@ import "./_kit/core/tokens.css";
 import "./globals.css";
 import { headers } from "next/headers";
 import { serverContext } from "@/lib/serverContext";
+import { t } from "@/lib/i18n";
 import { NONCE_HEADER } from "@/lib/securityHeaders";
 import { themeStore } from "./_kit/local/theme";
 import { ThemeKeeper } from "./_kit/local/ThemeKeeper";
 
 const SIDEBAR_RESTORE = `(function(){try{var s=localStorage.getItem('cis_sidebar');document.documentElement.setAttribute('data-sidebar',s==='collapsed'?'collapsed':'expanded');}catch(e){document.documentElement.setAttribute('data-sidebar','expanded');}})();`;
 
-export const metadata: Metadata = {
+const PARTNER_METADATA: Metadata = {
   title: "Adventure Asia Partner",
   description: "Adventure Asia partner CRM",
   robots: { index: false, follow: false },
 };
+
+// AA-1129 (P5, S283 audit): the client host is the agency's white-label site for its travellers, so its default tab
+// title never names the partner app (a page sets its own, e.g. the inquiry form "Plan your trip with <agency>").
+export async function generateMetadata(): Promise<Metadata> {
+  if ((await headers()).get("x-aa-host-kind") !== "client") return PARTNER_METADATA;
+  const { lang } = await serverContext();
+  return { title: t(lang, "client.host.title"), robots: { index: false, follow: false } };
+}
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1 };
 

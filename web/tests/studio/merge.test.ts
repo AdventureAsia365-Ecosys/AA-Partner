@@ -88,8 +88,12 @@ describe("merged gate order (host -> /staff -> /c -> /portal -> CRM)", () => {
   });
 
   it("the client host serves no studio path", () => {
+    // AA-1129 (S285): the client host's neutral 404 page (a rewrite to a path no route serves), never a studio page.
     for (const p of ["/portal/dashboard", "/api/tenant/me", "/portal-access/select", "/tenant-login"]) {
-      expect(gate(req(p, { host: "go.example.test" })).status).toBe(404);
+      const res = gate(req(p, { host: "go.example.test" }));
+      expect(new URL(res.headers.get("x-middleware-rewrite")!).pathname).toBe("/c/_not-found");
+      expect(res.headers.get("x-middleware-next")).toBeNull();
+      expect(res.headers.get("location")).toBeNull();
     }
   });
 

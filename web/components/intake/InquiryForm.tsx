@@ -43,6 +43,24 @@ function options(form: PublicForm, name: string): string[] {
 }
 
 // AA-1071: a sales partner's intake link (/c/r/<token>) posts the same form to its own path (submitPath).
+/** The privacy link, or (AA-1129 P5) when the agency set neither a privacy link nor a data-request contact, one line on
+ *  what the details are for and how to have them removed (the form collects name, e-mail and phone). */
+function PrivacyLine({ form, t }: { form: PublicForm; t: (k: MessageKey) => string }) {
+  if (form.privacy_notice_url) {
+    return (
+      <a href={form.privacy_notice_url} target="_blank" rel="noreferrer noopener" style={{ fontSize: 12.5, color: K.accentDeep }}>
+        {t("intake.privacy")}
+      </a>
+    );
+  }
+  if (form.data_request_contact) return null;
+  return (
+    <p data-testid="intake-privacy-fallback" style={{ margin: 0, fontSize: 12.5, color: K.muted }}>
+      {fmt(t("intake.privacyFallback"), { agency: form.agency_name })}
+    </p>
+  );
+}
+
 export function InquiryForm({ publicKey, form, lang, dict, submitPath }: { publicKey: string; form: PublicForm; lang: Lang; dict: Dict; submitPath?: string }) {
   const t = (k: MessageKey) => dict[k] ?? k;
   const code = (prefix: string, c: string) => dict[`${prefix}.${c}` as MessageKey] ?? c;
@@ -304,11 +322,7 @@ export function InquiryForm({ publicKey, form, lang, dict, submitPath }: { publi
         <input type="checkbox" name="consent_marketing" style={{ marginTop: 3 }} />
         <span>{t("intake.marketing")}</span>
       </label>
-      {form.privacy_notice_url && (
-        <a href={form.privacy_notice_url} target="_blank" rel="noreferrer noopener" style={{ fontSize: 12.5, color: K.accentDeep }}>
-          {t("intake.privacy")}
-        </a>
-      )}
+      <PrivacyLine form={form} t={t} />
       {form.data_request_contact && (
         <p data-testid="intake-data-requests" style={{ margin: 0, fontSize: 12.5, color: K.muted, overflowWrap: "anywhere" }}>
           {t("intake.dataRequests")}{" "}

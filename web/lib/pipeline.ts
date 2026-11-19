@@ -12,6 +12,7 @@ import type { CancelCharge } from "@/lib/retailPayments";
 import type { AaCancelView } from "@/lib/aaCancel";
 import { fmt, plural, type Lang, type MessageKey, t } from "./i18n";
 import type { PlanPage } from "./planningForm";
+import { personLabel } from "./people";
 
 export const BOARD_STAGES = ["inquiry", "qualifying", "proposal", "booked", "pre_departure", "travelling"] as const;
 export type BoardStage = (typeof BOARD_STAGES)[number];
@@ -456,6 +457,10 @@ export interface Member {
   role: "owner" | "agent" | "assistant";
   status: string;
   is_me: boolean;
+  /** AA-1129: the invitation address before the "@" ("lan.nguyen"); null when the member was not invited by mail. */
+  display_name?: string | null;
+  /** AA-1129: the member's place among the members of its role (1-based, by join time). */
+  seq?: number;
 }
 
 /** "Anna Mai" -> "Anna M."; "Nguyễn Thị Hoa" -> "Nguyễn Thị H." (cards never show more than the first name in full). */
@@ -563,8 +568,9 @@ export function parseFilter(params: Record<string, string | string[] | undefined
   };
 }
 
-/** A member in the assign menu: "Me", or the role and a short id (names arrive with the team page, CRM-11). */
+/** A member in menus, filters and reports: "Me"; else the one rule of lib/people.ts ("lan.nguyen · Agent", else
+ *  "Agent 2", else "Agent"), never an id or an address (AA-1129). */
 export function memberLabel(lang: Lang, m: Member): string {
   if (m.is_me) return t(lang, "trip.me");
-  return fmt(t(lang, "trip.member"), { role: t(lang, `role.${m.role}` as MessageKey), id: m.member_id.slice(0, 4) });
+  return personLabel(lang, m);
 }

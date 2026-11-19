@@ -302,9 +302,11 @@ async def test_members() -> None:
     conn = ScriptedConn().on(
         "FROM crm.member",
         [
-            {"member_id": MEMBER, "role": "owner", "status": "active"},
-            {"member_id": OTHER_MEMBER, "role": "agent", "status": "active"},
+            {"member_id": MEMBER, "role": "owner", "status": "active", "seq": 1, "invitation_id": None,
+             "email_enc": None},
+            {"member_id": OTHER_MEMBER, "role": "agent", "status": "active", "seq": 1, "invitation_id": None,
+             "email_enc": None},
         ],
-    )
-    assert [m["is_me"] for m in await pipeline.members(tenant_ctx(conn))] == [True, False]
+    )  # fmt: skip
+    assert [m["is_me"] for m in await pipeline.members(tenant_ctx(conn), FakeVault())] == [True, False]
     assert TENANT

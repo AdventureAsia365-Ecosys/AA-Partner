@@ -12,7 +12,7 @@ import { PartnerForm } from "@/components/partners/PartnerForm";
 import { bffDownload, bffSend } from "@/lib/bffClient";
 import type { DateLocale } from "@/lib/dates";
 import { formatDate } from "@/lib/dates";
-import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
+import { fmt, plural, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { canManage, type Partner, type PartnerDetail, partnerErrorKey, seesMoney, termsText } from "@/lib/partners";
 import { clientUrl, formatAmount } from "@/lib/proposals";
 
@@ -119,7 +119,7 @@ export function PartnersTable({
       id: "trips",
       header: tr("partners.col.trips"),
       accessorFn: (p) => p.trip_count,
-      cell: ({ row }) => <span>{fmt(tr("partners.trips"), { n: row.original.trip_count })}</span>,
+      cell: ({ row }) => <span>{plural(lang, "partners.trips", row.original.trip_count)}</span>,
     },
     ...(owner || seesMoney(role)
       ? ([

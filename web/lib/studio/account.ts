@@ -4,6 +4,7 @@
 
 import { translator, type Lang } from "@/app/_kit/core/i18n";
 import { ACCOUNT_LIB_MESSAGES } from "./lib.messages";
+import { ACTIVITY_LABEL_MESSAGES } from "./activityLabels.messages";
 
 export const ACTIVITY_PAGE_SIZES = [10, 25, 50, 100];
 
@@ -197,6 +198,22 @@ const EXPORT_ACTIONS = new Set(["content_piece.exported", "tenant_tour_version.e
 
 /** The detail line of an activity row as shown: on a download, each " · " part that is a bare format code becomes its
  *  label; every other row's detail passes through unchanged. */
+/** The message key of an action id: "content_piece.published_anyway" -> "contentPiecePublishedAnyway". */
+export function activityLabelKey(action: string): string {
+  return action
+    .split(/[._]/)
+    .filter(Boolean)
+    .map((part, i) => (i === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+    .join("");
+}
+
+/** AA-1129 (P3): an action's label in the page language; an action the studio does not word yet keeps CIS's label. */
+export function activityLabel(action: string, fallback: string, lang: Lang = "en"): string {
+  const key = activityLabelKey(action);
+  if (!Object.hasOwn(ACTIVITY_LABEL_MESSAGES.en, key)) return fallback;
+  return translator(ACTIVITY_LABEL_MESSAGES, lang)(key as keyof typeof ACTIVITY_LABEL_MESSAGES.en);
+}
+
 export function activityDetail(action: string, detail: string, lang: Lang = "en"): string {
   if (!detail || !EXPORT_ACTIONS.has(action)) return detail;
   const t = translator(ACCOUNT_LIB_MESSAGES, lang);

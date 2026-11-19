@@ -55,9 +55,9 @@ describe("server context language", () => {
 });
 
 describe("inquiry form page (client host)", () => {
-  async function render(form: PublicForm): Promise<string> {
+  async function render(form: PublicForm, lang?: string): Promise<string> {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(form), { status: 200 })));
-    return renderToString(await InquiryPage({ params: Promise.resolve({ publicKey: KEY }) }));
+    return renderToString(await InquiryPage({ params: Promise.resolve({ publicKey: KEY }), searchParams: Promise.resolve({ lang }) }));
   }
 
   it("is English for a vi-VN agency whose form sets no language", async () => {
@@ -72,6 +72,21 @@ describe("inquiry form page (client host)", () => {
     const html = await render({ ...FORM, locale: "vi" });
     expect(html).toContain('lang="vi"');
     expect(html).toContain("Lên kế hoạch chuyến đi cùng Lữ hành Sen Vàng");
+  });
+
+  // AA-1129 (P5): the visitor's EN / VI links (?lang=) win for this visit; the page offers both.
+  it("follows the visitor's ?lang= choice over the form's language and the cookie", async () => {
+    req.cookie = "en-AU";
+    const vi_ = await render(FORM, "vi");
+    expect(vi_).toContain('lang="vi"');
+    expect(vi_).toContain("Lên kế hoạch chuyến đi cùng Lữ hành Sen Vàng");
+    clearFormMemo();
+    const en = await render({ ...FORM, locale: "vi" }, "en");
+    expect(en).toContain("Plan your trip with Lữ hành Sen Vàng");
+    expect(en).toContain('href="?lang=vi"');
+    expect(en).toContain('href="?lang=en"');
+    clearFormMemo();
+    expect(await render(FORM, "fr")).toContain("Plan your trip with"); // anything else: the usual rule
   });
 
   it("renders the submit disabled and the form unmarked until hydration", async () => {

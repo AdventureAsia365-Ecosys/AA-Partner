@@ -585,6 +585,15 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   reaches the page as `x-nonce` (`app/layout.tsx` restore scripts) and in the request CSP (Next's own scripts). The
   paths the proxy skips (`/_next/*`, `/favicon.ico`, the mail import upload) get the policy without a nonce from
   `next.config.ts`.
+- **Client host is white-label** (AA-1129 P5): the inquiry form `/c/f/<key>` shows the agency's name as the brand
+  mark and tab title; an unknown key answers HTTP 404 (`app/c/f/[publicKey]/not-found.tsx`); the visitor switches EN /
+  VI with `?lang=` for that visit (the client host has no `/prefs`); an agency with no privacy link gets a short
+  fallback line on what the details are for. The client host 404 has no brand mark and no Home link (the host has no
+  home page) and its default tab title is neutral (root `generateMetadata` by `x-aa-host-kind`). The trip page turns a
+  "Day N — title" line into a day heading (`lib/tripPage.ts` `dayBlock`). AA-1129 follow-up (S285): `/c` has no
+  catch-all placeholder any more (it answered 200 with the partner brand), so an unknown `/c/<path>` is a real 404 on
+  that page; any other path of the client host is rewritten by `proxy.ts` to `CLIENT_NOT_FOUND_PATH` (`/c/_not-found`,
+  served by no route), so it renders the same neutral 404 page with HTTP 404 instead of a plain-text "Not Found".
 - **Book now on the trip page** (AA-1072): a link with an agency's inquiry form key (`/trip/<tourId>?f=<key>[&p=<AA tour
   key>]`) shows that agency's booking widget (`web/components/booking/BookNowWidget.tsx`, `web/lib/bookNow.ts`; words
   EN by default, VI by the visitor's cookie, `web/lib/i18nBookNow.ts`) instead of the AA contact button; section "Book
@@ -772,7 +781,10 @@ studio rules. Deploy Web Dev verifies the studio paths and runs the studio smoke
   `lib/studio/lib.messages.ts`). The draft legal pages and the Facebook guide are structured per-language documents
   (`legal/*/<name>.messages.ts`, `help/facebook/facebookGuide.messages.ts`); the English legal text applies, the
   Vietnamese page says it is a translation. Text from APIs (goal names, notification titles, live-writer step labels,
-  activity labels, generated content) is shown as the API sends it. `web/tests/studio/studioI18n.test.ts` keeps every
+  generated content) is shown as the API sends it; Activity action labels are worded by the studio per action id
+  (`lib/studio/activityLabels.messages.ts`, AA-1129), CIS's English label only for an id the studio does not know yet.
+  The CRM layout wraps every CRM page in the same provider (`StudioLang`), so kit core text (DataTable paging,
+  "Columns") follows the person's language there too (AA-1129 P3). `web/tests/studio/studioI18n.test.ts` keeps every
   English key paired with Vietnamese and fails on hard-coded English in studio components.
 - **Own e-mail** (an AA-1007 leftover): `/auth/callback` keeps the id token's `email` (same client and `sub`,
   `lib/oauth.ts` `idTokenEmail`) in the sealed session (`em`, kept across refreshes); `/bff/identity` adds it to its
@@ -1142,6 +1154,10 @@ invoice reads), `app/ledger/lines.py` (the line's actual cost); web `components/
   proposals, deposits due this week, overdue schedule rows, trips leaving within 60 days with a traveller's passport
   number or expiry missing (presence only, nothing decrypted), overdue AA invoices (owner / agent), next group
   departures (AA's guaranteed status is null until the roster card stores the feed's `departure.guaranteed`).
+  AA-1129: a departure is dated by its AA lines' service date (as on `/departures`; the trip's own start date only for
+  a group code with no AA line) and carries the AA tour `title`; `needs_you` is the caller's own (overdue / due-today
+  open tasks in the `/tasks` "mine" scope, live trips waiting on the agency that the caller owns or nobody owns): Home's
+  "Needs you" panel lists those with the overdue schedule rows, each linking its page (`components/home/NeedsYou.tsx`).
 - **Margin policy**: the four new tables carry a RESTRICTIVE `*_margin_roles` policy FOR ALL (owner / agent, or a job /
   seed actor), every money route asks `view_margin` / `money_fields_edit` first, and the money keys (`*_cost`, `*_b2b*`,
   `margin*`) are stripped by the serializer for any other role.
@@ -1368,7 +1384,8 @@ secret `crm/<env>/mail-oauth`.
   permission for the scope were checked (the check dials a host the caller names). Credentials are `crm.integration_credential` per
   member (crm-015); Disconnect deletes the credential and keeps the mailbox row.
 - **Work**: conversations by trip / client / Unmatched (`GET /crm/v1/conversations`, ids and counts only, one
-  `list_view`), a thread decrypted for the agent (one `view`), link an Unmatched thread to a client (`CLIENT_EDIT`),
+  `list_view`; AA-1129: the Unmatched list alone adds the latest inbound message's sender, subject and a 140-character
+  preview, opened by the vault with a second `list_view` naming the messages, so a thread with no client can be triaged), a thread decrypted for the agent (one `view`), link an Unmatched thread to a client (`CLIENT_EDIT`),
   drafts autosaved by an id the composer picks (`PUT /messages/drafts/{id}`; only the author; crm-015 lets crm_app
   delete drafts only), Undo within 10 s, a held / failed message back to a draft (`POST /messages/{id}/edit`), saved
   replies (agency-wide: owner via `WORKFLOW_EDIT`; own: every role), the mbox / CSV history import
@@ -1879,7 +1896,9 @@ design's fallback, §5.10). Implementation notes: `docs/implementation-notes/AA-
   pre-departure and travelling trips overlapping a 1-31 day window from today in the agency's timezone (no end date =
   open-ended, the trip stays travelling until its return is set; a trip the stage job completed counts through its
   return day, up to today), grouped by region (the running AA line's tour country from the catalog cache, else the
-  trip's first destination), the day number and the accepted proposal's day place, the running lines; travellers **once each** with all their trips
+  trip's first destination), the day number and the accepted proposal's day place, the running lines (the day number
+  and place are those of `on_date`, the trip's first day in the window; the web says "Starts in N days" while the
+  start date is after the view's `today`, `web/lib/duty.ts` `tripWhen`, AA-1129 S285); travellers **once each** with all their trips
   (card E) and only which contact fields exist, **no names**. `GET /duty/reach?region=` is one region on one day.
   `GET /trips/{id}/incidents` feeds the trip banner (open, and cleared in the last 14 days).
 - **Bulk reveal** (`POST /duty/reveal`, action `reveal_contact`, or `reveal_sensitive` with the emergency contact):
@@ -2590,8 +2609,10 @@ Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022;
   `role_forbidden` from the matrix, action `access_log_view`, + a committed `denied` event; the web shows why without calling the API); filters = actor group
   (`user`, `ai`, `aa_ops`, `aa_support`, `aa_emergency`, `system`), action, result, member, object, dates inside the
   last 365 days; newest first with a keyset cursor; download as CSV (formula-guarded) or JSON lines, at most 50,000
-  rows (422 `export_too_large`). Lines show the member's role and a short id, never a traveller's name; a client or
-  trip id links to its page.
+  rows (422 `export_too_large`). Lines name the member by the member label rule (section "F4 roles and team", "Member
+  names"; the page reads `GET /members`), never an id or a traveller's name; a client or trip id links to its page. The
+  page answer carries the agency `timezone` (AA-1129 S285): the web prints each line's time in it, so the server
+  render and the browser print the same text (it was the browser's zone: React hydration error #418).
 - **Checks** (the job sampler, `app/observability/ops_alerts.py`; CloudWatch metrics until S263): `audit_export_lag`
   (export 180 minutes or more behind), `audit_partitions` (next month has no partition) and `audit_verify_lag`
   (largest exported-minus-verified gap over agencies at 50 hours: one agency failing verification stops drops for all).
@@ -2605,6 +2626,13 @@ Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022;
   CSV: owner, agent, like `view_margin`; owner only = one row change, never wider than `view_margin`, a unit test)
   and `discount_approve` (AA-1066, owner only: a proposal discount above the agency limit or a sale below cost).
   `/me` carries `permissions` (today `aa_tariff_view`) so the web hides what the API would refuse. Membership writes are also refused by the database for anyone but an owner (crm-008).
+- **Member names** (AA-1129, S283 audit): `crm.member` holds no name. `GET /crm/v1/members` (every role) adds
+  `display_name` (the address of the member's latest accepted invitation before the "@", opened by the vault, one
+  `list_view` naming the members opened; never the full address) and `seq` (place within the role by join time). The
+  web names a member everywhere by ONE rule (`web/lib/people.ts` `personLabel`, the planned kit PersonLabel's order):
+  "lan.nguyen · Agent", else "Agent 2", else "Agent"; a member the agency no longer has reads "Former member"; never an
+  e-mail address or an id. The Team page and the forms' owner picker (owner only, full address from `/team`) cut the
+  address to its part before the "@" (`nameFromEmail`) the same way (AA-1129 S285: they showed the full address).
 - **Margin serializer** (`app/margin.py`): `class_router(AGENCY)` builds every agency router with
   `MarginFilteredRoute`; JSON responses lose every key named like net / b2b / cost / margin / commission unless the
   role holds `view_margin` (owner, agent). Unknown role = filtered. Contract test over every `/crm/v1` route:
@@ -2719,6 +2747,10 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   the owner or whoever deleted it. Who deletes: trip owner / agent (own or unassigned trip); client owner only (R8);
   task, document owner / agent; note owner or author. Nothing whose erase the hold rule refuses is moved to the trash
   (409 `legal_hold`, `crm.legal_hold_blocks`, every kind): its purge could never run.
+  Settings > Data and privacy pages the trash (kit DataTable) and words each removal date by `deletion_dry_run`
+  ("Would have been removed on …" while deletion is a dry run, `web/lib/lifecycle.ts` `trashPurgeLine`); the exports,
+  the data requests (first rows, then "Show all n", `web/lib/fold.ts`) and Settings > Agreements (the New version
+  form first, retired versions folded) stay short (AA-1129 S285, S283 audit rows 13 and 14).
 - **Delete block**: `crm.trip_commitment` is the ledger the money, signature, commission and AA-line cards write
   (CRM-16/19/23/25/27): `has_money` (paid / claimed invoice, succeeded or refunded payment), `has_signature`,
   `has_commission` (claimed / received), `has_aa_line` (held / confirmed) -> 409 with the first code, every blocker and

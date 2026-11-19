@@ -3,13 +3,14 @@
 // Unmatched"): forwarded mail no trip token, reply header or client address placed. Open a thread, search a client
 // (the term travels in the POST body, never in the URL: AA-937), link it; the conversation then belongs to that client.
 // AA-958: SMS / WhatsApp messages from an unknown number are listed here too, with their channel.
+// AA-1129: each row shows the latest inbound sender, subject and the start of the text, and "2 messages".
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button, K, useHydrated } from "@/app/_kit";
 import { bffSend } from "@/lib/bffClient";
 import type { ClientRow, Directory } from "@/lib/clients";
 import { formatDate, type DateLocale } from "@/lib/dates";
-import { t, type Lang, type MessageKey } from "@/lib/i18n";
+import { plural, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { mailErrorKey, type Conversation, type Thread } from "@/lib/mail";
 
 const field: React.CSSProperties = {
@@ -22,6 +23,18 @@ const field: React.CSSProperties = {
   color: K.ink,
   boxSizing: "border-box",
 };
+
+/** AA-1129 (S283 audit row 4): who wrote and about what, before the thread is opened (the list's own fields). */
+function Summary({ c, lang, opened }: { c: Conversation; lang: Lang; opened: boolean }) {
+  if (opened || (!c.sender && !c.subject && !c.preview)) return null;
+  return (
+    <div style={{ fontSize: 13, display: "grid", gap: 2, minWidth: 0 }} data-testid={`unmatched-${c.conversation_id}-summary`}>
+      {c.sender && <span style={{ color: K.ink, fontWeight: 600, overflowWrap: "anywhere" }}>{c.sender}</span>}
+      <span style={{ color: K.ink, overflowWrap: "anywhere" }}>{c.subject || t(lang, "inbox.noSubject")}</span>
+      {c.preview && <span style={{ color: K.muted, overflowWrap: "anywhere" }}>{c.preview}</span>}
+    </div>
+  );
+}
 
 function Row({ c, lang, locale }: { c: Conversation; lang: Lang; locale: DateLocale }) {
   const router = useRouter();
@@ -62,13 +75,16 @@ function Row({ c, lang, locale }: { c: Conversation; lang: Lang; locale: DateLoc
         <span data-testid={`unmatched-${c.conversation_id}-channel`} style={{ color: K.muted }}>
           {tr(`msg.channel.${["sms", "whatsapp"].includes(c.channel) ? c.channel : "email"}`)}
         </span>
-        <span style={{ color: K.muted }}>{c.message_count}</span>
+        <span style={{ color: K.muted }} data-testid={`unmatched-${c.conversation_id}-count`}>
+          {plural(lang, "inbox.messages", c.message_count)}
+        </span>
         {!thread && (
           <Button size="sm" disabled={!hydrated} onClick={open}>
             {tr("inbox.open")}
           </Button>
         )}
       </div>
+      <Summary c={c} lang={lang} opened={thread !== null} />
       {notice && (
         <p role="status" style={{ margin: 0, fontSize: 13, color: notice.ok ? K.ink : K.danger }}>
           {notice.text}

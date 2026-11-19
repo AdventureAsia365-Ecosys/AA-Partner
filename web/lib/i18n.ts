@@ -41,6 +41,7 @@ import { bookNowEn, bookNowVi } from "./i18nBookNow";
 import { inclusionsEn, inclusionsVi } from "./i18nInclusions";
 import { searchEn, searchVi } from "./i18nSearch";
 import { tagsEn, tagsVi } from "./i18nTags";
+import { agencyUiEn, agencyUiVi } from "./i18nAgencyUi";
 import { campaignsEn, campaignsVi } from "./i18nCampaigns";
 import { settingsUxEn, settingsUxVi } from "./i18nSettingsUx";
 import { helpEn, helpVi } from "./i18nHelp";
@@ -98,6 +99,7 @@ const en = {
   ...searchEn, // AA-963: the global search and the Library page (lib/i18nSearch.ts)
   ...inclusionsEn, // AA-1070 crm-35: Settings > Proposal lines, the builder picker, the client lists (lib/i18nInclusions.ts)
   ...tagsEn, // AA-960: tags, system tags, bulk tagging, Settings > Tags, coverage, ready to travel again (lib/i18nTags.ts)
+  ...agencyUiEn, // AA-1129: Home "Needs you", member names, the Unmatched inbox rows (lib/i18nAgencyUi.ts)
   ...campaignsEn, // AA-968: Marketing > Campaigns (lib/i18nCampaigns.ts)
   ...settingsUxEn, // AA-1096 S280: per-form fields and quota, refund limit, markup / price-check notes (lib/i18nSettingsUx.ts)
   ...helpEn, // AA-970 (CRM-37b): What's new, preview panel, help topics, public data pages (lib/i18nHelp.ts)
@@ -138,14 +140,13 @@ const en = {
   "role.agent": "Agent",
   "role.assistant": "Assistant",
   "home.title": "Welcome",
-  "home.subtitle": "Your agency's CRM. The first pieces are in place; pipeline, clients and messages follow.",
+  "home.subtitle": "Your agency's day: what needs you, money due and trips leaving soon.",
   "home.checklist": "Getting started",
   "home.check.signin": "Sign in to the CRM",
   "home.check.agency": "Open your agency",
   "home.check.inquiry": "Receive your first inquiry",
   "home.check.studio": "Publish a tour from Content studio",
   "home.needs": "Needs you",
-  "home.needsEmpty": "Nothing needs you yet. New inquiries, holds and payments will show here.",
   "section.pipeline.title": "No trips yet",
   "section.pipeline.body": "Inquiries from your website form land here as cards on the board.",
   "section.clients.title": "No clients yet",
@@ -353,8 +354,6 @@ const en = {
   "health.ok": "OK",
   "health.down": "Not answering",
   "health.notReady": "Not ready",
-  "client.title": "Adventure Asia",
-  "client.body": "This page is not available yet.",
   "pipeline.title": "Pipeline",
   "pipeline.subtitle": "Trips by stage. Each card says who the next step is waiting on.",
   "pipeline.waitingOn": "Waiting on",
@@ -477,7 +476,6 @@ const en = {
   "trip.notFound": "This trip is not in your agency.",
   "trip.error": "Could not save. Try again.",
   "trip.saved": "Saved",
-  "trip.member": "{role} · {id}",
   "trip.me": "Me",
   "task.reply_inquiry": "Reply within 2 h",
   "note.inquiry_message": "From the inquiry form",
@@ -546,6 +544,13 @@ const en = {
   "intake.error": "Your inquiry could not be sent. Please try again.",
   "intake.rateLimited": "Too many tries. Please wait a minute and send again.",
   "intake.notFound": "This form is not available.",
+  // AA-1129 (P5): the client host's own 404 and default tab title (white-label: no partner app name), the privacy
+  // line a form shows when the agency set no privacy link, the form's language links.
+  "intake.privacyFallback":
+    "{agency} uses these details only to answer this inquiry and plan your trip. To see, correct or delete them, reply to any message {agency} sends you.",
+  "intake.language": "Language",
+  "client.notFound": "This page does not exist. Check the link you were sent.",
+  "client.host.title": "Your trip",
   "intake.choose": "Choose…",
   "intake.honeypot": "Leave this field empty",
   // AA-937 (CRM-09): clients, reveal reasons, profile bands, health codes, relationships, documents.
@@ -844,7 +849,7 @@ const en = {
   "log.obj.pipeline": "pipeline board",
   "log.obj.traveler_profile": "travel profile",
   "log.obj.traveler_relation": "relationship",
-  "log.obj.member": "the agency",
+  "log.obj.member": "team member",
   "log.obj.tenant_key": "version",
   "log.obj.llm_call": "AI call",
   "log.obj.audit_log": "the access log",
@@ -2842,6 +2847,7 @@ const vi: Record<MessageKey, string> = {
   ...inclusionsVi,
   ...searchVi,
   ...tagsVi,
+  ...agencyUiVi,
   ...campaignsVi, // AA-968
   ...settingsUxVi,
   ...helpVi,
@@ -2882,14 +2888,13 @@ const vi: Record<MessageKey, string> = {
   "role.agent": "Nhân viên tư vấn",
   "role.assistant": "Trợ lý",
   "home.title": "Xin chào",
-  "home.subtitle": "CRM của đại lý bạn. Phần nền đã sẵn sàng; quy trình bán, khách hàng và tin nhắn sẽ có tiếp theo.",
+  "home.subtitle": "Một ngày của đại lý: việc cần bạn, khoản tiền đến hạn và chuyến sắp khởi hành.",
   "home.checklist": "Bắt đầu",
   "home.check.signin": "Đăng nhập CRM",
   "home.check.agency": "Mở đại lý của bạn",
   "home.check.inquiry": "Nhận yêu cầu đầu tiên",
   "home.check.studio": "Đăng một tour từ Content studio",
   "home.needs": "Cần bạn xử lý",
-  "home.needsEmpty": "Chưa có việc cần bạn. Yêu cầu mới, giữ chỗ và thanh toán sẽ hiện ở đây.",
   "section.pipeline.title": "Chưa có chuyến đi",
   "section.pipeline.body": "Yêu cầu từ biểu mẫu trên website của bạn sẽ hiện thành thẻ trên bảng.",
   "section.clients.title": "Chưa có khách hàng",
@@ -3097,8 +3102,6 @@ const vi: Record<MessageKey, string> = {
   "health.ok": "Ổn",
   "health.down": "Không phản hồi",
   "health.notReady": "Chưa sẵn sàng",
-  "client.title": "Adventure Asia",
-  "client.body": "Trang này chưa có.",
   "pipeline.title": "Quy trình bán",
   "pipeline.subtitle": "Các chuyến đi theo giai đoạn. Mỗi thẻ ghi bước tiếp theo đang chờ ai.",
   "pipeline.waitingOn": "Đang chờ",
@@ -3221,7 +3224,6 @@ const vi: Record<MessageKey, string> = {
   "trip.notFound": "Chuyến đi này không thuộc đại lý của bạn.",
   "trip.error": "Chưa lưu được. Vui lòng thử lại.",
   "trip.saved": "Đã lưu",
-  "trip.member": "{role} · {id}",
   "trip.me": "Tôi",
   "task.reply_inquiry": "Trả lời trong 2 giờ",
   "note.inquiry_message": "Từ biểu mẫu yêu cầu",
@@ -3290,6 +3292,11 @@ const vi: Record<MessageKey, string> = {
   "intake.error": "Chưa gửi được yêu cầu. Vui lòng thử lại.",
   "intake.rateLimited": "Bạn đã thử quá nhiều lần. Vui lòng chờ một phút rồi gửi lại.",
   "intake.notFound": "Biểu mẫu này không còn hoạt động.",
+  "intake.privacyFallback":
+    "{agency} chỉ dùng các thông tin này để trả lời yêu cầu và lên kế hoạch chuyến đi của bạn. Để xem, sửa hoặc xoá chúng, hãy trả lời bất kỳ tin nhắn nào {agency} gửi cho bạn.",
+  "intake.language": "Ngôn ngữ",
+  "client.notFound": "Trang này không tồn tại. Hãy kiểm tra lại đường link bạn nhận được.",
+  "client.host.title": "Chuyến đi của bạn",
   "intake.choose": "Chọn…",
   "intake.honeypot": "Để trống ô này",
   // AA-937 (CRM-09)
@@ -3588,7 +3595,7 @@ const vi: Record<MessageKey, string> = {
   "log.obj.pipeline": "bảng quy trình",
   "log.obj.traveler_profile": "hồ sơ du lịch",
   "log.obj.traveler_relation": "mối quan hệ",
-  "log.obj.member": "đại lý",
+  "log.obj.member": "thành viên",
   "log.obj.tenant_key": "phiên bản",
   "log.obj.llm_call": "lượt gọi AI",
   "log.obj.audit_log": "nhật ký truy cập",
@@ -4127,7 +4134,7 @@ const vi: Record<MessageKey, string> = {
   "ledger.col.collect": "Thu tiền",
   "ledger.status.planning": "Đang lên kế hoạch",
   "ledger.status.confirmed": "Đã xác nhận",
-  "ledger.status.cancelled": "Đã hủy",
+  "ledger.status.cancelled": "Đã huỷ",
   "ledger.collect.agency": "Đại lý thu",
   "ledger.collect.on_arrival": "Trả khi đến",
   "ledger.level.off": "Tắt",
@@ -4142,8 +4149,8 @@ const vi: Record<MessageKey, string> = {
   "ledger.save": "Lưu",
   "ledger.close": "Đóng",
   "ledger.confirm": "Xác nhận",
-  "ledger.cancel": "Hủy dịch vụ",
-  "ledger.delete": "Xóa",
+  "ledger.cancel": "Huỷ dịch vụ",
+  "ledger.delete": "Xoá",
   "ledger.editMoney": "Tiền",
   "ledger.currency": "Tiền tệ",
   "ledger.money.cost": "Giá vốn",
@@ -4168,7 +4175,7 @@ const vi: Record<MessageKey, string> = {
   "ledger.error.fx_rate_missing": "Chưa có tỷ giá cho loại tiền này. Thêm trong Cài đặt > Thanh toán.",
   "ledger.error.line_not_editable": "Không thể thay đổi dịch vụ ở trạng thái hiện tại.",
   "ledger.error.supplier_in_use": "Vẫn còn dịch vụ đặt chỗ dùng nhà cung cấp này.",
-  "ledger.error.aa_supplier_builtin": "Adventure Asia có sẵn, không thể sửa hay xóa.",
+  "ledger.error.aa_supplier_builtin": "Adventure Asia có sẵn, không thể sửa hay xoá.",
   "ledger.error.role_forbidden": "Vai trò của bạn không được làm việc này.",
   "ledger.error.money": "Nhập số tiền như 1250 hoặc 1250.50 và mã tiền tệ 3 chữ như USD.",
   "ledger.error.other": "Đã có lỗi. Vui lòng thử lại.",

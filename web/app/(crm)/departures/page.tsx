@@ -9,9 +9,9 @@ import { ReportTable } from "@/components/reports/ReportTable";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { formatDate } from "@/lib/dates";
-import { fmt, t, type MessageKey } from "@/lib/i18n";
+import { t, type MessageKey } from "@/lib/i18n";
 import { serverContext } from "@/lib/serverContext";
-import { departurePath, paxTotal, type DepartureRow } from "@/lib/travelOps";
+import { departurePath, paxSplitText, type DepartureRow } from "@/lib/travelOps";
 
 export const dynamic = "force-dynamic";
 
@@ -52,7 +52,7 @@ export default async function DeparturesPage({ searchParams }: { searchParams: P
               [d.title, d.service_from && formatDate(d.service_from, locale, { year: true })].filter(Boolean).join(" · "),
               tr(`travel.departure.state.${d.state.status}`),
               String(d.trips),
-              fmt(tr("travel.paxSplit"), { total: String(paxTotal(d.pax)), adults: String(d.pax.adults), children: String(d.pax.children), infants: String(d.pax.infants) }),
+              paxSplitText(ctx.lang, d.pax),
               `${d.stage3_complete} / ${d.trips}`,
             ],
           }))}
