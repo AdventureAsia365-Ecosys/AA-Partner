@@ -47,6 +47,7 @@ answer the whole builder page. Booking is called after the membership check and 
 from __future__ import annotations
 
 import datetime as dt
+import logging
 import uuid
 from decimal import Decimal
 from typing import Annotated, Any, Literal
@@ -57,7 +58,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
-from app.errors import Unavailable
+from app.errors import ServiceError, Unavailable
 from app.permissions import Action, require
 from app.proposals import aa_options, builder
 from app.routers.agency import tenant_header
@@ -65,6 +66,7 @@ from app.tenancy import TenantContext, tenant_tx
 from app.vault import Vault
 from app.vault.provider import require_keys
 
+log = logging.getLogger(__name__)
 router = class_router(AGENCY, tags=["builder"])
 
 CallerDep = Annotated[Caller, Depends(current_caller)]
@@ -418,9 +420,19 @@ async def patch_option(
 ) -> dict[str, Any]:  # fmt: skip
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
-    async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
-        _money_check(ctx, body, ("sell_amount", "net_amount", "use_suggested"), proposal_id)
-        return await builder.update_option(ctx, Vault(keys, ctx), proposal_id, body.seq, option_id, _changes(body))
+    changes = _changes(body)
+    try:
+        async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
+            _money_check(ctx, body, ("sell_amount", "net_amount", "use_suggested"), proposal_id)
+            return await builder.update_option(ctx, Vault(keys, ctx), proposal_id, body.seq, option_id, changes)
+    except ServiceError as exc:
+        # AA-1144 follow-up (S285 live check): one first "Add note" answered 422 and could not be reproduced. Log the
+        # refusal code and which fields were sent (never their values), so the next one names its cause.
+        log.info(
+            "crm_builder_option_refused proposal_id=%s option_id=%s status=%s code=%s fields=%s",
+            proposal_id, option_id, exc.status_code, exc.code, ",".join(sorted(changes)),
+        )  # fmt: skip
+        raise
 
 
 @router.put("/proposals/{proposal_id}/options/{option_id}/prices")

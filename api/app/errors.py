@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from fastapi import Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+
+log = logging.getLogger("app.request")
 
 
 class ServiceError(Exception):
@@ -80,3 +85,24 @@ async def service_error_handler(_: Request, exc: Exception) -> JSONResponse:
     assert isinstance(exc, ServiceError)  # noqa: S101 — registered for ServiceError only
     headers = {"Retry-After": str(exc.retry_after_s)} if isinstance(exc, RateLimited) else None
     return JSONResponse(status_code=exc.status_code, content=exc.body(), headers=headers)
+
+
+def validation_refusal_fields(exc: RequestValidationError) -> str:
+    """``type@loc`` of each refused field ("missing@body.seq"), at most 10; never the value that was sent."""
+    out = []
+    for err in exc.errors()[:10]:
+        loc = ".".join(str(p) for p in err.get("loc", ()))
+        out.append(f"{err.get('type', 'invalid')}@{loc}")
+    return ",".join(out)
+
+
+async def validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """FastAPI's own 422 answer (same body), plus one log line naming the route and the refused fields (AA-1144
+    follow-up, S285 live check: a builder "Add note" answered 422 once and its cause was not in the logs)."""
+    assert isinstance(exc, RequestValidationError)  # noqa: S101 — registered for RequestValidationError only
+    route = request.scope.get("route")
+    log.info(
+        "request_refused_invalid method=%s route=%s errors=%s",
+        request.method, getattr(route, "path", None), validation_refusal_fields(exc),
+    )  # fmt: skip
+    return await request_validation_exception_handler(request, exc)

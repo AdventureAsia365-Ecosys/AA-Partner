@@ -16,6 +16,7 @@ import { DRAWER_MESSAGES } from "./tours.messages";
 import { MasterNewerNotice } from "./MasterNewerNotice";
 import { SeeOriginalToggle } from "./SeeOriginalToggle";
 import { fetchVersionDetail, type Version } from "./catalogApi";
+import { editedFields, hasEdits } from "@/lib/studio/versionEdit";
 
 function TripFact({ label, value }: { label: string; value: string }) {
   return (
@@ -195,15 +196,11 @@ export function CatalogDrawer(props: CatalogDrawerBody) {
     props.onDirty();
   }
 
+  // AA-1144 (S285 live check): send only what the agency edited. CIS keeps every field not sent, so the agency's own
+  // name, subtitle and SEO lines are never replaced by the Master's (they used to be sent with every save).
   function doSave() {
-    props.onSave({
-      name: detail?.aa_name ?? group.aa_name,
-      subtitle: detail?.aa_subtitle ?? group.aa_subtitle,
-      summary: summaryVal,
-      highlights: highlightsVal,
-      seo_title: detail?.aa_seo_title ?? "",
-      seo_meta: detail?.aa_seo_meta ?? "",
-    });
+    const edits = { summary: editSummary, highlights: editHighlights };
+    if (hasEdits(edits)) props.onSave(editedFields(edits));
   }
 
   // ── Header ──

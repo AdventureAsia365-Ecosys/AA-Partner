@@ -25,6 +25,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 
 from app import platform_settings as ps
 from app import tenant_gate
@@ -44,7 +45,7 @@ from app.cis.m2m import TokenProvider
 from app.cis.membership_feed import FeedConfig
 from app.db import Database
 from app.documents.store import DocumentStore, MemoryDocumentStore, S3DocumentStore
-from app.errors import ServiceError, service_error_handler
+from app.errors import ServiceError, service_error_handler, validation_error_handler
 from app.esign.pades import build_pades
 from app.esign.seal import build_sealer
 from app.jobs import handlers as job_handlers
@@ -335,6 +336,7 @@ def create_app(
     # setting (tenant_settings.public_price_per_minute, crm-062), so the limiter's own value is only the default.
     app.state.booking_agency_price_limiter = FixedWindowLimiter(ps.limit(ps.PRICE_CHECKS_DEFAULT))
     app.add_exception_handler(ServiceError, service_error_handler)
+    app.add_exception_handler(RequestValidationError, validation_error_handler)
     app.add_exception_handler(Exception, unhandled_error_handler)
     # AA-969 (F1): the body ceiling runs before any route reads a body (FastAPI parses JSON before the class guard).
     # Added first, so the request id middleware (added next) is the outer one and logs its 413 too.

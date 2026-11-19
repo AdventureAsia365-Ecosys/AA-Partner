@@ -5,12 +5,15 @@ assistant. The services run on PostgreSQL in tests/integration/test_builder_api.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pytest
+from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
 
 from app import margin
+from app.errors import Invalid, validation_refusal_fields
 from app.main import create_app
 from app.proposals import aa_options, builder
 from app.routers import builder as router
@@ -176,3 +179,67 @@ def test_aa_routes_need_booking(pools: LocalPools, monkeypatch: pytest.MonkeyPat
     r = client.post(f"/crm/v1/proposals/{P}/aa-refresh", headers=h, json={"seq": 3})
     assert r.status_code == 503 and r.json()["detail"] == "booking_not_configured"
     assert calls == []
+
+
+# ── AA-1144 follow-up (S285 live check): a first "Add note" answered 422 once and could not be reproduced. The option
+# edit now logs its refusal code and the names of the fields sent (never their values), and every request refused by
+# body validation logs its route and the refused fields. The answers are unchanged.
+
+S285_NOTE = "Lantern walk after dinner in Hollin"
+
+
+def test_a_refused_option_edit_logs_its_code_and_field_names(
+    pools: LocalPools, monkeypatch: pytest.MonkeyPatch, calls: list, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def refuse(*_a: Any, **_kw: Any) -> Any:
+        raise Invalid("invalid_display_note")
+
+    monkeypatch.setattr(builder, "update_option", refuse)
+    client, h = _client(pools, monkeypatch, "agent")
+    with caplog.at_level(logging.INFO):
+        r = client.patch(f"/crm/v1/proposals/{P}/options/{X}", headers=h, json={"seq": 3, "display_note": S285_NOTE})
+    assert r.status_code == 422
+    assert r.json() == {"detail": "invalid_display_note", "message": "invalid_display_note"}
+    lines = [m for m in caplog.messages if m.startswith("crm_builder_option_refused")]
+    assert len(lines) == 1, caplog.messages
+    assert "status=422 code=invalid_display_note fields=display_note" in lines[0]
+    assert P in lines[0] and X in lines[0]
+    assert S285_NOTE not in caplog.text
+
+
+def test_a_saved_option_edit_logs_no_refusal(
+    pools: LocalPools, monkeypatch: pytest.MonkeyPatch, calls: list, caplog: pytest.LogCaptureFixture
+) -> None:
+    client, h = _client(pools, monkeypatch, "agent")
+    with caplog.at_level(logging.INFO):
+        r = client.patch(f"/crm/v1/proposals/{P}/options/{X}", headers=h, json={"seq": 3, "display_note": S285_NOTE})
+    assert r.status_code == 200 and calls[-1][0] == "update_option"
+    assert calls[-1][1][5] == {"display_note": S285_NOTE}
+    assert not [m for m in caplog.messages if m.startswith("crm_builder_option_refused")]
+
+
+def test_a_body_refused_by_validation_logs_route_and_fields_with_the_default_answer(
+    pools: LocalPools, monkeypatch: pytest.MonkeyPatch, calls: list, caplog: pytest.LogCaptureFixture
+) -> None:
+    client, h = _client(pools, monkeypatch, "agent")
+    with caplog.at_level(logging.INFO):
+        r = client.patch(f"/crm/v1/proposals/{P}/options/{X}", headers=h, json={"display_note": S285_NOTE})
+    assert r.status_code == 422
+    body = r.json()
+    assert body["detail"][0]["type"] == "missing" and body["detail"][0]["loc"] == ["body", "seq"]
+    lines = [m for m in caplog.messages if m.startswith("request_refused_invalid")]
+    assert len(lines) == 1, caplog.messages
+    assert "method=PATCH route=/crm/v1/proposals/{proposal_id}/options/{option_id}" in lines[0]
+    assert "errors=missing@body.seq" in lines[0]
+    assert S285_NOTE not in lines[0]
+    assert calls == []
+
+
+def test_validation_refusal_fields_names_types_and_places_only() -> None:
+    exc = RequestValidationError(
+        [{"type": "string_too_long", "loc": ("body", "display_note"), "input": S285_NOTE}, {"loc": ("query", "seq")}]
+        + [{"type": "missing", "loc": ("body", f"f{i}")} for i in range(12)]
+    )
+    out = validation_refusal_fields(exc)
+    assert out.startswith("string_too_long@body.display_note,invalid@query.seq,missing@body.f0")
+    assert len(out.split(",")) == 10 and S285_NOTE not in out
