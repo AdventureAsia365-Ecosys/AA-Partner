@@ -305,6 +305,27 @@ function CreateFact({ initial, own, onClose, onCreated }: {
   );
 }
 
+/** The drawer's buttons: Delete, Cancel and Save (no Save on a read-only fact: canSave null). */
+function EditFooter({ t, busy, canSave, onDelete, onCancel, onSave }: {
+  t: FactsT; busy: boolean; canSave: boolean | null; onDelete: () => void; onCancel: () => void; onSave: () => void;
+}) {
+  return (
+    <div style={{ display: "flex", gap: 8, justifyContent: "space-between", width: "100%", flexWrap: "wrap" }}>
+      <Button variant="danger" onClick={onDelete} disabled={busy}>
+        <Trash2 size={13} aria-hidden /> {t("delete")}
+      </Button>
+      <span style={{ display: "inline-flex", gap: 8 }}>
+        <Button variant="ghost" onClick={onCancel} disabled={busy}>{t("cancel")}</Button>
+        {canSave !== null && (
+          <Button variant="primary" onClick={onSave} disabled={busy || !canSave}>
+            {busy ? t("saving") : t("save")}
+          </Button>
+        )}
+      </span>
+    </div>
+  );
+}
+
 function EditFact({ fact, own, onClose, onChanged }: {
   fact: TenantFact; own: TenantFact[]; onClose: () => void; onChanged: (next: TenantFact | null) => void;
 }) {
@@ -352,21 +373,8 @@ function EditFact({ fact, own, onClose, onChanged }: {
   return (
     <>
       <Drawer open onClose={close} title={t("yourFact")} width={560}
-        footer={
-          <div style={{ display: "flex", gap: 8, justifyContent: "space-between", width: "100%", flexWrap: "wrap" }}>
-            <Button variant="danger" onClick={() => setConfirmDelete(true)} disabled={busy}>
-              <Trash2 size={13} aria-hidden /> {t("delete")}
-            </Button>
-            <span style={{ display: "inline-flex", gap: 8 }}>
-              <Button variant="ghost" onClick={close} disabled={busy}>{t("cancel")}</Button>
-              {!locked && (
-                <Button variant="primary" onClick={() => void save()} disabled={busy || !dirty || !!problem}>
-                  {busy ? t("saving") : t("save")}
-                </Button>
-              )}
-            </span>
-          </div>
-        }>
+        footer={<EditFooter t={t} busy={busy} canSave={locked ? null : dirty && !problem} onDelete={() => setConfirmDelete(true)}
+          onCancel={close} onSave={() => void save()} />}>
         <div data-testid="brand-fact-drawer" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {fact.expired && (
             <div style={noteStyle}><Badge tone="warning">{t("expired")}</Badge> {t("expiredNote")}</div>
