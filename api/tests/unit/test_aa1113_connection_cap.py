@@ -94,13 +94,13 @@ async def test_no_entry_for_the_connection_is_no_cap_and_reads_nothing(caps: dic
     caps["zz-other"] = 1
     c = spend_conn("500")
     assert await connection_cap.refusal(c, BedrockLike()) == (None, None)
-    assert c.calls == []
+    assert c.sql(SPEND) == []  # AA-1143: only the CIS copy's row is looked up (none here)
 
 
 async def test_the_compiled_default_caps_nothing() -> None:
     c = spend_conn("500")
     assert await connection_cap.refusal(c, BedrockLike()) == (None, None)
-    assert c.calls == []
+    assert c.sql(SPEND) == []
 
 
 async def test_prod_never_refuses_for_the_cap(caps: dict[str, Any], prod: None) -> None:
@@ -114,7 +114,7 @@ async def test_an_unreadable_setting_fails_closed_in_dev_only(
     caps["acc2"] = "lots"
     c = spend_conn("0")
     assert await connection_cap.refusal(c, BedrockLike()) == ("spend_unreadable", None)
-    assert c.calls == []
+    assert c.sql(SPEND) == []
     monkeypatch.setattr(spend_environment, "is_prod", lambda: True)
     assert await connection_cap.refusal(c, BedrockLike()) == (None, None)
 

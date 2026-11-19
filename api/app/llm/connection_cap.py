@@ -107,7 +107,7 @@ async def read_state(conn: asyncpg.Connection, cis_key: str) -> CapState | None:
             _unmapped_logged.add("reader-missing")
             log.warning("crm_llm_connection_cap_reader_missing connection=%s", cis_key)
         return None
-    cap = connection_share.cap_for(cis_key)
+    cap = await connection_share.share_for(conn, cis_key)  # AA-1143: the CIS copy (crm-079), else the setting
     if cap is None:
         return None
     return CapState(connection_key=cis_key, monthly_cap_usd=cap, month_spent_usd=await month_spend(conn))
