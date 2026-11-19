@@ -211,50 +211,15 @@ export function DataLifecycleView({
       )}
 
       <Panel title={t(lang, "data.trash")} testId="data-trash">
-        {trash.length === 0 ? (
-          <p style={{ margin: 0, fontSize: 13, color: K.muted }}>{t(lang, "data.trash.empty")}</p>
-        ) : (
-          <>
-            {view.deletion_dry_run && (
-              <p data-testid="data-trash-dry-run" style={{ margin: "0 0 10px", fontSize: 13, color: K.muted }}>
-                {t(lang, "data.trash.dryRunNote")}
-              </p>
-            )}
-            {/* AA-1129 (S283 rows 13, 14): the kit DataTable pages the trash (134 rows made the page 20,000 px tall) and
-                each row says what the removal date means while deletion is a dry run. */}
-            <DataTable<TrashItem>
-              data={trash}
-              columns={[
-                { id: "kind", header: t(lang, "data.trash.col.kind"), accessorFn: (i) => tr(`data.trash.kind.${i.kind}`), cell: ({ getValue }) => <Badge tone="neutral">{String(getValue())}</Badge> },
-                { id: "item", header: t(lang, "data.trash.col.item"), accessorFn: (i) => i.label ?? t(lang, "data.trash.untitled"), cell: ({ getValue }) => <span style={{ color: K.ink, overflowWrap: "anywhere" }}>{String(getValue())}</span> },
-                {
-                  id: "removal",
-                  header: t(lang, "data.trash.col.removal"),
-                  accessorFn: (i) => i.purge_after,
-                  cell: ({ row }) => <span style={{ color: K.muted }}>{trashPurgeLine(row.original.purge_after, view.deletion_dry_run, now, lang, locale)}</span>,
-                },
-                {
-                  id: "actions",
-                  header: "",
-                  enableSorting: false,
-                  meta: { align: "right", hideLabelOnCard: true },
-                  cell: ({ row }) => (
-                    <Button size="sm" variant="ghost" disabled={busy} onClick={() => send("POST", `trash/${row.original.kind}/${row.original.id}/restore`)}>
-                      {t(lang, "data.trash.restore")}
-                    </Button>
-                  ),
-                },
-              ]}
-              tableId="crm-data-trash"
-              getRowId={(i) => `${i.kind}:${i.id}`}
-              rowTestId={() => "data-trash-item"}
-              searchable={trash.length > 10}
-              pageSize={10}
-              pageSizeOptions={[10, 25, 50]}
-              compact
-            />
-          </>
-        )}
+        <TrashList
+          trash={trash}
+          dryRun={view.deletion_dry_run}
+          now={now}
+          lang={lang}
+          locale={locale}
+          busy={busy}
+          onRestore={(i) => send("POST", `trash/${i.kind}/${i.id}/restore`)}
+        />
       </Panel>
 
       {owner && (
@@ -433,5 +398,68 @@ export function DataLifecycleView({
         </Panel>
       )}
     </div>
+  );
+}
+
+/** AA-1129 (S283 rows 13, 14): the trash as a kit DataTable (134 rows made the page 20,000 px tall), each row saying what
+ *  its removal date means while deletion is a dry run (`now` is the server render's clock, so both renders agree). */
+function TrashList({
+  trash,
+  dryRun,
+  now,
+  lang,
+  locale,
+  busy,
+  onRestore,
+}: {
+  trash: TrashItem[];
+  dryRun: boolean;
+  now: string;
+  lang: Lang;
+  locale: DateLocale;
+  busy: boolean;
+  onRestore: (item: TrashItem) => void;
+}) {
+  const tr = (key: string) => t(lang, key as MessageKey);
+  if (trash.length === 0) return <p style={{ margin: 0, fontSize: 13, color: K.muted }}>{t(lang, "data.trash.empty")}</p>;
+  return (
+    <>
+      {dryRun && (
+        <p data-testid="data-trash-dry-run" style={{ margin: "0 0 10px", fontSize: 13, color: K.muted }}>
+          {t(lang, "data.trash.dryRunNote")}
+        </p>
+      )}
+      <DataTable<TrashItem>
+        data={trash}
+        columns={[
+          { id: "kind", header: t(lang, "data.trash.col.kind"), accessorFn: (i) => tr(`data.trash.kind.${i.kind}`), cell: ({ getValue }) => <Badge tone="neutral">{String(getValue())}</Badge> },
+          { id: "item", header: t(lang, "data.trash.col.item"), accessorFn: (i) => i.label ?? t(lang, "data.trash.untitled"), cell: ({ getValue }) => <span style={{ color: K.ink, overflowWrap: "anywhere" }}>{String(getValue())}</span> },
+          {
+            id: "removal",
+            header: t(lang, "data.trash.col.removal"),
+            accessorFn: (i) => i.purge_after,
+            cell: ({ row }) => <span style={{ color: K.muted }}>{trashPurgeLine(row.original.purge_after, dryRun, now, lang, locale)}</span>,
+          },
+          {
+            id: "actions",
+            header: "",
+            enableSorting: false,
+            meta: { align: "right", hideLabelOnCard: true },
+            cell: ({ row }) => (
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => onRestore(row.original)}>
+                {t(lang, "data.trash.restore")}
+              </Button>
+            ),
+          },
+        ]}
+        tableId="crm-data-trash"
+        getRowId={(i) => `${i.kind}:${i.id}`}
+        rowTestId={() => "data-trash-item"}
+        searchable={trash.length > 10}
+        pageSize={10}
+        pageSizeOptions={[10, 25, 50]}
+        compact
+      />
+    </>
   );
 }

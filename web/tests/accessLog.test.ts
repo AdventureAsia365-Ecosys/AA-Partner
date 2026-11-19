@@ -12,6 +12,7 @@ import {
   eventsPath,
   exportFilename,
   exportPath,
+  memberDirectory,
   objectHref,
   shortId,
   whenText,
@@ -100,5 +101,19 @@ describe("access log lines", () => {
       for (const a of ACTIONS) expect(MESSAGES[lang][`log.act.${a}` as keyof (typeof MESSAGES)["en"]], `${lang} ${a}`).toBeTruthy();
       for (const g of ACTOR_GROUPS) expect(MESSAGES[lang][`log.actor.${g}` as keyof (typeof MESSAGES)["en"]], `${lang} ${g}`).toBeTruthy();
     }
+  });
+});
+
+describe("member directory (AA-1129)", () => {
+  it("keys the members API list by id with only the label fields; null when the members call failed", () => {
+    const dir = memberDirectory([
+      { member_id: "m-1", role: "agent", display_name: "kim.tran", seq: 2 },
+      { member_id: "m-2", role: "owner", display_name: null, seq: 1 },
+    ]);
+    expect(dir?.get("m-1")).toEqual({ role: "agent", display_name: "kim.tran", seq: 2 });
+    expect(dir?.get("m-2")).toEqual({ role: "owner", display_name: null, seq: 1 });
+    expect(dir?.get("m-3")).toBeUndefined();
+    expect(memberDirectory(null)).toBeNull();
+    expect(memberDirectory(undefined)).toBeNull();
   });
 });

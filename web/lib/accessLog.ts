@@ -92,6 +92,13 @@ export interface AuditPage {
 /** AA-1129: the agency's members by id (the members API: name, role, place in the role), for the member label rule. */
 export type MemberDirectory = ReadonlyMap<string, PersonRef>;
 
+/** The directory of the members API's list (`GET /members`); null when that call failed, so a line names the role alone. */
+export function memberDirectory(
+  members: readonly (PersonRef & { member_id: string })[] | null | undefined,
+): MemberDirectory | null {
+  return members ? new Map(members.map((m) => [m.member_id, { role: m.role, display_name: m.display_name, seq: m.seq }])) : null;
+}
+
 export interface LogFilter {
   actor?: ActorGroup;
   action?: string;

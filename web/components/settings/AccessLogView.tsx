@@ -23,6 +23,7 @@ import {
   exportFilename,
   exportPath,
   filterQuery,
+  memberDirectory,
   objectHref,
   whenText,
 } from "@/lib/accessLog";
@@ -43,7 +44,7 @@ const field: React.CSSProperties = {
 
 export function AccessLogView({
   initial,
-  members = null,
+  members,
   filter,
   lang,
   locale,
@@ -61,12 +62,10 @@ export function AccessLogView({
   const [draft, setDraft] = useState<LogFilter>(filter);
   const [busy, setBusy] = useState<"more" | ExportFormat | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // AA-1129 (S283 row 10): one zone for the server render and the browser (the agency's), so hydration matches.
-  const zone = initial.timezone ?? "UTC";
-  const directory: MemberDirectory | null = useMemo(
-    () => (members ? new Map(members.map((m) => [m.member_id, { role: m.role, display_name: m.display_name, seq: m.seq }])) : null),
-    [members],
-  );
+  // AA-1129 (S283 row 10): one zone for the server render and the browser (the agency's), so hydration matches;
+  // whenText falls back to UTC for an older API without the field.
+  const zone = initial.timezone;
+  const directory = useMemo(() => memberDirectory(members), [members]);
 
   function go(next: LogFilter) {
     const q = filterQuery(next).toString();
@@ -185,32 +184,9 @@ export function AccessLogView({
           <EmptyState title={t(lang, "log.none")} />
         ) : (
           <ol style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 0 }}>
-            {events.map((e) => {
-              const href = objectHref(e);
-              return (
-                <li
-                  key={e.event_id}
-                  data-testid="access-log-row"
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "minmax(96px, 120px) minmax(0, 1fr)",
-                    gap: "2px 14px",
-                    padding: "9px 0",
-                    borderTop: `1px solid ${K.line}`,
-                    fontSize: 13,
-                  }}
-                >
-                  <time dateTime={e.at} style={{ color: K.muted, whiteSpace: "nowrap" }}>
-                    {whenText(e.at, locale, zone)}
-                  </time>
-                  <div style={{ minWidth: 0, overflowWrap: "anywhere", color: K.ink }}>
-                    <strong style={{ fontWeight: 600 }}>{actorText(e, lang, directory)}</strong>{" "}
-                    {href ? <a href={href}>{eventText(e, lang, directory)}</a> : eventText(e, lang, directory)}{" "}
-                    {e.outcome === "denied" && <Badge tone="danger">{t(lang, "log.outcome.denied")}</Badge>}
-                  </div>
-                </li>
-              );
-            })}
+            {events.map((e) => (
+              <AccessLogRow key={e.event_id} e={e} lang={lang} locale={locale} zone={zone} directory={directory} />
+            ))}
           </ol>
         )}
         {cursor && (
@@ -223,5 +199,44 @@ export function AccessLogView({
         <p style={{ margin: "12px 0 0", fontSize: 12, color: K.muted }}>{t(lang, "log.viewedNote")}</p>
       </Panel>
     </div>
+  );
+}
+
+/** One line of the log: when (the agency's zone), who (the member rule), what (a link to the object when it has a page). */
+function AccessLogRow({
+  e,
+  lang,
+  locale,
+  zone,
+  directory,
+}: {
+  e: AuditEventView;
+  lang: Lang;
+  locale: DateLocale;
+  zone: string | undefined;
+  directory: MemberDirectory | null;
+}) {
+  const href = objectHref(e);
+  const text = eventText(e, lang, directory);
+  return (
+    <li
+      data-testid="access-log-row"
+      style={{
+        display: "grid",
+        gridTemplateColumns: "minmax(96px, 120px) minmax(0, 1fr)",
+        gap: "2px 14px",
+        padding: "9px 0",
+        borderTop: `1px solid ${K.line}`,
+        fontSize: 13,
+      }}
+    >
+      <time dateTime={e.at} style={{ color: K.muted, whiteSpace: "nowrap" }}>
+        {whenText(e.at, locale, zone)}
+      </time>
+      <div style={{ minWidth: 0, overflowWrap: "anywhere", color: K.ink }}>
+        <strong style={{ fontWeight: 600 }}>{actorText(e, lang, directory)}</strong> {href ? <a href={href}>{text}</a> : text}{" "}
+        {e.outcome === "denied" && <Badge tone="danger">{t(lang, "log.outcome.denied")}</Badge>}
+      </div>
+    </li>
   );
 }
