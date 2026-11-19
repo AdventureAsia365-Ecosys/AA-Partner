@@ -162,13 +162,13 @@ async def _seed(pool: asyncpg.Pool) -> dict[str, Any]:
         own = await suppliers.create_supplier(
             ctx,
             Vault(s["keys"], ctx),
-            {"name": "Kathmandu Lodge", "category": "accommodation", "default_commission_pct": SUPPLIER_COMMISSION_PCT},
+            {"name": "Kathmandu Lodge", "category": "flight", "default_commission_pct": SUPPLIER_COMMISSION_PCT},
         )
         line = await lines.create_line(
             ctx,
             s["trip"],
-            {"agency_supplier_id": uuid.UUID(own["agency_supplier_id"]), "title": "Lodge 2 nights",
-             "confirmation_no": "KL-4410"},
+            {"category": "flight", "agency_supplier_id": uuid.UUID(own["agency_supplier_id"]),
+             "title": "Lodge 2 nights", "confirmation_no": "KL-4410"},
         )  # fmt: skip
         line_id = uuid.UUID(line["booking_line_id"])
         await lines.put_money(
@@ -187,8 +187,8 @@ async def _seed(pool: asyncpg.Pool) -> dict[str, Any]:
         )
         # AA-1069: a catalogue service with a unit net and a group-size tier net (owner / agent only).
         service = await catalogue.create_service(ctx, {
-            "agency_supplier_id": uuid.UUID(own["agency_supplier_id"]), "category": "transfer",
-            "name": "Airport transfer", "unit_net": SERVICE_NET, "unit_sell": "4012.35", "currency": "USD",
+            "agency_supplier_id": uuid.UUID(own["agency_supplier_id"]), "category": "insurance",
+            "name": "Trip cover", "unit_net": SERVICE_NET, "unit_sell": "4012.35", "currency": "USD",
             "qty_basis": "per_booking", "tiers": [{"min_pax": 4, "max_pax": None, "unit_net": SERVICE_TIER_NET}],
         })  # fmt: skip
     assert confirmed["status"] == "confirmed" and confirmed["money"]["margin_base"] == LINE_MARGIN

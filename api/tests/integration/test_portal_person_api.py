@@ -347,7 +347,7 @@ async def test_cancelled_lines_are_hidden_and_no_price_is_shown(app_pool: asyncp
     s = await _party(app_pool)
     async with tenant_tx(app_pool, s["agent"], s["tenant"]) as ctx:
         supplier = await ctx.conn.fetchval(
-            "INSERT INTO crm.agency_supplier (name, category) VALUES ('Fjord View Lodge', 'accommodation') "
+            "INSERT INTO crm.agency_supplier (name, category) VALUES ('Fjord View Lodge', 'flight') "
             "RETURNING agency_supplier_id"
         )
         for title, visible, collect in (

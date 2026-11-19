@@ -74,7 +74,7 @@ async def _flight_lines(pool: asyncpg.Pool, s: dict[str, Any]) -> tuple[uuid.UUI
         out = []
         for i, title in enumerate(("Valley hop out", "Valley hop back")):
             day = (s["start"] + dt.timedelta(days=4 * i)).isoformat()  # L1 = the earlier line (closed-list order)
-            body = {"agency_supplier_id": supplier, "title": title, "service_from": day}
+            body = {"category": "flight", "agency_supplier_id": supplier, "title": title, "service_from": day}
             line = await lines.create_line(ctx, s["trip"], body)
             out.append(uuid.UUID(line["booking_line_id"]))
     return supplier, out

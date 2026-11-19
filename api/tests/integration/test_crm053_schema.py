@@ -43,7 +43,7 @@ async def _setup(pool: asyncpg.Pool) -> dict[str, Any]:
     ids["aa"] = await _run(pool, t, "SELECT crm.ensure_aa_supplier()", actor="seed:test", role=None)
     ids["own"] = await _run(
         pool, t,
-        "INSERT INTO crm.agency_supplier (kind, name, category) VALUES ('own', 'Bamboo Transfers', 'transport') "
+        "INSERT INTO crm.agency_supplier (kind, name, category) VALUES ('own', 'Bamboo Transfers', 'other') "
         "RETURNING agency_supplier_id",
     )  # fmt: skip
     return ids

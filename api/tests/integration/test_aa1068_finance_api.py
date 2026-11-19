@@ -53,7 +53,7 @@ async def _setup(pool: asyncpg.Pool) -> dict[str, Any]:
     await allow_export(pool, tenant_id)  # AA-1116: the profit CSV is the plan's insights_export
     async with tenant_tx(pool, who["agent"], tenant_id) as ctx:
         own = await suppliers.create_supplier(
-            ctx, Vault(s["keys"], ctx), {"name": "Pine Hill Lodge", "category": "accommodation"}
+            ctx, Vault(s["keys"], ctx), {"name": "Pine Hill Lodge", "category": "flight"}
         )
         s["supplier"] = uuid.UUID(own["agency_supplier_id"])
         s["aa"] = await ctx.conn.fetchval("SELECT crm.ensure_aa_supplier()")
@@ -87,7 +87,14 @@ async def _trip(
 async def _confirmed_line(pool: asyncpg.Pool, s: dict[str, Any], trip: uuid.UUID, cost: str, sell: str) -> uuid.UUID:
     async with tenant_tx(pool, s["who"]["agent"], s["tenant"]) as ctx:
         made = await lines.create_line(
-            ctx, trip, {"agency_supplier_id": s["supplier"], "title": "Lodge 2 nights", "confirmation_no": None}
+            ctx,
+            trip,
+            {
+                "category": "flight",
+                "agency_supplier_id": s["supplier"],
+                "title": "Lodge 2 nights",
+                "confirmation_no": None,
+            },
         )
         line = uuid.UUID(made["booking_line_id"])
         await lines.update_line(ctx, line, {"confirmation_no": f"PH-{uuid.uuid4().hex[:6]}"})

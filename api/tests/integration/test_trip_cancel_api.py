@@ -125,9 +125,10 @@ async def _agency_line(
     supplier_name: str = "Riverside Lodge",
 ) -> uuid.UUID:
     async with tenant_tx(pool, s["who"]["agent"], s["tenant"]) as ctx:
-        supplier = {"name": supplier_name, "category": "accommodation", "commission_due_days": 10}
+        supplier = {"name": supplier_name, "category": "flight", "commission_due_days": 10}
         own = await suppliers.create_supplier(ctx, Vault(keys, ctx), supplier)
         body = {
+            "category": "flight",
             "agency_supplier_id": uuid.UUID(own["agency_supplier_id"]),
             "title": "Lodge 2 nights",
             "confirmation_no": "RL-7",
@@ -664,12 +665,10 @@ async def test_a_trip_whose_cancellation_waits_for_aa_is_closed_for_planning(app
     fake = FakeBooking(confirm_line_status="confirmed")
     await _aa_booking(app_pool, s, fake)
     async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
-        own = await suppliers.create_supplier(
-            ctx, Vault(keys, ctx), {"name": "Hillside Inn", "category": "accommodation"}
-        )
+        own = await suppliers.create_supplier(ctx, Vault(keys, ctx), {"name": "Hillside Inn", "category": "flight"})
     out = await _cancel(app_pool, s, dry_run=False)
     assert out["cancellation"]["status"] == "pending"
-    line = {"agency_supplier_id": uuid.UUID(own["agency_supplier_id"]), "title": "Inn 1 night"}
+    line = {"category": "flight", "agency_supplier_id": uuid.UUID(own["agency_supplier_id"]), "title": "Inn 1 night"}
     refusals = {
         "aa_quote": lambda ctx: aa_lines.request_line(ctx, s["trip"], _body()),
         "agency_line": lambda ctx: lines.create_line(ctx, s["trip"], line),

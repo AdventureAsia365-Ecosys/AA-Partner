@@ -108,8 +108,8 @@ async def test_the_catalogue_and_add_from_catalogue(app_pool: asyncpg.Pool) -> N
         foreign = await catalogue.create_service(
             ctx,
             {
-                "category": "transfer",
-                "name": "Lake shuttle",
+                "category": "visa",
+                "name": "Lake visa desk",
                 "unit_sell": "40",
                 "currency": "QZX",
                 "qty_basis": "per_booking",
@@ -246,6 +246,7 @@ async def _lines(pool: asyncpg.Pool, d: dict[str, Any], supplier: uuid.UUID, *ti
                 ctx,
                 d["trip"],
                 {
+                    "category": "flight",
                     "agency_supplier_id": supplier,
                     "title": title,
                     "service_from": (dt.date.today() + dt.timedelta(days=60 + i)).isoformat(),
@@ -258,9 +259,9 @@ async def _lines(pool: asyncpg.Pool, d: dict[str, Any], supplier: uuid.UUID, *ti
 async def test_supplier_requests_from_draft_to_confirmation(app_pool: asyncpg.Pool) -> None:
     d = await _mail_setup(app_pool)  # the owner's own Gmail mailbox, an inquiry trip with its lead client
     air = await _supplier(app_pool, d, d["owner"], "Lantern Air", "flight", SUPPLIER_MAIL)
-    boats = await _supplier(app_pool, d, d["owner"], "River Boats", "transport")  # no e-mail
+    boats = await _supplier(app_pool, d, d["owner"], "River Boats", "other")  # no e-mail
     first, second = await _lines(app_pool, d, air, "Flight to the hills", "Flight back")
-    (boat,) = await _lines(app_pool, d, boats, "Boat transfer")
+    (boat,) = await _lines(app_pool, d, boats, "Visa handling")
 
     async with tenant_tx(app_pool, d["owner"], d["tenant"]) as ctx:
         built = await requests.build(ctx, Vault(d["keys"], ctx), d["trip"])
@@ -361,7 +362,7 @@ async def test_supplier_requests_from_draft_to_confirmation(app_pool: asyncpg.Po
 async def test_a_supplier_request_needs_lines_of_that_supplier(app_pool: asyncpg.Pool) -> None:
     d = await _mail_setup(app_pool)
     air = await _supplier(app_pool, d, d["owner"], "Lantern Air", "flight", SUPPLIER_MAIL)
-    van = await _supplier(app_pool, d, d["owner"], "Hill Vans", "transport", "desk@hill-vans.example.test")
+    van = await _supplier(app_pool, d, d["owner"], "Hill Vans", "other", "desk@hill-vans.example.test")
     (flight,) = await _lines(app_pool, d, air, "Flight to the hills")
     (ride,) = await _lines(app_pool, d, van, "Van to the lake")
     async with tenant_tx(app_pool, d["owner"], d["tenant"]) as ctx:
