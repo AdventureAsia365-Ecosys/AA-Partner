@@ -5,7 +5,8 @@ in the call's ``tenant_tx()``, and a route entry on a capped connection left out
   (``crm.llm_stage_route.connection_key``) count for that connection only; every other row (another model, the
   guardrail rows) counts for the process's own connection.
 - Through the gateway with the real profile source: the named connection at its cap -> the draft is answered by the
-  entry on the process's own connection, one row, attempt 1; under the cap the named entry answers first.
+  entry on the process's own connection, one row, attempt 1; under the cap the named entry answers first; without
+  its own CRM cap the named entry is never called (dev rules, fail closed).
 Invented stage, models and amounts; the rows are removed after each test.
 """
 
@@ -138,3 +139,15 @@ async def test_under_the_cap_the_named_entry_answers_first(
     assert (await _draft(app_pool, owner, tenant_id)).outcome == "ok"
     [row] = await _rows(admin, tenant_id)
     assert (row["model"], row["attempt_no"]) == (FAST, 1)
+
+
+async def test_without_its_cap_the_named_entry_is_never_called(
+    app_pool: asyncpg.Pool, admin: asyncpg.Connection, caps: dict[str, Any], zz_route: None
+) -> None:
+    """Fail closed (review S285): the dev rules never use a named connection before its CRM cap exists."""
+    tenant_id, [(owner, _)] = await _agency(app_pool)
+    await _enable(app_pool, owner, tenant_id)
+    caps.update({"acc2": 1000})
+    assert (await _draft(app_pool, owner, tenant_id)).outcome == "ok"
+    [row] = await _rows(admin, tenant_id)
+    assert (row["model"], row["attempt_no"], row["outcome"]) == (LITE, 1, "ok")

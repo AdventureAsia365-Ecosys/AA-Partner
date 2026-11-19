@@ -9,8 +9,10 @@ own monthly cap is enforced per connection of the route.
 - The cap: ``bedrock_acc1`` is CIS ``acc1``; its month spend is the rows of the (stage, model) pairs routed on it, the
   process's own connection keeps every other row. A route entry on a capped connection is left out (the draft goes to
   the next entry), all capped refuses, and no cap leaves the route as it was.
-- Through the real gateway: acc1 at its cap -> one answered row from the fallback entry, the capped entry never called;
-  acc1 not configured -> a free refused attempt, then the fallback answers.
+- Fail closed (review S285): under the dev rules a named connection without its own CRM cap is never used (the entry
+  is left out, ``connection_cap_missing`` when it is the only one); the prod rules only log it.
+- Through the real gateway: acc1 at its cap, or acc1 without a cap -> one answered row from the fallback entry, the
+  acc1 entry never called; acc1 capped but not configured -> a free refused attempt, then the fallback answers.
 Fakes only (no database, no AWS, no paid call); invented model ids, names and amounts.
 """
 
@@ -277,10 +279,62 @@ async def test_every_entry_capped_refuses_with_the_first_refusal(caps: dict[str,
     )
 
 
-async def test_no_cap_leaves_the_route_and_reads_nothing(caps: dict[str, Any]) -> None:
+async def test_no_cap_on_the_own_connection_leaves_it_and_reads_nothing(caps: dict[str, Any]) -> None:
+    caps.update({"acc1": 5})
+    router = Router()
+    original = draft_profile(NOVA_LIKE)
+    c = ScriptedConn().on(NAMED_SQL, Decimal("600")).on(OWN_SQL, Decimal("600"))
+    assert await connection_cap.check_route(c, original, router, router.for_route) == (None, None, original)
+    assert c.calls == []
+
+
+@pytest.mark.parametrize("value", [{}, {"acc2": 5}])
+async def test_a_named_connection_without_a_cap_is_never_used_under_dev_rules(
+    caps: dict[str, Any], value: dict[str, Any]
+) -> None:
+    """Fail closed (review S285): the acc1 entry is left out until the CRM's acc1 cap exists, whatever the order of
+    the live steps; the route goes on with the own connection, and nothing is read for the uncapped acc1."""
+    caps.update(value)
+    router = Router()
+    c = ScriptedConn().on(NAMED_SQL, Decimal("0")).on(OWN_SQL, Decimal("0"))
+    code, error, profile = await connection_cap.check_route(c, draft_profile(), router, router.for_route)
+    assert (code, error) == (None, None)
+    assert profile.route == (NOVA_LIKE,)
+    assert c.sql(NAMED_SQL) == []
+    assert await connection_cap.refusal(c, Named(FAST, ACC1_CONNECTION, ACC1_CONNECTION)) == (
+        "connection_cap_missing",
+        "budget",
+    )
+
+
+async def test_a_named_connection_the_registry_cannot_name_is_refused_under_dev_rules(caps: dict[str, Any]) -> None:
+    caps.update({"acc1": 5, "acc2": 5})
+    c = ScriptedConn()
+    assert await connection_cap.refusal(c, Named(FAST, "bedrock_elsewhere", "bedrock_elsewhere")) == (
+        "connection_cap_missing",
+        "budget",
+    )
+    assert c.calls == []
+
+
+async def test_only_a_named_connection_alone_without_a_cap_refuses_the_call(caps: dict[str, Any]) -> None:
+    router = Router()
+    only_fast = draft_profile(HAIKU_LIKE)
+    c = ScriptedConn()
+    assert await connection_cap.check_route(c, only_fast, router, router.for_route) == (
+        "connection_cap_missing",
+        "budget",
+        only_fast,
+    )
+
+
+async def test_prod_rules_only_log_a_named_connection_without_a_cap(
+    caps: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(connection_cap.spend_environment, "is_prod", lambda: True)
     router = Router()
     original = draft_profile()
-    c = ScriptedConn().on(NAMED_SQL, Decimal("600")).on(OWN_SQL, Decimal("600"))
+    c = ScriptedConn()
     assert await connection_cap.check_route(c, original, router, router.for_route) == (None, None, original)
     assert c.calls == []
 
@@ -318,6 +372,18 @@ class Source:
 _STAGE, _RULES, _RUN, _ANSWER = PATHS[0]
 
 
+async def test_acc1_without_its_cap_sends_the_draft_to_the_fallback(caps: dict[str, Any]) -> None:
+    caps.update({"acc2": 5})  # the acc1 entry exists only once the CRM's acc1 cap does (review S285)
+    router = Router(_ANSWER)
+    c = _RULES(gateway_conn().on(OWN_SQL, Decimal("0.5")))
+    gw = LlmGateway(PiiScrubber(_NoFindings()), router, keys=object(), profiles=Source(draft_profile()))
+    out = await _RUN(c, gw)
+    assert router.fast.prompts == [] and len(router.lite.prompts) == 1
+    [row] = ledger(c)
+    assert (row[0], row[3], row[8]) == (_STAGE, LITE, "ok")
+    assert out["outcome"] == "ok"
+
+
 async def test_acc1_at_its_cap_sends_the_draft_to_the_fallback(caps: dict[str, Any]) -> None:
     caps.update({"acc1": 5, "acc2": 5})
     router = Router(_ANSWER)
@@ -331,8 +397,9 @@ async def test_acc1_at_its_cap_sends_the_draft_to_the_fallback(caps: dict[str, A
 
 
 async def test_an_unconfigured_acc1_is_a_free_refused_attempt_then_the_fallback(caps: dict[str, Any]) -> None:
+    caps.update({"acc1": 5})  # capped, so the entry is tried; the process has no acc1 role
     process = BedrockConverseProvider(LITE, client=FakeBedrockClient(converse_answer(_ANSWER)))
-    c = _RULES(gateway_conn())
+    c = _RULES(gateway_conn().on(NAMED_SQL, Decimal("0")))
     gw = LlmGateway(PiiScrubber(_NoFindings()), process, keys=object(), profiles=Source(draft_profile()))
     out = await _RUN(c, gw)
     first, second = ledger(c)

@@ -16,7 +16,12 @@ per connection of the stage's route (AA-1138: a route may span connections, crm-
   Bedrock, ``bedrock``, is the account the CRM runs on, ``acc2``; the named connection ``bedrock_acc1`` of crm-078 is
   ``acc1``; a role-assumed connection, ``bedrock_role``, has no mapping yet, so no cap applies to it, logged once per
   process);
-- no entry in the setting for that connection = no CRM cap: nothing to check, nothing read;
+- no entry in the setting for that connection = no CRM cap: nothing to check, nothing read. Except a route entry's
+  NAMED connection (``crm.llm_stage_route.connection_key``, AA-1138): it is the CRM's spend on an account it does not
+  run on, so under the ``dev`` rules it is never used without its own CRM cap (fail closed: the entry is refused
+  ``connection_cap_missing``, class ``budget``, and the route goes on with the next entry; a named connection the
+  CIS registry has no key for is refused the same way). The order of the live steps (setting, Infra apply, deploy)
+  then cannot open an uncapped window. The ``prod`` rules only log it (pay per use);
 - an entry whose connection stops is skipped (logged): the route goes on with the entries left, so a capped acc1 sends
   the draft to Nova Lite on acc2; when every entry stops, the call is refused with the first entry's refusal;
 - the CRM's spend of this UTC month on that connection (``crm.llm_usage_daily``, every agency): the rows of a
@@ -52,6 +57,7 @@ from app.llm import spend_environment
 log = logging.getLogger(__name__)
 
 CONNECTION_BUDGET_EXHAUSTED = "connection_budget_exhausted"
+CONNECTION_CAP_MISSING = "connection_cap_missing"  # AA-1138: a named connection with no CRM cap (dev rules)
 SPEND_UNREADABLE = REASON_SPEND_UNREADABLE
 # The CRM provider's connection key (app.llm.providers) -> the CIS registry's connection key, the key of the setting's
 # entries. The ECS task role's own Bedrock is the account the CRM runs on; bedrock_acc1 (AA-1138, crm-078) is acc1's
@@ -139,6 +145,14 @@ async def read_state(conn: asyncpg.Connection, cis_key: str, route_key: str | No
     return CapState(connection_key=cis_key, monthly_cap_usd=cap, month_spent_usd=spent)
 
 
+def _missing(connection: str) -> tuple[str | None, str | None]:
+    """AA-1138: a route entry's named connection without a CRM cap: refused under the dev rules (the entry is left
+    out of the route), logged only under the prod rules."""
+    prod = spend_environment.is_prod()
+    log.warning("crm_llm_connection_cap_missing connection=%s prod=%s", connection, prod)
+    return (None, None) if prod else (CONNECTION_CAP_MISSING, llm_errors.BUDGET)
+
+
 def _unreadable(cis_key: str, error: str, prod: bool) -> tuple[str | None, str | None]:
     log.warning("crm_llm_connection_cap_unreadable connection=%s error=%s prod=%s", cis_key, error, prod)
     return (None, None) if prod else (SPEND_UNREADABLE, None)
@@ -147,15 +161,19 @@ def _unreadable(cis_key: str, error: str, prod: bool) -> tuple[str | None, str |
 async def refusal(conn: asyncpg.Connection, provider: Any) -> tuple[str | None, str | None]:
     """(refusal code, error class) when the CRM's cap on this connection stops this call, else (None, None). Never
     raises."""
+    route_key = getattr(provider, "route_connection", None)
+    named = isinstance(route_key, str) and bool(route_key)
     cis_key = cis_connection(provider)
     if cis_key is None:
-        return None, None
+        return _missing(route_key) if named else (None, None)
     prod = spend_environment.is_prod()
     try:
-        state = await read_state(conn, cis_key, getattr(provider, "route_connection", None))
+        state = await read_state(conn, cis_key, route_key if named else None)
     except Exception as exc:  # noqa: BLE001 — class only
         return _unreadable(cis_key, type(exc).__name__, prod)
-    if state is None or not state.stops:
+    if state is None:
+        return _missing(cis_key) if named else (None, None)
+    if not state.stops:
         return None, None
     log.warning(
         "crm_llm_connection_cap_reached connection=%s spent=%s cap=%s prod=%s",

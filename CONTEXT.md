@@ -2940,7 +2940,9 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   entry for it. Under the dev spend rules an entry on a connection at or above its cap is left out and the route goes
   on (acc1 capped: the draft goes to Nova Lite on acc2); every entry capped refuses `connection_budget_exhausted`
   (class `budget`, one 0 USD row, the draft falls back to "write it by hand"); the prod rules only log. No entry = no
-  CRM cap. The task role's Bedrock (`bedrock`) is CIS connection `acc2`, `bedrock_acc1` is `acc1`; the
+  CRM cap on the process's own connection; a route entry's NAMED connection (`bedrock_acc1`) without its own entry is
+  never used under the dev rules (fail closed, `connection_cap_missing`, the entry is left out like a capped one; the
+  prod rules only log), so no order of the live steps can call acc1 before the CRM's acc1 cap exists. The task role's Bedrock (`bedrock`) is CIS connection `acc2`, `bedrock_acc1` is `acc1`; the
   `CRM_LLM_ROLE_ARN` connection has no mapping yet (no cap). An unreadable setting or spend refuses
   `spend_unreadable` in dev only (for that connection).
 - **Stage profiles and the shared core** (S263 gateway plan F1 + F2, crm-037, `app/llm/profiles.py`): each CRM stage
