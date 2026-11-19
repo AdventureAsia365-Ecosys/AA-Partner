@@ -456,6 +456,10 @@ export interface Member {
   role: "owner" | "agent" | "assistant";
   status: string;
   is_me: boolean;
+  /** AA-1129: the invitation address before the "@" ("lan.nguyen"); null when the member was not invited by mail. */
+  display_name?: string | null;
+  /** AA-1129: the member's place among the members of its role (1-based, by join time). */
+  seq?: number;
 }
 
 /** "Anna Mai" -> "Anna M."; "Nguyễn Thị Hoa" -> "Nguyễn Thị H." (cards never show more than the first name in full). */
@@ -563,8 +567,12 @@ export function parseFilter(params: Record<string, string | string[] | undefined
   };
 }
 
-/** A member in the assign menu: "Me", or the role and a short id (names arrive with the team page, CRM-11). */
+/** A member in menus, filters and reports: "Me"; else "lan.nguyen · Agent" (AA-1129: the name the members API gives);
+ *  else "Agent 2" (the member's place in its role), never a bare id; the short id only for an API that sends neither. */
 export function memberLabel(lang: Lang, m: Member): string {
   if (m.is_me) return t(lang, "trip.me");
-  return fmt(t(lang, "trip.member"), { role: t(lang, `role.${m.role}` as MessageKey), id: m.member_id.slice(0, 4) });
+  const role = t(lang, `role.${m.role}` as MessageKey);
+  if (m.display_name) return fmt(t(lang, "trip.memberNamed"), { name: m.display_name, role });
+  if (m.seq) return fmt(t(lang, "trip.memberSeq"), { role, n: m.seq });
+  return fmt(t(lang, "trip.member"), { role, id: m.member_id.slice(0, 4) });
 }

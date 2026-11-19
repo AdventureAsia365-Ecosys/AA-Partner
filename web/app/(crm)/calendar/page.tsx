@@ -27,6 +27,7 @@ import { formatMoney } from "@/lib/ledger";
 import { memberLabel, type Member } from "@/lib/pipeline";
 import { serverContext } from "@/lib/serverContext";
 import { departurePath } from "@/lib/travelOps";
+import { taskTitle } from "@/lib/workflows";
 
 export const dynamic = "force-dynamic";
 
@@ -44,7 +45,7 @@ function detail(e: CalendarEvent, lang: Lang, locale: DateLocale, timeZone: stri
     const key = e.pending_signatures === 1 ? "calendar.signing.pendingOne" : "calendar.signing.pending";
     parts.push(fmt(tr(key), { n: e.pending_signatures }));
   }
-  if (e.task_kind) parts.push(e.task_kind.replace(/_/g, " "));
+  if (e.task_kind) parts.push(taskTitle(lang, { kind: e.task_kind, title: null })); // AA-1129: the /tasks label, EN / VI
   if (e.priority === "urgent") parts.push(tr("calendar.task.urgent"));
   if (e.call_status) parts.push(tr(`calendar.call.${e.call_status}`));
   if (e.kind === "aa_departure" && e.trips) parts.push(fmt(tr("calendar.aaDeparture.trips"), { n: e.trips }));

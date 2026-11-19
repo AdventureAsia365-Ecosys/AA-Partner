@@ -1,5 +1,6 @@
 // web/lib/team.ts — shapes of the Team & roles API (AA-939, /crm/v1/team, /plan, /recovery) and small helpers the
 // Team page and the recovery banner share. Edge-safe (no node imports).
+import { fmt, t, type Lang, type MessageKey } from "./i18n";
 import type { Role } from "./nav";
 
 export interface TeamMember {
@@ -48,9 +49,24 @@ export interface Recovery {
   is_candidate: boolean;
 }
 
-/** How a member is named on the Team page: the address they were invited with, else a short id. */
-export function memberLabel(m: Pick<TeamMember, "email" | "member_id">): string {
-  return m.email ?? `#${m.member_id.slice(0, 8)}`;
+/** Each member's place among the members of its role, 1-based, in the order the Team API lists them (join time). */
+export function roleSeq(members: Pick<TeamMember, "member_id" | "role">[]): Map<string, number> {
+  const seen = new Map<string, number>();
+  const out = new Map<string, number>();
+  for (const m of members) {
+    const n = (seen.get(m.role) ?? 0) + 1;
+    seen.set(m.role, n);
+    out.set(m.member_id, n);
+  }
+  return out;
+}
+
+/** How a member is named on the Team page and the forms' owner picker: the address they were invited with, else
+ *  (AA-1129, S283 audit row 15) the role and its place ("Agent 2"), never a bare id. */
+export function memberLabel(m: Pick<TeamMember, "email" | "member_id" | "role">, lang: Lang = "en", seq?: number): string {
+  if (m.email) return m.email;
+  const role = t(lang, `role.${m.role}` as MessageKey);
+  return seq ? fmt(t(lang, "trip.memberSeq"), { role, n: seq }) : role;
 }
 
 /** Active members other than `exclude`, as reassign targets. */
