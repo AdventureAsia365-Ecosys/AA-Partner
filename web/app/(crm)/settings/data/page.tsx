@@ -60,6 +60,7 @@ export default async function DataSettingsPage() {
           view={view.data}
           trash={bin && bin.ok ? bin.data.items : []}
           tenantId={ctx.me.tenant_id}
+          now={new Date().toISOString()}
           lang={ctx.lang}
           locale={ctx.locale}
         />

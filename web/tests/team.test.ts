@@ -402,7 +402,8 @@ describe("team helpers and strings", () => {
   });
 
   it("names, targets and seats", () => {
-    expect(memberLabel(member({ email: "lan@agency.example" }))).toBe("lan@agency.example");
+    // AA-1129 (S285): the part before the "@" and the role, never the full address.
+    expect(memberLabel(member({ email: "lan@agency.example" }))).toBe("lan · Agent");
     // AA-1129: no invitation address -> the role (and its place when known), never "#<id>".
     expect(memberLabel(member({}))).toBe("Agent");
     expect(memberLabel(member({}), "en", 2)).toBe("Agent 2");

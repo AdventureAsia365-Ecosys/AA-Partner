@@ -141,7 +141,6 @@ export const EXCLUDED: Record<string, string> = {
   "/departures/[ref]": "one group departure (AA-1068): opened from a trip's Money card or Home (agency data, no stable ref)",
   "/pipeline/[tripId]/proposal/[proposalId]": "one proposal of a trip: opened from the trip (agency data, no stable id)",
   "/pipeline/[tripId]/proposal/[proposalId]/text": "the plain-text view of one proposal (agency data, no stable id)",
-  "/c/[...slug]": "the client host (the traveller's links), not served on the agency host the run opens",
   "/c/f/[publicKey]": "the client host's inquiry form (a form's public key), not served on the agency host",
   "/c/p": "the client host's proposal view (needs a signed client link), not served on the agency host",
   "/c/s/[token]": "the client host's signing page (needs a live signing token), not served on the agency host",

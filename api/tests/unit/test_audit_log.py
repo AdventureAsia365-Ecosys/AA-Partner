@@ -113,6 +113,7 @@ async def test_the_owner_pages_newest_first_with_filters() -> None:
     assert page["events"][1]["member_role"] == "agent" and page["events"][1]["actor_group"] == "user"
     assert page["next_cursor"] == audit_log.encode_cursor(rows[1]["at"], rows[1]["event_id"])
     assert page["retention_months"] == 12
+    assert page["timezone"] == audit_log.DEFAULT_TZ  # AA-1129: no agency setting -> the default zone
     sql, args = next((s, a) for s, a in conn.calls if "FROM crm.audit_event" in s)
     assert "ORDER BY at DESC, event_id DESC" in sql and "(at, event_id) <" in sql
     assert ["user", "traveler"] in args and f"member:{OTHER_MEMBER}" in args and args[-1] == 3
@@ -143,6 +144,24 @@ async def test_the_download_is_csv_or_json_lines_and_audited() -> None:
     with pytest.raises(Invalid) as too_large:
         await audit_log.export_events(tenant_ctx(big), audit_log.AuditFilter(), "csv")
     assert too_large.value.code == "export_too_large"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        ("Asia/Bangkok", "Asia/Bangkok"),
+        (None, "Asia/Ho_Chi_Minh"),
+        ("", "Asia/Ho_Chi_Minh"),
+        ("Not/AZone", "Asia/Ho_Chi_Minh"),
+    ],
+)
+async def test_the_page_carries_the_agency_timezone(stored: str | None, expected: str) -> None:
+    """AA-1129 (S283 row 10): the web prints each line's time in this zone (server render = browser render)."""
+    conn = ScriptedConn([("FROM crm.audit_event", [_row(1)]), ("FROM crm.tenant_settings", stored)])
+    page = await audit_log.list_events(tenant_ctx(conn), audit_log.AuditFilter(), cursor=None, limit=5, now=NOW)
+    assert page["timezone"] == expected
+    assert conn.sql("SELECT timezone FROM crm.tenant_settings") == [()]
 
 
 def test_sign_in_is_one_event_of_the_member() -> None:

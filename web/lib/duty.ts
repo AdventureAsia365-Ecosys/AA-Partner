@@ -4,7 +4,7 @@
 // a name or phone opens only through POST /duty/reveal (one audit event per traveller; a reason above
 // REASON_THRESHOLD travellers; an hourly limit, 429 reveal_rate_limited). Edge-safe.
 
-import { formatDate, type DateLocale } from "./dates";
+import { formatDate, toDate, type DateLocale } from "./dates";
 import { fmt, type MessageKey } from "./i18n";
 
 export type IncidentCode = "weather" | "road" | "health" | "political" | "supplier" | "other";
@@ -157,4 +157,26 @@ export function incidentDeparture(
   const title = departure?.title?.trim();
   if (!title) return null;
   return departure?.date ? fmt(tr("duty.incident.departureOn"), { title, date: formatDate(departure.date, locale) }) : title;
+}
+
+/** Whole days from `from` to `to` (ISO calendar dates); null when either is not a date. */
+function daysBetween(from: string, to: string): number | null {
+  const a = toDate(from);
+  const b = toDate(to);
+  return a && b ? Math.round((b.getTime() - a.getTime()) / 86_400_000) : null;
+}
+
+/**
+ * AA-1129 (S283 audit row 6, S285 live check): where a trip is in time, against the view's `today` (the agency's
+ * timezone, from the API). Before its start date: "starts" in `n` days (the API's day number is the first day's, not
+ * today's); during the trip: "day" `n`; without a day number (past its end, or no start date): "leaves".
+ */
+export function tripWhen(
+  trip: Pick<DutyTrip, "start_date" | "day_no">,
+  today: string,
+): { kind: "starts"; n: number } | { kind: "day"; n: number } | { kind: "leaves" } {
+  const ahead = trip.start_date ? daysBetween(today, trip.start_date) : null;
+  if (ahead !== null && ahead > 0) return { kind: "starts", n: ahead };
+  if (trip.day_no !== null) return { kind: "day", n: trip.day_no };
+  return { kind: "leaves" };
 }

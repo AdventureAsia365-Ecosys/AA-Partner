@@ -26,6 +26,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.errors import Forbidden, Invalid
 from app.tenancy import TenantContext
@@ -64,6 +65,9 @@ SELECT_COLUMNS = (
     "object_ids"
 )
 MEMBER_ROLES_SQL = "SELECT member_id, role FROM crm.member"
+# AA-1129 (S283 row 10): the page prints each line's time in the agency's zone (server render = browser render).
+AGENCY_TZ_SQL = "SELECT timezone FROM crm.tenant_settings LIMIT 1"
+DEFAULT_TZ = "Asia/Ho_Chi_Minh"
 
 
 @dataclass(frozen=True)
@@ -190,6 +194,17 @@ async def _roles(ctx: TenantContext) -> dict[str, str]:
     return {str(r["member_id"]): r["role"] for r in await ctx.conn.fetch(MEMBER_ROLES_SQL)}
 
 
+async def agency_timezone(ctx: TenantContext) -> str:
+    """The agency's IANA zone (``tenant_settings.timezone``); the default when unset or unknown."""
+    name = await ctx.conn.fetchval(AGENCY_TZ_SQL)
+    if not isinstance(name, str) or not name:
+        return DEFAULT_TZ
+    try:
+        return str(ZoneInfo(name))
+    except (ZoneInfoNotFoundError, ValueError):
+        return DEFAULT_TZ
+
+
 async def list_events(
     ctx: TenantContext, f: AuditFilter, *, cursor: str | None, limit: int, now: datetime | None = None
 ) -> dict[str, Any]:
@@ -214,6 +229,7 @@ async def list_events(
         "retention_months": RETENTION_MONTHS,
         "oldest": window_start(now).isoformat(),
         "actor_groups": list(ACTOR_GROUPS),
+        "timezone": await agency_timezone(ctx),
     }
 
 

@@ -10,7 +10,7 @@ import { Panel, PageTitle } from "@/components/PageTitle";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { formatDate } from "@/lib/dates";
-import { WINDOWS, regionLabel, type TravellingView } from "@/lib/duty";
+import { WINDOWS, regionLabel, tripWhen, type DutyTrip, type TravellingView } from "@/lib/duty";
 import { fmt, plural, t, type MessageKey } from "@/lib/i18n";
 import { serverContext } from "@/lib/serverContext";
 
@@ -29,6 +29,13 @@ export default async function TravellingPage({ searchParams }: { searchParams: P
   const tr = (key: string) => t(ctx.lang, key as MessageKey);
   if (!view.ok) return <ErrorState message={tr("error.api")} />;
   const { regions, travellers, incidents } = view.data;
+  // AA-1129 (S283 row 6): "Starts in 3 days" before the start date (today in the agency's timezone), "Day N" during it.
+  const whenLabel = (trip: DutyTrip) => {
+    const when = tripWhen(trip, view.data.today);
+    if (when.kind === "starts") return plural(ctx.lang, "duty.trip.startsIn", when.n);
+    if (when.kind === "day") return fmt(tr("duty.trip.day"), { n: when.n });
+    return fmt(tr("duty.trip.leaves"), { date: formatDate(trip.start_date, ctx.locale) });
+  };
   const titles = Object.fromEntries(regions.flatMap((g) => g.trips.map((trip) => [trip.trip_id, trip.title])));
   return (
     <div data-testid="crm-travelling" style={{ display: "grid", gap: 14, maxWidth: 1200 }}>
@@ -71,9 +78,7 @@ export default async function TravellingPage({ searchParams }: { searchParams: P
                     <div style={{ fontSize: 12.5, color: K.muted }}>
                       {formatDate(trip.start_date, ctx.locale)} – {formatDate(trip.end_date, ctx.locale)}
                       {" · "}
-                      {trip.day_no !== null
-                        ? fmt(tr("duty.trip.day"), { n: trip.day_no })
-                        : fmt(tr("duty.trip.leaves"), { date: formatDate(trip.start_date, ctx.locale) })}
+                      {whenLabel(trip)}
                       {trip.place && ` · ${trip.place}`}
                       {" · "}
                       {plural(ctx.lang, "duty.travellers", trip.traveler_ids.length)}

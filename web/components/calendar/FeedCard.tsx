@@ -172,7 +172,7 @@ export function TeamFeeds({
         {feeds.map((f) => (
           <li key={f.calendar_feed_id} style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
             <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
-              {memberNames[f.member_id] ?? f.member_id.slice(0, 8)} · {tr(`calendar.scope.${f.scope}`)} ·{" "}
+              {memberNames[f.member_id] ?? tr("reports.formerMember")} · {tr(`calendar.scope.${f.scope}`)} ·{" "}
               {f.last_fetched_at
                 ? fmt(tr("calendar.feed.lastFetched"), { date: formatDate(f.last_fetched_at, locale) })
                 : tr("calendar.feed.neverFetched")}
