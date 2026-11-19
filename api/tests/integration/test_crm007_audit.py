@@ -216,6 +216,8 @@ async def test_the_access_log_is_for_the_owner(app_pool: asyncpg.Pool, admin: as
     async with tenant_tx(app_pool, owner, tenant_id) as ctx:
         page = await audit_log.list_events(ctx, audit_log.AuditFilter(actor="user"), cursor=None, limit=1)
     assert len(page["events"]) == 1 and page["next_cursor"]
+    # AA-1129: the page carries the agency's zone (crm.tenant_settings, read as crm_app under RLS) for the line times.
+    assert page["timezone"] == "Asia/Ho_Chi_Minh"
     newest = page["events"][0]
     assert newest["action"] == "audit_view" and newest["outcome"] == "denied" and newest["member_role"] == "agent"
     async with tenant_tx(app_pool, owner, tenant_id) as ctx:
