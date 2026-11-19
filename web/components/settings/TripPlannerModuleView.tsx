@@ -153,6 +153,16 @@ async function putModule(send: PlannerSend, path: string, body: unknown, lang: L
   return { msg: { tone: "danger", text: t(lang, refusalKey(res.detail)) }, detail: res.detail };
 }
 
+/** Where the route's message goes: a refusal of the target on screen shows under it (``inline``); any other (the
+ * tenant, or the stored target of the channel not chosen, which CIS checks too) is the section's message, naming the
+ * hidden field: never silent. */
+function placeRefusal(channel: LeadChannel, field: string | null, msg: Msg, lang: Lang): { inline: boolean; shown: Msg } {
+  const inline = inlineRefusalField(channel, field) !== null;
+  const hidden = refusalField(field ?? "");
+  if (inline || !msg || !hidden) return { inline, shown: msg };
+  return { inline, shown: { ...msg, text: fmt(t(lang, hiddenRefusalKey(hidden)), { reason: msg.text }) } };
+}
+
 function RouteSection({ site, owner, lang, onSaved }: { site: TripPlannerModule; owner: boolean; lang: Lang; onSaved: () => void }) {
   const route = site.lead_route;
   const send = useContext(SendContext);
@@ -180,13 +190,7 @@ function RouteSection({ site, owner, lang, onSaved }: { site: TripPlannerModule;
   }
 
   const target = channel === "webhook" ? "webhook" : "email";
-  // A refusal of the target on screen shows under it; any other (the tenant, or the stored target of the channel not
-  // chosen, which CIS checks too) shows as the section's message, naming the hidden field: never silent.
-  const inline = inlineRefusalField(channel, field);
-  const refusedHidden = !inline && (field === "lead_webhook_url" || field === "lead_email") ? field : null;
-  const shown: Msg = msg && refusedHidden
-    ? { ...msg, text: fmt(t(lang, hiddenRefusalKey(refusedHidden)), { reason: msg.text }) }
-    : msg;
+  const { inline, shown } = placeRefusal(channel, field, msg, lang);
   return (
     <Section title={t(lang, "tp.route.title")} description={t(lang, "tp.route.about")} actions={routeNow(route, lang)}>
       <div style={{ display: "grid", gap: 12 }} data-testid="tp-route">
