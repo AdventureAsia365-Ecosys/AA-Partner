@@ -395,8 +395,9 @@ async def post_task_status(
 @router.get("/members")
 async def get_members(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
     pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
     async with tenant_tx(pool, caller, tenant_id, action=Action.MEMBERS_LIST) as ctx:
-        return {"members": await members(ctx)}
+        return {"members": await members(ctx, Vault(keys, ctx))}
 
 
 @router.get("/intake-forms")

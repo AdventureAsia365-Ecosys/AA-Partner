@@ -239,9 +239,16 @@ async def get_conversations(
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> dict[str, Any]:
     pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys) if unmatched else None
     async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_VIEW) as ctx:
         return await conversations.list_conversations(
-            ctx, trip_id=trip_id, traveler_id=traveler_id, unmatched=unmatched, no_trip=no_trip, limit=limit
+            ctx,
+            trip_id=trip_id,
+            traveler_id=traveler_id,
+            unmatched=unmatched,
+            no_trip=no_trip,
+            limit=limit,
+            vault=Vault(keys, ctx) if keys is not None else None,
         )
 
 
