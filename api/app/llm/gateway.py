@@ -73,8 +73,8 @@ budget (every agency together, ``crm.llm_usage_daily``) reached -> ``app_budget_
 spend unreadable -> ``spend_unreadable``. Each is one 0 USD refused row, nothing scrubbed or sent. The CIS admin writes
 the profile over crm.ops.v1 (``PUT /llm/app-profile``).
 
-Slice 1 ships the stub pair (:class:`StubScrubber`, :class:`StubProvider`: deterministic, no network, cost 0) so the
-order, the refusals and the log are tested end to end before CRM-10 (scrubber) and CRM-33a (Bedrock) plug in.
+Slice 1 ships the stub pair (:class:`StubScrubber`, :class:`StubProvider`: deterministic, no network, cost 0).
+AA-1138: a route entry may name its connection (crm-078); the connection caps skip an entry on a capped connection.
 """
 
 from __future__ import annotations
@@ -330,9 +330,12 @@ class LlmGateway:
         meta = meta or CallMeta()
         # 0. the stage profile and its kill switch (free: nothing scrubbed, nothing sent, no rate token used)
         profile, refusal = await self._profile(ctx, stage, role)
+        # AA-1025 H1c: the app profile first (AI off, its daily budget used up), then AA-1113 the connection caps (an
+        # entry on a capped connection is left out, AA-1138; all capped refuses); free
+        app_refusal, app_error, profile = await app_profile.then_connection_cap(
+            await self._app_refusal(ctx), ctx.conn, profile, self.provider, self._entry_provider
+        )
         first = self._entry_provider(profile.attempts[0]) if profile and profile.attempts else self.provider
-        # AA-1025 H1c: the app profile first (AI off, its daily budget used up), then AA-1113 the connection cap; free
-        app_refusal, app_error = await app_profile.then_connection_cap(await self._app_refusal(ctx), ctx.conn, first)
         if app_refusal is not None:
             return await self._log(
                 ctx, stage, role, REFUSED, who=first, refusal=app_refusal, error=app_error, meta=meta
@@ -797,14 +800,8 @@ def build_gateway(settings: Any, keys: Any | None = None) -> LlmGateway:
     if settings.crm_llm_provider == "bedrock":
         from app.llm.providers.bedrock import BedrockConverseProvider
 
-        provider = BedrockConverseProvider(
-            settings.crm_llm_model_id,
-            usd_per_mtok_in=settings.crm_llm_usd_per_mtok_in,
-            usd_per_mtok_out=settings.crm_llm_usd_per_mtok_out,
-            region=settings.crm_llm_region,
-            max_tokens=ps.limit(ps.AI_DRAFT_MAX_TOKENS),  # AA-1096 L4: a setting, read at each call
-            role_arn=settings.crm_llm_role_arn,
-        )
+        # AA-1096 L4: the output cap is a setting, read at each call; AA-1138: the named connections (acc1)
+        provider = BedrockConverseProvider.from_settings(settings, max_tokens=ps.limit(ps.AI_DRAFT_MAX_TOKENS))
     real_scrub = bool(settings.scrub_guardrail_id) or provider.name != STUB_PREFIX
     scrubber: Any = build_scrubber(settings) if real_scrub else StubScrubber()
     return LlmGateway(

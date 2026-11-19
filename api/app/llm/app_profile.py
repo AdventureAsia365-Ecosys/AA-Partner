@@ -28,6 +28,7 @@ lint platform module) and on the call's connection by the gateway.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -130,13 +131,18 @@ async def for_call(conn: asyncpg.Connection) -> AppProfile:
 
 
 async def then_connection_cap(
-    app_refusal: tuple[str | None, str | None], conn: asyncpg.Connection, provider: Any
-) -> tuple[str | None, str | None]:
-    """AA-1113: the app profile's refusal when it has one, else the connection cap's (:mod:`app.llm.connection_cap`,
-    the CRM's own monthly cap on its model connection, crm-077). Kept here so the gateway's call path does not grow."""
+    app_refusal: tuple[str | None, str | None],
+    conn: asyncpg.Connection,
+    profile: Any,
+    provider: Any,
+    entry_provider: Callable[[Any], Any],
+) -> tuple[str | None, str | None, Any]:
+    """AA-1113: the app profile's refusal when it has one, else the connection caps' (:mod:`app.llm.connection_cap`,
+    the CRM's own monthly cap per model connection, crm-077), with the profile the call goes on with (AA-1138: a route
+    entry whose connection reached its cap is left out, crm-078). Kept here so the gateway's call path does not grow."""
     if app_refusal[0] is not None:
-        return app_refusal
-    return await connection_cap.refusal(conn, provider)
+        return app_refusal[0], app_refusal[1], profile
+    return await connection_cap.check_route(conn, profile, provider, entry_provider)
 
 
 async def day_spend(conn: asyncpg.Connection) -> Decimal | None:
