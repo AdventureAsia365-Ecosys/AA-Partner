@@ -56,7 +56,7 @@ MODULE: dict[str, Any] = {
     "locale": "vi",
     "ai_sessions_monthly": 300,
 }
-USAGE = {"month": "2026-11", "ai_sessions": {"used": 17, "quota": 300}, "leads_24h": {"count": 2, "cap": 200}}
+USAGE = {"month": "2026-11", "ai_allowance": {"used": 17, "quota": 300}, "leads_24h": {"count": 2, "cap": 200}}
 KEY_INFO = {"version": 0, "rotated_at": None, "available": True}
 LEADS = {
     "leads": [
@@ -190,7 +190,7 @@ def test_the_planner_bodies_parse_and_a_traveller_field_never_passes() -> None:
     [
         (tp.parse_leads, {**LEADS, "leads": [{**LEADS["leads"][0], "status": "lost"}]}),
         (tp.parse_leads, {**LEADS, "month": {"total": 1}}),
-        (tp.parse_usage, {**USAGE, "ai_sessions": {"used": -1, "quota": None}}),
+        (tp.parse_usage, {**USAGE, "ai_allowance": {"used": -1, "quota": None}}),
         (tp.parse_key_info, {**KEY_INFO, "key": KEY}),
         (tp.parse_rotated, {"version": 0, "rotated_at": "x", "key": KEY}),
         (tp.parse_rotated, {"version": 1, "rotated_at": "x", "key": "short"}),

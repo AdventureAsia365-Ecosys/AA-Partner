@@ -111,12 +111,12 @@ def parse_usage(body: Any) -> dict[str, Any]:
     try:
         if not isinstance(body, dict):
             raise _Shape
-        ai, leads_24h = body.get("ai_sessions"), body.get("leads_24h")
+        ai, leads_24h = body.get("ai_allowance"), body.get("leads_24h")
         if not isinstance(ai, dict) or not isinstance(leads_24h, dict):
             raise _Shape
         return {
             "month": _str(body.get("month"), _MONTH),
-            "ai_sessions": {"used": _int(ai.get("used")), "quota": _int(ai.get("quota"), nullable=True)},
+            "ai_allowance": {"used": _int(ai.get("used")), "quota": _int(ai.get("quota"), nullable=True)},
             "leads_24h": {"count": _int(leads_24h.get("count")), "cap": _int(leads_24h.get("cap"), minimum=1)},
         }
     except _Shape:

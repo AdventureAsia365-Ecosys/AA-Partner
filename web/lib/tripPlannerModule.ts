@@ -44,7 +44,7 @@ export interface TripPlannerModule {
 
 export interface PlannerUsage {
   month: string;
-  ai_sessions: { used: number; quota: number | null };
+  ai_allowance: { used: number; quota: number | null };
   leads_24h: { count: number; cap: number };
 }
 
@@ -90,7 +90,7 @@ export function plannerLinks(module: TripPlannerModule): string[] {
 
 /** Share of the month's AI sessions used, 0..100 (null when the plan has no limit). */
 export function sessionsPercent(usage: PlannerUsage): number | null {
-  const { used, quota } = usage.ai_sessions;
+  const { used, quota } = usage.ai_allowance;
   if (quota === null) return null;
   if (quota <= 0) return 100;
   return Math.min(100, Math.round((used / quota) * 100));
@@ -99,7 +99,7 @@ export function sessionsPercent(usage: PlannerUsage): number | null {
 /** The tone of the sessions tile: danger once the quota is used up (new AI sessions are refused then). No warning
  * share of its own: a threshold would be a setting (the CIS AI budget alert is the agency's warning). */
 export function sessionsTone(usage: PlannerUsage): "neutral" | "danger" {
-  const { used, quota } = usage.ai_sessions;
+  const { used, quota } = usage.ai_allowance;
   return quota !== null && used >= quota ? "danger" : "neutral";
 }
 

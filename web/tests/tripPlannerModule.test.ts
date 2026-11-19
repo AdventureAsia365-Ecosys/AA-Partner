@@ -36,7 +36,7 @@ const planner = (over: Partial<TripPlannerModule> = {}): TripPlannerModule => ({
 
 const usage = (used: number, quota: number | null): PlannerUsage => ({
   month: "2026-11",
-  ai_sessions: { used, quota },
+  ai_allowance: { used, quota },
   leads_24h: { count: 1, cap: 200 },
 });
 

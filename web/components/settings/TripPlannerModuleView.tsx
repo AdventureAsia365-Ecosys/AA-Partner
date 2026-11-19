@@ -339,9 +339,9 @@ function UsageSection({ page, leads, lang }: { page: PlannerPage; leads: Planner
   const tr = (key: MessageKey) => t(lang, key);
   const usage = page.usage;
   const sessions = usage
-    ? usage.ai_sessions.quota === null
-      ? fmt(tr("tp.usage.noLimit"), { used: usage.ai_sessions.used })
-      : fmt(tr("tp.usage.of"), { used: usage.ai_sessions.used, quota: usage.ai_sessions.quota })
+    ? usage.ai_allowance.quota === null
+      ? fmt(tr("tp.usage.noLimit"), { used: usage.ai_allowance.used })
+      : fmt(tr("tp.usage.of"), { used: usage.ai_allowance.used, quota: usage.ai_allowance.quota })
     : null;
   return (
     <Section title={tr("tp.usage.title")}>
