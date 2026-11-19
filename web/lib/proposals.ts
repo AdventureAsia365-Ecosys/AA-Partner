@@ -117,6 +117,15 @@ export interface Agreement {
   published_at: string | null;
 }
 
+/** AA-1129 (S283 P4): Settings > Agreements shows drafts and published versions (kind order, then the API's order)
+ *  and folds the retired ones away. */
+export function splitVersions(docs: readonly Agreement[]): { current: Agreement[]; older: Agreement[] } {
+  const byKind = (a: Agreement, b: Agreement) => AGREEMENT_KINDS.indexOf(a.kind) - AGREEMENT_KINDS.indexOf(b.kind);
+  const current = docs.filter((d) => d.status !== "retired").sort(byKind);
+  const older = docs.filter((d) => d.status === "retired").sort(byKind);
+  return { current, older };
+}
+
 /** One entry of a version's booking terms select: a published version, or the retired one the version still names. */
 export interface TermsChoice {
   doc_id: string;

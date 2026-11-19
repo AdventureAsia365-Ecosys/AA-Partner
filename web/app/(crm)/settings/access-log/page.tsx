@@ -8,6 +8,7 @@ import { EmptyState, ErrorState } from "@/app/_kit";
 import { PageTitle } from "@/components/PageTitle";
 import { AccessLogView } from "@/components/settings/AccessLogView";
 import { type AuditPage, cleanFilter, filterQuery } from "@/lib/accessLog";
+import type { Member } from "@/lib/pipeline";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { t } from "@/lib/i18n";
@@ -34,9 +35,14 @@ export default async function AccessLogPage({ searchParams }: { searchParams: Pr
     );
   }
   const { session } = await serverContext();
-  const res = session
-    ? await crmCall<AuditPage>(ctx.cfg, session, "GET", "audit/events", { query: filterQuery(filter, { limit: "50" }) })
-    : null;
+  // AA-1129 (S285): the members API names each actor by the member rule ("lan.nguyen · Owner", "Agent 2"); that read
+  // is itself one logged list view. Without it the lines fall back to the role alone, never an id.
+  const [res, members] = session
+    ? await Promise.all([
+        crmCall<AuditPage>(ctx.cfg, session, "GET", "audit/events", { query: filterQuery(filter, { limit: "50" }) }),
+        crmCall<{ members: Member[] }>(ctx.cfg, session, "GET", "members"),
+      ])
+    : [null, null];
   return (
     <div data-testid="crm-access-log" style={{ display: "grid", gap: 14, maxWidth: 980 }}>
       {back}
@@ -47,6 +53,7 @@ export default async function AccessLogPage({ searchParams }: { searchParams: Pr
         <AccessLogView
           key={filterQuery(filter).toString()}
           initial={res.data}
+          members={members && members.ok ? members.data.members : null}
           filter={filter}
           lang={ctx.lang}
           locale={ctx.locale}

@@ -12,6 +12,7 @@ import type { CancelCharge } from "@/lib/retailPayments";
 import type { AaCancelView } from "@/lib/aaCancel";
 import { fmt, plural, type Lang, type MessageKey, t } from "./i18n";
 import type { PlanPage } from "./planningForm";
+import { personLabel } from "./people";
 
 export const BOARD_STAGES = ["inquiry", "qualifying", "proposal", "booked", "pre_departure", "travelling"] as const;
 export type BoardStage = (typeof BOARD_STAGES)[number];
@@ -567,12 +568,9 @@ export function parseFilter(params: Record<string, string | string[] | undefined
   };
 }
 
-/** A member in menus, filters and reports: "Me"; else "lan.nguyen · Agent" (AA-1129: the name the members API gives);
- *  else "Agent 2" (the member's place in its role), never a bare id; the short id only for an API that sends neither. */
+/** A member in menus, filters and reports: "Me"; else the one rule of lib/people.ts ("lan.nguyen · Agent", else
+ *  "Agent 2", else "Agent"), never an id or an address (AA-1129). */
 export function memberLabel(lang: Lang, m: Member): string {
   if (m.is_me) return t(lang, "trip.me");
-  const role = t(lang, `role.${m.role}` as MessageKey);
-  if (m.display_name) return fmt(t(lang, "trip.memberNamed"), { name: m.display_name, role });
-  if (m.seq) return fmt(t(lang, "trip.memberSeq"), { role, n: m.seq });
-  return fmt(t(lang, "trip.member"), { role, id: m.member_id.slice(0, 4) });
+  return personLabel(lang, m);
 }

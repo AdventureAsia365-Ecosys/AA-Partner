@@ -4,7 +4,7 @@
 // and the date range live in the URL (the server page reads them); "Show older entries" pages with the API cursor;
 // Download fetches the same filtered rows as CSV / JSON lines through the BFF and saves them as a file.
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Badge, Button, EmptyState, K, ChipButton } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
 import { bffDownload, bffFetch } from "@/lib/bffClient";
@@ -15,6 +15,7 @@ import {
   type AuditPage,
   type ExportFormat,
   type LogFilter,
+  type MemberDirectory,
   actorText,
   codeLabel,
   eventText,
@@ -27,6 +28,7 @@ import {
 } from "@/lib/accessLog";
 import type { DateLocale } from "@/lib/dates";
 import { type Lang, t } from "@/lib/i18n";
+import type { Member } from "@/lib/pipeline";
 
 const field: React.CSSProperties = {
   font: "inherit",
@@ -41,11 +43,14 @@ const field: React.CSSProperties = {
 
 export function AccessLogView({
   initial,
+  members = null,
   filter,
   lang,
   locale,
 }: {
   initial: AuditPage;
+  /** AA-1129: the agency's members (the members API), so a line names its actor by the member rule; null: role only. */
+  members?: Member[] | null;
   filter: LogFilter;
   lang: Lang;
   locale: DateLocale;
@@ -56,6 +61,12 @@ export function AccessLogView({
   const [draft, setDraft] = useState<LogFilter>(filter);
   const [busy, setBusy] = useState<"more" | ExportFormat | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // AA-1129 (S283 row 10): one zone for the server render and the browser (the agency's), so hydration matches.
+  const zone = initial.timezone ?? "UTC";
+  const directory: MemberDirectory | null = useMemo(
+    () => (members ? new Map(members.map((m) => [m.member_id, { role: m.role, display_name: m.display_name, seq: m.seq }])) : null),
+    [members],
+  );
 
   function go(next: LogFilter) {
     const q = filterQuery(next).toString();
@@ -190,11 +201,11 @@ export function AccessLogView({
                   }}
                 >
                   <time dateTime={e.at} style={{ color: K.muted, whiteSpace: "nowrap" }}>
-                    {whenText(e.at, locale)}
+                    {whenText(e.at, locale, zone)}
                   </time>
                   <div style={{ minWidth: 0, overflowWrap: "anywhere", color: K.ink }}>
-                    <strong style={{ fontWeight: 600 }}>{actorText(e, lang)}</strong>{" "}
-                    {href ? <a href={href}>{eventText(e, lang)}</a> : eventText(e, lang)}{" "}
+                    <strong style={{ fontWeight: 600 }}>{actorText(e, lang, directory)}</strong>{" "}
+                    {href ? <a href={href}>{eventText(e, lang, directory)}</a> : eventText(e, lang, directory)}{" "}
                     {e.outcome === "denied" && <Badge tone="danger">{t(lang, "log.outcome.denied")}</Badge>}
                   </div>
                 </li>

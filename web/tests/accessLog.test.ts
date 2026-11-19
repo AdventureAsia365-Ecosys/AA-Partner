@@ -70,15 +70,15 @@ describe("access log filters", () => {
 describe("access log lines", () => {
   it("say who did what, in English and Vietnamese, with ids and codes only", () => {
     const e = event();
-    expect(actorText(e, "en")).toBe("Agent 1f8fad5b");
+    expect(actorText(e, "en")).toBe("Agent"); // AA-1129: no directory -> the role alone, never an id
     expect(eventText(e, "en")).toBe("revealed client 0f8fad5b · Passport number · reason: Prepare a booking");
     expect(eventText(e, "vi")).toContain("Số hộ chiếu");
-    expect(actorText(event({ member_role: null }), "en")).toBe("Former member 1f8fad5b");
+    expect(actorText(event({ member_role: null }), "en")).toBe("Former member");
     const ai = event({ actor_kind: "ai_agent", actor_group: "ai", actor_ref: "ai:crm_draft", member_id: null, member_role: null });
     expect(actorText(ai, "en")).toBe("AI (crm_draft)");
     expect(actorText(event({ actor_group: "system", member_id: null }), "vi")).toBe("Hệ thống");
     const list = event({ action: "list_view", object_kind: "pipeline", object_id: null, fields: ["display_name"], reason: "board", object_ids: [ID, MEMBER] });
-    expect(eventText(list, "en")).toBe("viewed the list pipeline board · Name shown in lists · reason: board · 2 items shown");
+    expect(eventText(list, "en")).toBe("viewed the pipeline board · Name shown in lists · reason: board · 2 items shown");
     const key = event({ action: "key_create", object_kind: "tenant_key", object_id: "vault:v1", fields: [], reason: "purpose_vault" });
     expect(eventText(key, "en")).toBe("created encryption key version vault:v1 · reason: purpose vault");
     expect(codeLabel("en", "log.act", "brand_new_code")).toBe("brand new code");
@@ -91,7 +91,7 @@ describe("access log lines", () => {
     expect(objectHref(event({ object_kind: "trip" }))).toBe(`/pipeline/${ID}`);
     expect(objectHref(event({ object_kind: "document" }))).toBeNull();
     expect(objectHref(event({ object_id: "vault:v1" }))).toBeNull();
-    expect(whenText("2026-10-20T07:02:00+00:00", "en-AU")).toMatch(/20 Oct/);
+    expect(whenText("2026-10-20T07:02:00+00:00", "en-AU")).toBe("20 Oct 2026 07:02");
     expect(whenText("not a date", "en-AU")).toBe("");
   });
 

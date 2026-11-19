@@ -5,8 +5,9 @@
 // and random ids only, so the line names the member's role and a short id, never a traveller's name). Owner only.
 // Edge-safe, unit-tested.
 
-import { formatDate, type DateLocale } from "./dates";
+import { type DateLocale } from "./dates";
 import { fmt, type Lang, type MessageKey, MESSAGES, t } from "./i18n";
+import { type PersonRef, personLabel } from "./people";
 
 export const ACTOR_GROUPS = ["user", "ai", "aa_ops", "aa_support", "aa_emergency", "system"] as const;
 export type ActorGroup = (typeof ACTOR_GROUPS)[number];
@@ -84,7 +85,12 @@ export interface AuditPage {
   next_cursor: string | null;
   retention_months: number;
   oldest: string;
+  /** AA-1129 (S283 row 10): the agency's IANA timezone; the lines print their time in it (absent from an older API). */
+  timezone?: string;
 }
+
+/** AA-1129: the agency's members by id (the members API: name, role, place in the role), for the member label rule. */
+export type MemberDirectory = ReadonlyMap<string, PersonRef>;
 
 export interface LogFilter {
   actor?: ActorGroup;
@@ -152,34 +158,66 @@ export function shortId(id: string | null): string {
   return id ? id.replace(/^[a-z_]+:/, "").slice(0, 8) : "";
 }
 
-/** Who did it: "Agent 1a2b3c4d", "AI (crm_draft)", "System", "AA operations", … */
-export function actorText(e: AuditEventView, lang: Lang): string {
-  if (e.member_id) {
-    const role = e.member_role ? t(lang, `role.${e.member_role}` as MessageKey) : t(lang, "log.formerMember");
-    return `${role} ${shortId(e.member_id)}`;
-  }
+/** Who did it, by the member label rule of lib/people.ts (AA-1129, S285): "lan.nguyen · Owner", "Agent 2", "Former
+ *  member" (a member the agency no longer has), never an id; without the directory (the members API did not answer)
+ *  the role alone. Else "AI (crm_draft)", "System", "AA operations", … */
+export function actorText(e: AuditEventView, lang: Lang, members?: MemberDirectory | null): string {
+  if (e.member_id) return memberName(e.member_id, e.member_role, lang, members);
   if (e.actor_group === "ai") return fmt(t(lang, "log.actor.aiStage"), { stage: e.actor_ref.replace(/^ai:/, "") });
   return codeLabel(lang, "log.actor", e.actor_group);
 }
 
-/** What happened, without the who: "revealed Passport number of client 0f8fad5b (reason: Prepare a booking)". */
-export function eventText(e: AuditEventView, lang: Lang): string {
-  const what = codeLabel(lang, "log.act", e.action);
+function memberName(id: string, role: AuditEventView["member_role"], lang: Lang, members?: MemberDirectory | null): string {
+  const known = members?.get(id);
+  if (known) return personLabel(lang, known);
+  return members || !role ? personLabel(lang, null) : personLabel(lang, { role });
+}
+
+/** The object of a line. A member object is named by the member rule: the actor itself is "the agency" ("signed in to
+ *  the agency"), another member "team member Agent 2", a list of members "team members" (AA-1129: was "the agency"). */
+function objectText(e: AuditEventView, lang: Lang, members?: MemberDirectory | null): string {
+  if (e.object_kind === "member") {
+    if (!e.object_id) return t(lang, "log.obj.members");
+    if (e.object_id === e.member_id) return t(lang, "log.obj.ownAgency");
+    return `${t(lang, "log.obj.member")} ${memberName(e.object_id, null, lang, members)}`;
+  }
   const id = e.object_kind === "tenant_key" ? e.object_id : shortId(e.object_id);
-  const obj = e.object_id ? `${codeLabel(lang, "log.obj", e.object_kind)} ${id}` : codeLabel(lang, "log.obj", e.object_kind);
+  return e.object_id ? `${codeLabel(lang, "log.obj", e.object_kind)} ${id}` : codeLabel(lang, "log.obj", e.object_kind);
+}
+
+/** What happened, without the who: "revealed Passport number of client 0f8fad5b (reason: Prepare a booking)". A list
+ *  view reads "viewed the list of trips" (AA-1129, S285: was "viewed the list the agency"). */
+export function eventText(e: AuditEventView, lang: Lang, members?: MemberDirectory | null): string {
+  const listKey = `log.list.${e.object_kind}`;
+  const head =
+    e.action === "list_view"
+      ? has(listKey)
+        ? t(lang, listKey)
+        : fmt(t(lang, "log.list.other"), { obj: objectText(e, lang, members) })
+      : `${codeLabel(lang, "log.act", e.action)} ${objectText(e, lang, members)}`;
   const fields = e.fields.length ? ` · ${e.fields.map((f) => codeLabel(lang, "field", f.replace(/_enc$/, ""))).join(", ")}` : "";
   const reasonCode = e.reason ? codeLabel(lang, "why", e.reason) : "";
   const reason = reasonCode ? ` · ${fmt(t(lang, "log.reason"), { reason: reasonCode })}` : "";
   const count = e.object_ids.length ? ` · ${fmt(t(lang, "log.items"), { n: e.object_ids.length })}` : "";
-  return `${what} ${obj}${fields}${reason}${count}`.trim();
+  return `${head.trim()}${fields}${reason}${count}`.trim();
 }
 
-/** "20 Oct 14:02" in the person's date locale (time in the browser's zone, 24 h). */
-export function whenText(at: string, locale: DateLocale): string {
+/** "20 Oct 2026 14:02" in the person's date locale, the time in the AGENCY's timezone (24 h). The server render and the
+ *  browser print the same text (AA-1129, S283 row 10: the browser's own zone made React hydration error #418). An
+ *  unknown zone prints UTC. */
+export function whenText(at: string, locale: DateLocale, timeZone = "UTC"): string {
   const d = new Date(at);
   if (Number.isNaN(d.getTime())) return "";
-  const time = d.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit", hour12: false });
-  return `${formatDate(d, locale)} ${time}`;
+  const write = (zone: string) => {
+    const day = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", year: "numeric", timeZone: zone }).format(d);
+    const time = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: zone }).format(d);
+    return `${day} ${time}`;
+  };
+  try {
+    return write(timeZone);
+  } catch {
+    return write("UTC");
+  }
 }
 
 /** Where an object id links to inside the CRM (traveller and trip pages), else null. */

@@ -20,6 +20,7 @@ import {
   ruleWindow,
   settingRanges,
   totalCount,
+  trashPurgeLine,
   type Hold,
   type LifecycleView,
   type Rule,
@@ -41,12 +42,15 @@ export function DataLifecycleView({
   view,
   trash,
   tenantId,
+  now,
   lang,
   locale,
 }: {
   view: LifecycleView;
   trash: TrashItem[];
   tenantId: string;
+  /** AA-1129: the server render's clock (ISO), so the trash lines read the same on the server and in the browser. */
+  now: string;
   lang: Lang;
   locale: DateLocale;
 }) {
@@ -210,18 +214,46 @@ export function DataLifecycleView({
         {trash.length === 0 ? (
           <p style={{ margin: 0, fontSize: 13, color: K.muted }}>{t(lang, "data.trash.empty")}</p>
         ) : (
-          <ul style={{ listStyle: "none", padding: 0, margin: 0, display: "grid", gap: 6 }}>
-            {trash.map((i) => (
-              <li key={`${i.kind}:${i.id}`} data-testid="data-trash-item" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 13 }}>
-                <Badge tone="neutral">{tr(`data.trash.kind.${i.kind}`)}</Badge>
-                <span style={{ color: K.ink, overflowWrap: "anywhere" }}>{i.label ?? i.id.slice(0, 8)}</span>
-                <span style={{ color: K.muted }}>{fmt(t(lang, "data.trash.purgeOn"), { date: formatDate(i.purge_after, locale, { year: true }) })}</span>
-                <Button size="sm" variant="ghost" disabled={busy} onClick={() => send("POST", `trash/${i.kind}/${i.id}/restore`)}>
-                  {t(lang, "data.trash.restore")}
-                </Button>
-              </li>
-            ))}
-          </ul>
+          <>
+            {view.deletion_dry_run && (
+              <p data-testid="data-trash-dry-run" style={{ margin: "0 0 10px", fontSize: 13, color: K.muted }}>
+                {t(lang, "data.trash.dryRunNote")}
+              </p>
+            )}
+            {/* AA-1129 (S283 rows 13, 14): the kit DataTable pages the trash (134 rows made the page 20,000 px tall) and
+                each row says what the removal date means while deletion is a dry run. */}
+            <DataTable<TrashItem>
+              data={trash}
+              columns={[
+                { id: "kind", header: t(lang, "data.trash.col.kind"), accessorFn: (i) => tr(`data.trash.kind.${i.kind}`), cell: ({ getValue }) => <Badge tone="neutral">{String(getValue())}</Badge> },
+                { id: "item", header: t(lang, "data.trash.col.item"), accessorFn: (i) => i.label ?? t(lang, "data.trash.untitled"), cell: ({ getValue }) => <span style={{ color: K.ink, overflowWrap: "anywhere" }}>{String(getValue())}</span> },
+                {
+                  id: "removal",
+                  header: t(lang, "data.trash.col.removal"),
+                  accessorFn: (i) => i.purge_after,
+                  cell: ({ row }) => <span style={{ color: K.muted }}>{trashPurgeLine(row.original.purge_after, view.deletion_dry_run, now, lang, locale)}</span>,
+                },
+                {
+                  id: "actions",
+                  header: "",
+                  enableSorting: false,
+                  meta: { align: "right", hideLabelOnCard: true },
+                  cell: ({ row }) => (
+                    <Button size="sm" variant="ghost" disabled={busy} onClick={() => send("POST", `trash/${row.original.kind}/${row.original.id}/restore`)}>
+                      {t(lang, "data.trash.restore")}
+                    </Button>
+                  ),
+                },
+              ]}
+              tableId="crm-data-trash"
+              getRowId={(i) => `${i.kind}:${i.id}`}
+              rowTestId={() => "data-trash-item"}
+              searchable={trash.length > 10}
+              pageSize={10}
+              pageSizeOptions={[10, 25, 50]}
+              compact
+            />
+          </>
         )}
       </Panel>
 

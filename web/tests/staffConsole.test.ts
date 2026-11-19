@@ -427,7 +427,9 @@ describe("the proxy gate for /staff", () => {
 
   it("serves no staff page on the client host and says so when the console is off", () => {
     const client = gate(new NextRequest("https://go.example.test/staff/ops", { headers: { host: "go.example.test" } }));
-    expect(client.status).toBe(404);
+    // AA-1129 (S285): the client host's neutral 404 page (a rewrite to a path no route serves), never the console.
+    expect(new URL(client.headers.get("x-middleware-rewrite")!).pathname).toBe("/c/_not-found");
+    expect(client.headers.get("x-middleware-next")).toBeNull();
     cfg = testConfig({ STAFF_COGNITO_CLIENT_SECRET: "" });
     expect(go("/staff/ops").headers.get("location")).toBe(`${ORIGIN}/staff/signed-out?reason=unavailable`);
   });

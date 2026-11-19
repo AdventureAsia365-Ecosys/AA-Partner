@@ -145,8 +145,10 @@ describe("Settings > Forms", () => {
       }),
     );
     expect(html).toContain('value="https://www.agency.example/privacy"');
-    expect(html).toContain("anna@agency.example");
-    expect(html).not.toContain("gone@agency.example");
+    // AA-1129 (S285 live check): the member rule ("anna · Agent"), never the full address.
+    expect(html).toContain("anna · Agent");
+    expect(html).not.toContain("anna@agency.example");
+    expect(html).not.toContain("gone");
     expect(html).toContain("Each form takes up to 200 submissions an hour");
     expect(html).toContain("Adventure Asia set this limit for your agency.");
     const off = renderToString(createElement(FormsAdmin, { forms: [FORM], clientHosts: [], isOwner: false, lang: "en", quota: { submissions_per_hour: 0 } }));

@@ -51,7 +51,8 @@ describe("P2: members are named, never by a bare id", () => {
     ];
     const seq = roleSeq(team);
     const labels = team.map((m) => teamLabel(m, "en", seq.get(m.member_id)));
-    expect(labels).toEqual(["Owner 1", "minh@hoasen.example", "Agent 2"]);
+    expect(labels).toEqual(["Owner 1", "minh · Agent", "Agent 2"]); // AA-1129 (S285): never the full address
+    expect(labels.join(" ")).not.toContain("@");
     expect(labels.join(" ")).not.toMatch(/#[0-9a-f]{8}/);
     expect(read("components/pipeline/FormsAdmin.tsx")).toContain("memberLabel(m, lang, seq.get(m.member_id))");
     expect(read("components/team/TeamAdmin.tsx")).not.toContain("`#${from.slice(0, 8)}`");

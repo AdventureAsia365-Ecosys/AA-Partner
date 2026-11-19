@@ -87,7 +87,7 @@ describe("board helpers", () => {
     expect(codeLabel("en", "budget", null)).toBe("—");
     expect(partySummary("en", 2, [7, 12])).toBe("2 adults, children aged 7, 12");
     expect(partySummary("vi", 1, [])).toBe("1 người lớn");
-    expect(memberLabel("en", { member_id: "abcd-1", role: "agent", status: "active", is_me: false })).toBe("Agent · abcd");
+    expect(memberLabel("en", { member_id: "abcd-1", role: "agent", status: "active", is_me: false })).toBe("Agent"); // AA-1129: never a short id
     expect(memberLabel("vi", { member_id: "abcd-1", role: "owner", status: "active", is_me: true })).toBe("Tôi");
   });
 
