@@ -2,7 +2,8 @@
 // proposals, deposits due this week, overdue payments, trips leaving soon with passport details missing, overdue AA
 // invoices (owner / agent: null for the assistant, the tile is left out) and the next group departures with their
 // travellers, each opening its work list. Counts only (no amount), so every role sees them. A failed read shows
-// nothing: Home stays usable.
+// nothing: Home stays usable. AA-1129: the page reads the agenda once (readAgenda) and hands it to these tiles and to
+// "Needs you"; a departure is named by its AA tour title and dated by its AA service date.
 import Link from "next/link";
 import { K, KpiTile } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
@@ -13,10 +14,14 @@ import { type AgendaView, departureHref } from "@/lib/finance";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import type { Session } from "@/lib/session";
 
-export async function AgendaTiles({ cfg, session, lang, locale }: { cfg: WebConfig; session: Session; lang: Lang; locale: DateLocale }) {
+/** The agenda read Home shares between these tiles and "Needs you" (AA-1129: one call per page). Null on a failure. */
+export async function readAgenda(cfg: WebConfig, session: Session): Promise<AgendaView | null> {
   const view = await crmCall<AgendaView>(cfg, session, "GET", "reports/agenda");
-  if (!view.ok) return null;
-  const a = view.data;
+  return view.ok ? view.data : null;
+}
+
+export function AgendaTiles({ agenda: a, lang, locale }: { agenda: AgendaView | null; lang: Lang; locale: DateLocale }) {
+  if (!a) return null;
   const tr = (key: string) => t(lang, key as MessageKey);
   const tile = (testId: string, label: string, value: number, href: string, tone?: "warning" | "danger", hint?: string) => (
     <Link href={href} style={{ textDecoration: "none", color: "inherit", minWidth: 0 }}>
@@ -39,7 +44,8 @@ export async function AgendaTiles({ cfg, session, lang, locale }: { cfg: WebConf
         <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 6, fontSize: 13 }} data-testid="agenda-departures">
           {a.next_departures.map((d) => (
             <li key={d.departure_ref} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <Link href={departureHref(d.departure_ref)}>{d.departure_ref}</Link>
+              {/* AA-1129: the AA tour's title, the ref only for a group code with no AA line. */}
+              <Link href={departureHref(d.departure_ref)} style={{ overflowWrap: "anywhere" }}>{d.title || d.departure_ref}</Link>
               <span style={{ color: K.muted }}>
                 {fmt(tr("agenda.departure"), { date: d.start_date ? formatDate(d.start_date, locale) : "—", trips: d.trips, pax: d.pax })}
               </span>

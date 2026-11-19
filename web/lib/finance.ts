@@ -187,8 +187,33 @@ export interface AgendaView {
   passport_missing: number;
   passport_days: number;
   aa_overdue_invoices: number | null;
-  next_departures: { departure_ref: string; start_date: string | null; trips: number; pax: number; guaranteed: boolean | null }[];
+  /** AA-1129: `start_date` is the AA line's service date (the trip's own date only for a group code with no AA line);
+   *  `title` the AA tour's title (null for a group code with no AA line). */
+  next_departures: { departure_ref: string; title?: string | null; start_date: string | null; trips: number; pax: number; guaranteed: boolean | null }[];
   departure_days: number;
+  /** AA-1129: the caller's own work for Home's "Needs you" (absent from an older API). */
+  needs_you?: { tasks_overdue: number; tasks_today: number; waiting_on_you: number };
+}
+
+/** One line of Home's "Needs you" (AA-1129, S283 audit row 2): a counted message and the page that lists the items. */
+export interface NeedsItem {
+  key: "home.needs.tasksOverdue" | "home.needs.tasksToday" | "home.needs.waiting" | "home.needs.latePayments";
+  n: number;
+  href: string;
+  tone: "danger" | "warning" | "neutral";
+}
+
+/** The "Needs you" lines with something in them, most urgent first: the caller's overdue tasks, late payments (the
+ *  agency's), tasks due today, trips waiting on the caller. An older API without `needs_you` gives late payments only. */
+export function needsYou(a: AgendaView): NeedsItem[] {
+  const n = a.needs_you;
+  const items: NeedsItem[] = [
+    { key: "home.needs.tasksOverdue", n: n?.tasks_overdue ?? 0, href: "/tasks", tone: "danger" },
+    { key: "home.needs.latePayments", n: a.overdue_instalments, href: "/payments", tone: "danger" },
+    { key: "home.needs.tasksToday", n: n?.tasks_today ?? 0, href: "/tasks", tone: "warning" },
+    { key: "home.needs.waiting", n: n?.waiting_on_you ?? 0, href: "/pipeline?waiting_on=agency", tone: "neutral" },
+  ];
+  return items.filter((i) => i.n > 0);
 }
 
 /** The message key of an API refusal on a finance form (unknown codes fall back to the generic one). */

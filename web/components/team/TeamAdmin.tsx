@@ -13,7 +13,7 @@ import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { type Lang, type MessageKey, t } from "@/lib/i18n";
 import type { Role } from "@/lib/nav";
-import { memberLabel, reassignTargets, seatsLeft, teamError, type ReassignQueue, type TeamInvitation, type TeamMember, type TeamPage } from "@/lib/team";
+import { memberLabel, reassignTargets, roleSeq, seatsLeft, teamError, type ReassignQueue, type TeamInvitation, type TeamMember, type TeamPage } from "@/lib/team";
 
 const ROLES: Role[] = ["owner", "agent", "assistant"];
 
@@ -59,15 +59,17 @@ export function TeamAdmin({ page, queue, lang, locale }: { page: TeamPage; queue
   const left = seatsLeft(page.plan);
   const fromMembers = Array.from(new Set(queue?.trips.map((tr) => tr.from_member_id) ?? []));
   const byId = new Map(page.members.map((m) => [m.member_id, m]));
+  const seq = roleSeq(page.members); // AA-1129: "Agent 2" for a member with no invitation address, never an id
+  const label = (m: TeamMember) => memberLabel(m, lang, seq.get(m.member_id));
 
   const memberColumns: ColumnDef<TeamMember, unknown>[] = [
     {
       id: "member",
       header: t(lang, "team.member"),
-      accessorFn: (m) => memberLabel(m),
+      accessorFn: (m) => label(m),
       cell: ({ row }) => (
         <span style={{ overflowWrap: "anywhere", maxWidth: 280, display: "inline-block" }}>
-          {memberLabel(row.original)}
+          {label(row.original)}
           {row.original.is_me && <span style={{ color: K.muted }}> · {t(lang, "team.you")}</span>}
         </span>
       ),
@@ -256,7 +258,7 @@ export function TeamAdmin({ page, queue, lang, locale }: { page: TeamPage; queue
               return (
                 <div key={from} style={{ display: "grid", gap: 6 }}>
                   <strong style={{ fontSize: 13, color: K.ink, overflowWrap: "anywhere" }}>
-                    {who ? memberLabel(who) : `#${from.slice(0, 8)}`} ·{" "}
+                    {who ? label(who) : t(lang, "reports.formerMember")} ·{" "}
                     {t(lang, "team.queueCount")
                       .replace("{trips}", String(trips.length))
                       .replace("{clients}", String(queue.clients_by_member[from] ?? 0))}
@@ -277,7 +279,7 @@ export function TeamAdmin({ page, queue, lang, locale }: { page: TeamPage; queue
                     >
                       {options.map((o) => (
                         <option key={o.member_id} value={o.member_id}>
-                          {memberLabel(o)}
+                          {label(o)}
                         </option>
                       ))}
                     </select>

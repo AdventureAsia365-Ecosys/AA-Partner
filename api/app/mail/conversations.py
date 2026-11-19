@@ -2,7 +2,10 @@
 drafts"; Fix B8 Undo; R24 held_reconnect).
 
 - **Lists** carry ids, counts and dates only (design §4.4: no contact data in lists), one ``list_view`` audit event.
-  ``unmatched``: no client and no trip. ``no_trip`` (AA-958): an SMS / WhatsApp conversation of a known client that no
+  ``unmatched``: no client and no trip. The one exception (AA-1129): the Unmatched inbox list also carries the
+  sender, subject and the start of the text of each thread's latest inbound message (a thread with no client is
+  triaged by exactly these), opened by the vault with a second ``list_view`` event naming the messages.
+  ``no_trip`` (AA-958): an SMS / WhatsApp conversation of a known client that no
   trip holds (the client wrote with no open trip): the Inbox lists it with "Link to trip", so it is never lost.
 - **A conversation's messages** are decrypted for the agent (subject, text, HTML for the sandboxed iframe, From / To):
   one ``view`` audit event with the fields. A member sees their own drafts only.
@@ -61,6 +64,16 @@ SELECT c.conversation_id, c.trip_id, c.traveler_id, c.channel, c.last_message_at
  ORDER BY c.last_message_at DESC, c.conversation_id
  LIMIT $4
 """
+# AA-1129 (P2, S283 audit row 4): the Unmatched inbox needs to triage a thread without opening it: the latest inbound
+# message of each listed thread (its sender, subject and the start of its text), opened by the vault for that list only.
+LATEST_IN_SQL = """
+SELECT DISTINCT ON (conversation_id) conversation_id, message_id, subject_enc, body_enc, from_enc
+  FROM crm.message
+ WHERE conversation_id = ANY($1::uuid[]) AND direction = 'in' AND deleted_at IS NULL
+ ORDER BY conversation_id, occurred_at DESC, message_id DESC
+"""
+PREVIEW_CHARS = 140
+SENDER_CHARS = 120
 CONVERSATION_SQL = """
 SELECT conversation_id, trip_id, traveler_id, channel, last_message_at, wa_window_expires_at, opted_out_at,
        agency_supplier_id
@@ -161,6 +174,7 @@ async def list_conversations(
     unmatched: bool = False,
     no_trip: bool = False,
     limit: int = 50,
+    vault: Vault | None = None,
 ) -> dict[str, Any]:
     rows = await ctx.conn.fetch(LIST_SQL, trip_id, traveler_id, unmatched, max(1, min(limit, MAX_LIST)), no_trip)
     items = [
@@ -181,7 +195,44 @@ async def list_conversations(
         for r in rows
     ]
     ctx.audit("list_view", "allowed", "conversation", object_ids=tuple(i["conversation_id"] for i in items))
+    if unmatched and vault is not None and items:
+        await _unmatched_previews(ctx, vault, items)
     return {"conversations": items}
+
+
+def _clip(text: str | None, limit: int) -> str | None:
+    flat = " ".join((text or "").split())
+    if not flat:
+        return None
+    return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
+
+
+async def _unmatched_previews(ctx: TenantContext, vault: Vault, items: list[dict[str, Any]]) -> None:
+    """The sender, subject and text start of each unmatched thread's latest inbound message (AA-1129). An unmatched
+    thread has no client yet, so these lines are what the agency triages and links by; one ``list_view`` event names
+    the messages opened. A thread with only outbound messages keeps nulls."""
+    ids = [uuid.UUID(i["conversation_id"]) for i in items]
+    latest = {r["conversation_id"]: r for r in await ctx.conn.fetch(LATEST_IN_SQL, ids)}
+    opened = []
+    for item in items:
+        r = latest.get(uuid.UUID(item["conversation_id"]))
+        item["sender"] = item["subject"] = item["preview"] = None
+        if r is None:
+            continue
+        mid = r["message_id"]
+        item["sender"] = _clip(await _open(vault, mid, "from_enc", r["from_enc"]), SENDER_CHARS)
+        item["subject"] = _clip(await _open(vault, mid, "subject_enc", r["subject_enc"]), MAX_SUBJECT)
+        item["preview"] = _clip(await _open(vault, mid, "body_enc", r["body_enc"]), PREVIEW_CHARS)
+        opened.append(str(mid))
+    if opened:
+        ctx.audit(
+            "list_view",
+            "allowed",
+            "message",
+            fields=("from", "subject", "body"),
+            reason="unmatched_preview",
+            object_ids=tuple(opened),
+        )
 
 
 async def _conversation(ctx: TenantContext, conversation_id: uuid.UUID) -> Any:

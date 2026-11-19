@@ -41,6 +41,7 @@ import { bookNowEn, bookNowVi } from "./i18nBookNow";
 import { inclusionsEn, inclusionsVi } from "./i18nInclusions";
 import { searchEn, searchVi } from "./i18nSearch";
 import { tagsEn, tagsVi } from "./i18nTags";
+import { agencyUiEn, agencyUiVi } from "./i18nAgencyUi";
 import { campaignsEn, campaignsVi } from "./i18nCampaigns";
 import { settingsUxEn, settingsUxVi } from "./i18nSettingsUx";
 import { helpEn, helpVi } from "./i18nHelp";
@@ -98,6 +99,7 @@ const en = {
   ...searchEn, // AA-963: the global search and the Library page (lib/i18nSearch.ts)
   ...inclusionsEn, // AA-1070 crm-35: Settings > Proposal lines, the builder picker, the client lists (lib/i18nInclusions.ts)
   ...tagsEn, // AA-960: tags, system tags, bulk tagging, Settings > Tags, coverage, ready to travel again (lib/i18nTags.ts)
+  ...agencyUiEn, // AA-1129: Home "Needs you", member names, the Unmatched inbox rows (lib/i18nAgencyUi.ts)
   ...campaignsEn, // AA-968: Marketing > Campaigns (lib/i18nCampaigns.ts)
   ...settingsUxEn, // AA-1096 S280: per-form fields and quota, refund limit, markup / price-check notes (lib/i18nSettingsUx.ts)
   ...helpEn, // AA-970 (CRM-37b): What's new, preview panel, help topics, public data pages (lib/i18nHelp.ts)
@@ -138,14 +140,13 @@ const en = {
   "role.agent": "Agent",
   "role.assistant": "Assistant",
   "home.title": "Welcome",
-  "home.subtitle": "Your agency's CRM. The first pieces are in place; pipeline, clients and messages follow.",
+  "home.subtitle": "Your agency's day: what needs you, money due and trips leaving soon.",
   "home.checklist": "Getting started",
   "home.check.signin": "Sign in to the CRM",
   "home.check.agency": "Open your agency",
   "home.check.inquiry": "Receive your first inquiry",
   "home.check.studio": "Publish a tour from Content studio",
   "home.needs": "Needs you",
-  "home.needsEmpty": "Nothing needs you yet. New inquiries, holds and payments will show here.",
   "section.pipeline.title": "No trips yet",
   "section.pipeline.body": "Inquiries from your website form land here as cards on the board.",
   "section.clients.title": "No clients yet",
@@ -2849,6 +2850,7 @@ const vi: Record<MessageKey, string> = {
   ...inclusionsVi,
   ...searchVi,
   ...tagsVi,
+  ...agencyUiVi,
   ...campaignsVi, // AA-968
   ...settingsUxVi,
   ...helpVi,
@@ -2889,14 +2891,13 @@ const vi: Record<MessageKey, string> = {
   "role.agent": "Nhân viên tư vấn",
   "role.assistant": "Trợ lý",
   "home.title": "Xin chào",
-  "home.subtitle": "CRM của đại lý bạn. Phần nền đã sẵn sàng; quy trình bán, khách hàng và tin nhắn sẽ có tiếp theo.",
+  "home.subtitle": "Một ngày của đại lý: việc cần bạn, khoản tiền đến hạn và chuyến sắp khởi hành.",
   "home.checklist": "Bắt đầu",
   "home.check.signin": "Đăng nhập CRM",
   "home.check.agency": "Mở đại lý của bạn",
   "home.check.inquiry": "Nhận yêu cầu đầu tiên",
   "home.check.studio": "Đăng một tour từ Content studio",
   "home.needs": "Cần bạn xử lý",
-  "home.needsEmpty": "Chưa có việc cần bạn. Yêu cầu mới, giữ chỗ và thanh toán sẽ hiện ở đây.",
   "section.pipeline.title": "Chưa có chuyến đi",
   "section.pipeline.body": "Yêu cầu từ biểu mẫu trên website của bạn sẽ hiện thành thẻ trên bảng.",
   "section.clients.title": "Chưa có khách hàng",

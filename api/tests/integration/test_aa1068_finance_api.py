@@ -330,10 +330,12 @@ async def test_group_departure_costs_profit_cube_and_agenda(app_pool: asyncpg.Po
     assert by_source["totals"]["cost_base"] == "645.00" and by_source["totals"]["margin_pct"] is None
     assert [(r["key"], r["cost_base"]) for r in by_product["rows"]] == [("aa_tour", "600.00")]
     assert count == 2 and body.decode("utf-8-sig").splitlines()[0].startswith("product,currency,trips")
+    # AA-1129: named by its AA tour; the group-code trip keeps its own start date (the AA line is the first trip's).
     assert tiles["next_departures"] == [
-        {"departure_ref": "DEP-77", "start_date": tiles["next_departures"][0]["start_date"], "trips": 1, "pax": 1,
-         "guaranteed": None},
+        {"departure_ref": "DEP-77", "title": "Lakes tour", "start_date": tiles["next_departures"][0]["start_date"],
+         "trips": 1, "pax": 1, "guaranteed": None},
     ]  # fmt: skip
+    assert set(tiles["needs_you"]) == {"tasks_overdue", "tasks_today", "waiting_on_you"}
     assert tiles["aa_overdue_invoices"] == 0 and tiles["passport_missing"] == 0  # no traveller on these trips
     async with tenant_tx(app_pool, s["who"]["assistant"], s["tenant"]) as ctx:
         assert (await agenda.agenda(ctx))["aa_overdue_invoices"] is None

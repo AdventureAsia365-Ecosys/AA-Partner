@@ -188,7 +188,7 @@ def test_pipeline_routes_reach_their_helpers(agency: Any, monkeypatch: pytest.Mo
     ):
         monkeypatch.setattr(pipeline_router, name, stub(name))
 
-    async def members(ctx: Any) -> list[dict[str, Any]]:
+    async def members(ctx: Any, vault: Any) -> list[dict[str, Any]]:
         return [{"member_id": str(MEMBER)}]
 
     monkeypatch.setattr(pipeline_router, "members", members)

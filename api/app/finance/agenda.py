@@ -11,8 +11,11 @@
   stores AA's departure status from the Booking feed (it ignores ``departure.guaranteed`` today).
 - ``aa_overdue_invoices`` (owner / agent only, else null): the AA invoices of the "Bookings with AA" copy that are past
   due with a balance.
+- ``needs_you`` (AA-1129): the caller's own work for Home's "Needs you": open tasks past due and due today (the
+  ``/tasks`` "mine" scope) and live trips waiting on the agency that the caller owns or nobody owns yet.
 
-Counts and ids only (no amount), so every role reads them; the owner filter is not applied (the agency's day).
+Counts and ids only (no amount), so every role reads them; the owner filter is not applied (the agency's day), except
+``needs_you``, which is the caller's. A departure's date and title come from its AA lines (AA-1129).
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.margin import sees_margin
+from app.pipeline import BOARD_STAGES
 from app.tenancy import TenantContext
 
 PASSPORT_DAYS = 60
@@ -48,17 +52,55 @@ SELECT
         AND t.start_date BETWEEN (SELECT d FROM today) AND (SELECT d FROM today) + $2::int
         AND (tr.passport_no_enc IS NULL OR tr.passport_expiry_enc IS NULL))::int AS passport_missing
 """
+# AA-1129 (P1, S283 audit row 3): each booked trip on a departure is dated by its own AA line's service date (the AA
+# date, as on /departures), its trip start date only when it joined by a group code without an AA line; the departure
+# is named by the tour title of its AA lines (null for a group code with none).
 DEPARTURES_SQL = """
 WITH today AS (
     SELECT (now() AT TIME ZONE COALESCE((SELECT timezone FROM crm.tenant_settings), $1::text))::date AS d
+), aa AS (
+    SELECT l.trip_id, l.departure_id AS departure_ref, min(l.service_from) AS service_from
+      FROM crm.booking_line l
+     WHERE l.supplier_kind = 'aa' AND l.departure_id IS NOT NULL AND l.status <> 'cancelled' AND l.deleted_at IS NULL
+     GROUP BY l.trip_id, l.departure_id
+), titles AS (
+    SELECT l.departure_id AS departure_ref, min(l.title) AS title
+      FROM crm.booking_line l
+     WHERE l.supplier_kind = 'aa' AND l.departure_id IS NOT NULL AND l.status <> 'cancelled' AND l.deleted_at IS NULL
+     GROUP BY l.departure_id
+), on_dep AS (
+    SELECT d.departure_ref, d.pax, coalesce(a.service_from, d.start_date) AS day
+      FROM crm.v_departure_trip d
+      LEFT JOIN aa a ON a.trip_id = d.trip_id AND a.departure_ref = d.departure_ref
+     WHERE d.stage IN ('booked', 'pre_departure', 'travelling')
 )
-SELECT d.departure_ref, min(d.start_date) AS start_date, count(*)::int AS trips, sum(d.pax)::int AS pax
-  FROM crm.v_departure_trip d
- WHERE d.stage IN ('booked', 'pre_departure', 'travelling')
-   AND d.start_date BETWEEN (SELECT d FROM today) AND (SELECT d FROM today) + $2::int
- GROUP BY d.departure_ref
- ORDER BY min(d.start_date), d.departure_ref
+SELECT o.departure_ref, min(o.day) AS start_date, min(t.title) AS title, count(*)::int AS trips, sum(o.pax)::int AS pax
+  FROM on_dep o
+  LEFT JOIN titles t ON t.departure_ref = o.departure_ref
+ WHERE o.day BETWEEN (SELECT d FROM today) AND (SELECT d FROM today) + $2::int
+ GROUP BY o.departure_ref
+ ORDER BY min(o.day), o.departure_ref
  LIMIT $3
+"""
+# AA-1129 (P1, S283 audit row 2): "Needs you" on Home, for the caller: their open tasks past due and due today (the
+# /tasks "mine" scope: assigned to them, or unassigned on a trip they own; agency time zone), and the live trips
+# waiting on the agency that they own or nobody owns yet.
+NEEDS_SQL = """
+WITH tz AS (
+    SELECT COALESCE((SELECT timezone FROM crm.tenant_settings), $1::text) AS name
+), mine AS (
+    SELECT k.due_at FROM crm.task k LEFT JOIN crm.trip t ON t.trip_id = k.trip_id
+     WHERE k.deleted_at IS NULL AND k.status = 'open' AND (t.trip_id IS NULL OR t.deleted_at IS NULL)
+       AND (k.assignee_member_id = $2 OR (k.assignee_member_id IS NULL AND t.owner_member_id = $2))
+)
+SELECT
+    (SELECT count(*) FROM mine WHERE due_at < now())::int AS tasks_overdue,
+    (SELECT count(*) FROM mine WHERE due_at >= now()
+        AND (due_at AT TIME ZONE (SELECT name FROM tz))::date
+          = (now() AT TIME ZONE (SELECT name FROM tz))::date)::int AS tasks_today,
+    (SELECT count(*) FROM crm.trip t
+      WHERE t.deleted_at IS NULL AND t.waiting_on = 'agency' AND t.stage = ANY($3::text[])
+        AND (t.owner_member_id = $2 OR t.owner_member_id IS NULL))::int AS waiting_on_you
 """
 AA_OVERDUE_SQL = """
 SELECT count(*)::int FROM crm.aa_invoice_cache
@@ -70,6 +112,7 @@ async def agenda(ctx: TenantContext) -> dict[str, Any]:
     counts = await ctx.conn.fetchrow(COUNTS_SQL, DEFAULT_TZ, PASSPORT_DAYS)
     departures = await ctx.conn.fetch(DEPARTURES_SQL, DEFAULT_TZ, DEPARTURE_DAYS, MAX_DEPARTURES)
     aa_overdue = await ctx.conn.fetchval(AA_OVERDUE_SQL) if sees_margin(ctx.member_role) else None
+    needs = await ctx.conn.fetchrow(NEEDS_SQL, DEFAULT_TZ, ctx.member_id, list(BOARD_STAGES))
     return {
         "open_proposals": counts["open_proposals"],
         "deposits_due_week": counts["deposits_due_week"],
@@ -80,6 +123,7 @@ async def agenda(ctx: TenantContext) -> dict[str, Any]:
         "next_departures": [
             {
                 "departure_ref": d["departure_ref"],
+                "title": d["title"],
                 "start_date": d["start_date"].isoformat() if d["start_date"] else None,
                 "trips": d["trips"],
                 "pax": d["pax"],
@@ -88,4 +132,9 @@ async def agenda(ctx: TenantContext) -> dict[str, Any]:
             for d in departures
         ],
         "departure_days": DEPARTURE_DAYS,
+        "needs_you": {
+            "tasks_overdue": needs["tasks_overdue"],
+            "tasks_today": needs["tasks_today"],
+            "waiting_on_you": needs["waiting_on_you"],
+        },
     }

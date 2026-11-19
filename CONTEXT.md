@@ -1149,6 +1149,10 @@ invoice reads), `app/ledger/lines.py` (the line's actual cost); web `components/
   proposals, deposits due this week, overdue schedule rows, trips leaving within 60 days with a traveller's passport
   number or expiry missing (presence only, nothing decrypted), overdue AA invoices (owner / agent), next group
   departures (AA's guaranteed status is null until the roster card stores the feed's `departure.guaranteed`).
+  AA-1129: a departure is dated by its AA lines' service date (as on `/departures`; the trip's own start date only for
+  a group code with no AA line) and carries the AA tour `title`; `needs_you` is the caller's own (overdue / due-today
+  open tasks in the `/tasks` "mine" scope, live trips waiting on the agency that the caller owns or nobody owns): Home's
+  "Needs you" panel lists those with the overdue schedule rows, each linking its page (`components/home/NeedsYou.tsx`).
 - **Margin policy**: the four new tables carry a RESTRICTIVE `*_margin_roles` policy FOR ALL (owner / agent, or a job /
   seed actor), every money route asks `view_margin` / `money_fields_edit` first, and the money keys (`*_cost`, `*_b2b*`,
   `margin*`) are stripped by the serializer for any other role.
@@ -1375,7 +1379,8 @@ secret `crm/<env>/mail-oauth`.
   permission for the scope were checked (the check dials a host the caller names). Credentials are `crm.integration_credential` per
   member (crm-015); Disconnect deletes the credential and keeps the mailbox row.
 - **Work**: conversations by trip / client / Unmatched (`GET /crm/v1/conversations`, ids and counts only, one
-  `list_view`), a thread decrypted for the agent (one `view`), link an Unmatched thread to a client (`CLIENT_EDIT`),
+  `list_view`; AA-1129: the Unmatched list alone adds the latest inbound message's sender, subject and a 140-character
+  preview, opened by the vault with a second `list_view` naming the messages, so a thread with no client can be triaged), a thread decrypted for the agent (one `view`), link an Unmatched thread to a client (`CLIENT_EDIT`),
   drafts autosaved by an id the composer picks (`PUT /messages/drafts/{id}`; only the author; crm-015 lets crm_app
   delete drafts only), Undo within 10 s, a held / failed message back to a draft (`POST /messages/{id}/edit`), saved
   replies (agency-wide: owner via `WORKFLOW_EDIT`; own: every role), the mbox / CSV history import
@@ -2612,6 +2617,11 @@ Design v3 §6.3 CRM-22 (M4, R38, R9; F4 / WF-5 A-05; Q1 2.3); migration crm-022;
   CSV: owner, agent, like `view_margin`; owner only = one row change, never wider than `view_margin`, a unit test)
   and `discount_approve` (AA-1066, owner only: a proposal discount above the agency limit or a sale below cost).
   `/me` carries `permissions` (today `aa_tariff_view`) so the web hides what the API would refuse. Membership writes are also refused by the database for anyone but an owner (crm-008).
+- **Member names** (AA-1129, S283 audit): `crm.member` holds no name. `GET /crm/v1/members` (every role) adds
+  `display_name` (the address of the member's latest accepted invitation before the "@", opened by the vault, one
+  `list_view` naming the members opened; never the full address) and `seq` (place within the role by join time). The
+  web's `memberLabel()` reads "lan.nguyen · Agent", else "Agent 2", never an id; the Team page and the forms' owner
+  picker (owner only, full address from `/team`) fall back to the same "Agent 2".
 - **Margin serializer** (`app/margin.py`): `class_router(AGENCY)` builds every agency router with
   `MarginFilteredRoute`; JSON responses lose every key named like net / b2b / cost / margin / commission unless the
   role holds `view_margin` (owner, agent). Unknown role = filtered. Contract test over every `/crm/v1` route:
