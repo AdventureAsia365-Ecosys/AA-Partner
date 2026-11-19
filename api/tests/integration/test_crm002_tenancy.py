@@ -97,6 +97,8 @@ PLATFORM_TABLES = {
     "tenant column, no PII (crm-037, AA-964)",
     "llm_app_profile": "the CRM app profile (AI switch, daily budget), one AA configuration row, no tenant column, no "
     "PII (crm-041, AA-1025)",
+    "llm_connection_share": "the CRM copy of its LLM connection budget shares, AA configuration sent by CIS, no tenant "
+    "column, no PII (crm-079, AA-1143)",
     "setting_definition": "the CRM settings registry's definitions, AA configuration written only by migrations, no "
     "tenant column, no PII (crm-064, AA-1096)",
     "tenant_erasure_feed_state": "the CIS erasure request feed cursor, one platform row, no tenant column (crm-066, "

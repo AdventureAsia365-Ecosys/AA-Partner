@@ -176,6 +176,7 @@ NON_PERSONAL_COLUMNS: dict[tuple[str, str], str] = {
     ("ingest_address", "local_part"): "the agency's forward-in address, <slug>-<random> (crm-015)",
     ("intake_form", "public_key"): "a random public key of an intake form",
     ("invoice", "number"): "the agency's invoice number, <prefix>-<sequence> (crm-024)",
+    ("llm_connection_share", "connection_key"): "a CIS LLM connection key (^[a-z0-9][a-z0-9-]{1,62}$, crm-079)",
     ("member", "cognito_iss"): "the issuer URL of the sign-in token (a pool, the same for every member)",
     ("member", "cognito_sub"): (
         "the random Cognito id of an agency member, the sign-in lookup key on every request (an agency staff "
