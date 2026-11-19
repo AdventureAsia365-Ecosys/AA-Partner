@@ -174,6 +174,20 @@ export function refusalField(detail: string): "lead_webhook_url" | "lead_email" 
   return null;
 }
 
+/** Where a lead route refusal is shown: under the target field when that field is the one on screen, else (null) as
+ * the section's message. CIS checks the stored target of the other channel too (it goes live when the channel is
+ * switched), so a refusal can be about a field that is hidden: ``hiddenRefusalKey`` then names it, never silent. */
+export function inlineRefusalField(channel: LeadChannel, field: string | null): "lead_webhook_url" | "lead_email" | null {
+  if (channel === "webhook" && field === "lead_webhook_url") return field;
+  if (channel === "email" && field === "lead_email") return field;
+  return null;
+}
+
+/** The sentence that wraps a refusal of a target that is not on screen (``{reason}`` = the refusal's sentence). */
+export function hiddenRefusalKey(field: "lead_webhook_url" | "lead_email"): MessageKey {
+  return field === "lead_email" ? "tp.route.hiddenEmail" : "tp.route.hiddenWebhook";
+}
+
 /** The page's message when the module cannot be shown (GET /crm/v1/trip-planner answered status + detail). */
 export function loadErrorKey(status: number, detail: string): MessageKey {
   if (status === 403) return "tp.err.noAccess";

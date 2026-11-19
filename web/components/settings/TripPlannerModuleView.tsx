@@ -17,6 +17,8 @@ import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import {
   domainTone,
   EDITED_TOKENS,
+  hiddenRefusalKey,
+  inlineRefusalField,
   type LeadChannel,
   leadTone,
   type PlannerLead,
@@ -178,7 +180,13 @@ function RouteSection({ site, owner, lang, onSaved }: { site: TripPlannerModule;
   }
 
   const target = channel === "webhook" ? "webhook" : "email";
-  const fieldName = channel === "webhook" ? "lead_webhook_url" : "lead_email";
+  // A refusal of the target on screen shows under it; any other (the tenant, or the stored target of the channel not
+  // chosen, which CIS checks too) shows as the section's message, naming the hidden field: never silent.
+  const inline = inlineRefusalField(channel, field);
+  const refusedHidden = !inline && (field === "lead_webhook_url" || field === "lead_email") ? field : null;
+  const shown: Msg = msg && refusedHidden
+    ? { ...msg, text: fmt(t(lang, hiddenRefusalKey(refusedHidden)), { reason: msg.text }) }
+    : msg;
   return (
     <Section title={t(lang, "tp.route.title")} description={t(lang, "tp.route.about")} actions={routeNow(route, lang)}>
       <div style={{ display: "grid", gap: 12 }} data-testid="tp-route">
@@ -187,15 +195,15 @@ function RouteSection({ site, owner, lang, onSaved }: { site: TripPlannerModule;
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
             {(["email", "webhook", "none"] as const).map((c) => (
               <Radio key={c} name="tp-channel" value={c} checked={channel === c} disabled={!owner || busy}
-                     label={t(lang, `tp.channel.${c}` as MessageKey)} onChange={() => { setChannel(c); setMsg(null); }} />
+                     label={t(lang, `tp.channel.${c}` as MessageKey)} onChange={() => { setChannel(c); setMsg(null); setField(null); }} />
             ))}
           </div>
         </Field>
         <RouteTarget channel={channel} value={targets[target]} disabled={!owner || busy} lang={lang}
-                     error={field === fieldName ? msg?.text : undefined}
+                     error={inline ? msg?.text : undefined}
                      onChange={(v) => { setTargets({ ...targets, [target]: v }); setMsg(null); setField(null); }} />
         <SaveButton show={owner} busy={busy} lang={lang} onClick={() => void save()} testId="tp-route-save" />
-        {!field && <Message msg={msg} testId="tp-route-message" />}
+        {!inline && <Message msg={shown} testId="tp-route-message" />}
       </div>
     </Section>
   );
