@@ -200,6 +200,8 @@ class OptionChange(_Body):
     choose_later_allowed: bool | None = None
     # AA-1066: take the suggested sell (AA-1030 markup or RRP, then the agency's price rules; a money field).
     use_suggested: bool | None = None
+    # AA-1144 (D9): one line shown under the item (null or "" clears it); an AA item's title is read only
+    display_note: str | None = Field(default=None, max_length=1000)
 
 
 class PriceRowIn(_Body):

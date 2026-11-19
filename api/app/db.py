@@ -106,6 +106,7 @@ REQUIRED_SCHEMA_VERSIONS: tuple[str, ...] = (
     "crm-076",  # AA-1126 L3: crm.tenant_entitlement.ai_budget_usd + crm.spend.environment (contract, MIG-4)
     "crm-078",  # AA-1138: crm.llm_stage_route.connection_key + sends_temperature, the draft route (contract, MIG-4)
     "crm-080",  # AA-1144: agency item category, crm.aa_extra_night_request, narrower categories (contract, MIG-4)
+    "crm-081",  # AA-1144 (D9): crm.option.display_note, one note line per quote item (contract, MIG-4)
 )
 REQUIRED_SCHEMA_VERSION = max(REQUIRED_SCHEMA_VERSIONS)
 
