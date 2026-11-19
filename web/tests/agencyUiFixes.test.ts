@@ -245,6 +245,7 @@ describe("A1: Academy small fixes", () => {
     expect(read("app/academy/(learn)/lessons/[lessonId]/page.tsx")).toContain('if (!read.ok && read.kind === "not_found") notFound();');
     const quiz = read("app/academy/(learn)/quiz/[scope]/[targetId]/page.tsx");
     expect(quiz).toContain("academy-quiz-context");
-    expect(quiz).toContain('academyRead<Module>(ctx, `modules/${targetId}`)');
+    expect(quiz).toContain('academyRead<Module>(ctx, `modules/${moduleId}`)');
+    expect(quiz).toContain("if (!path || !path.final_quiz) notFound();");
   });
 });
