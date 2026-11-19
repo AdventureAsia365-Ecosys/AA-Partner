@@ -55,6 +55,8 @@ async def test_the_file_is_re_runnable(admin: asyncpg.Connection) -> None:
         await admin.execute(MIGRATION.read_text(encoding="utf-8"))
     finally:
         await admin.execute("RESET ROLE")
-    assert await admin.fetchval(
-        "SELECT count(*) FROM pg_constraint WHERE conrelid = 'crm.option'::regclass AND conname = 'option_display_note_chk'"
-    ) == 1  # fmt: skip
+    count = await admin.fetchval(
+        "SELECT count(*) FROM pg_constraint "
+        "WHERE conrelid = 'crm.option'::regclass AND conname = 'option_display_note_chk'"
+    )
+    assert count == 1
