@@ -25,7 +25,8 @@ import { BILLING_MESSAGES, SETTINGS_MESSAGES } from "./account.messages";
 import { fmtBillingMonth } from "@/lib/studio/format";
 import { usePortalShell, type ShellBilling } from "./PortalShellContext";
 import { fmtDay, fmtUsd, usageMeter, type Quota } from "@/lib/studio/account";
-import { currentPlanPrice, dueSoFar, fmtMoney, planPrice, type BillingPlanPrice } from "@/lib/studio/billingMoney";
+import { currentPlanPrice, dueSoFar, fmtMoney, planPrice, quoteView, type BillingPlanPrice } from "@/lib/studio/billingMoney";
+import { QuoteCard } from "./QuoteCard";
 import { signedInText } from "@/lib/studio/crmIdentity";
 import { useCrmIdentity } from "@/lib/studio/useCrmIdentity";
 
@@ -132,6 +133,8 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
   const rpm        = b?.rate_limit_rpm as number | null | undefined;
   const month      = fmtBillingMonth(b?.billing_month, lang);
   const plans: Plan[] = b?.plans ?? [];
+  // AA-1129 (S283 rows 18, 24): the monthly bill line by line; null for an older CIS without quote lines.
+  const bill       = noPlan ? null : quoteView(b);
   const pct = (u: number, t: number | null) => (t != null && t > 0 ? Math.min(100, (u / t) * 100) : 0);
 
   return (
@@ -171,6 +174,8 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
         </div>
       </Card>
 
+      <QuoteCard quote={bill} />
+
       {/* AA-761 — the rewrite meter: used vs quota and the reset date (/v1/quota), overage so far (/v1/billing). */}
       <UsageMeterCard quota={quotaQ.data ?? null} billing={b} loading={quotaQ.isPending}
         failed={quotaQ.isError} onRetry={() => quotaQ.refetch()} month={month} />
@@ -181,7 +186,7 @@ export function BillingTab({ billing }: { billing: ShellBilling | null }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 16 }}>
           {[
             { l: t("apiCalls"), v: `${num(apiUsed)} / ${q(apiTotal)}`, sub: t("pctUsed", pct(apiUsed, apiTotal).toFixed(0)) },
-            { l: t("dueSoFar"), v: noPlan ? "—" : fmtMoney(due.amount, due.currency), sub: noPlan ? t("noPlan") : overage > 0 ? t(due.overageApart ? "plusOverage" : "includesOverage", fmtMoney(overage, "USD")) : t("noOverage") },
+            { l: t("dueSoFar"), v: noPlan ? "—" : fmtMoney(due.amount, due.currency), sub: noPlan ? t("noPlan") : overage > 0 ? t(due.overageApart ? "plusOverage" : "includesOverage", fmtMoney(overage, "USD")) : t(bill ? "noOverageBill" : "noOverage") },
           ].map(({ l, v, sub }) => (
             <div key={l} style={{ padding: "14px 16px", background: K.bg, borderRadius: 8, border: `1px solid ${K.line}` }}>
               <div style={{ fontSize: 10.5, textTransform: "uppercase", letterSpacing: "0.1em", color: K.muted, fontWeight: 600, marginBottom: 6 }}>{l}</div>

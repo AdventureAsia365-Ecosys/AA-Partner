@@ -21,12 +21,36 @@ export interface BillingPlanPrice {
   price_monthly?: string | number | null;
 }
 
+/** One product on the monthly quote (CIS services/tenant_account/quote.py Line.out), amounts in the quote currency. */
+export interface BillingQuoteLine {
+  kind?: string | null;
+  product?: string | null;
+  plan_key?: string | null;
+  name?: string | null;
+  quantity?: number | null;
+  extra_seats?: number | null;
+  extra_seat_price?: string | number | null;
+  unit_price?: string | number | null;
+  amount?: string | number | null;
+  discount?: string | number | null;
+  agreed?: boolean | null;
+  price_missing?: boolean | null;
+  billing_interval?: string | null;
+  trialing?: boolean | null;
+}
+
 export interface BillingQuote {
   currency?: string | null;
   monthly_total?: string | number | null;
   pilot_free?: boolean | null;
   discount?: string | number | null;
   discount_kind?: string | null;
+  // AA-1129 (S283 rows 18, 24): the lines and the discount the agency pays for, shown on Billing and the Dashboard.
+  lines?: BillingQuoteLine[] | null;
+  subtotal?: string | number | null;
+  discount_pct?: string | number | null;
+  annual_paid_months?: number | null;
+  annual_total?: string | number | null;
 }
 
 /** The /v1/billing fields this module reads (the rest of the record is the usage view). */
@@ -108,5 +132,73 @@ export function monthMoney(b: BillingMoneyRecord | null | undefined): { planFee:
   return {
     planFee: plan.amount !== null && plan.amount > 0 ? fmtMoney(plan.amount, plan.currency) : "—",
     due: fmtMoney(due.amount, due.currency),
+  };
+}
+
+/** What a quote line says beside its name, as codes the page words: a count, extra seats, a trial, an agreed price,
+ *  a price still missing, a yearly line. */
+export type QuoteNote =
+  | { kind: "quantity"; n: number }
+  | { kind: "extraSeats"; n: number; price: string | null }
+  | { kind: "trial" }
+  | { kind: "agreed" }
+  | { kind: "priceMissing" }
+  | { kind: "yearly" };
+
+export interface QuoteRow {
+  key: string;
+  name: string;
+  notes: QuoteNote[];
+  amount: string;
+}
+
+/** The monthly bill as rows the Billing tab and the Dashboard show (AA-1129, S283 rows 18 and 24: the amount due was
+ *  shown next to the plan fee alone, so a total with add-ons and a combo discount did not add up on the page). Null
+ *  when CIS sent no quote lines (an older CIS): the pages keep the plan fee alone. */
+export interface QuoteView {
+  currency: string;
+  rows: QuoteRow[];
+  subtotal: string;
+  /** The discount, when there is one: its kind (founding | combo | another code), percent and amount (positive). */
+  discount: { kind: string | null; pct: number | null; amount: string } | null;
+  pilotFree: boolean;
+  total: string;
+  annual: { months: number; total: string } | null;
+}
+
+export function quoteView(b: BillingMoneyRecord | null | undefined): QuoteView | null {
+  const q = b?.quote;
+  const lines = q?.lines ?? [];
+  if (!q || lines.length === 0) return null;
+  const currency = (q.currency || billingCurrency(b)).toUpperCase();
+  const money = (v: unknown) => fmtMoney(toNumber(v), currency);
+  const rows = lines.map((ln, i) => {
+    const notes: QuoteNote[] = [];
+    const qty = toNumber(ln.quantity) ?? 1;
+    if (qty > 1) notes.push({ kind: "quantity", n: qty });
+    const extra = toNumber(ln.extra_seats) ?? 0;
+    if (extra > 0) {
+      const price = toNumber(ln.extra_seat_price);
+      notes.push({ kind: "extraSeats", n: extra, price: price === null ? null : fmtMoney(price, currency) });
+    }
+    if (ln.trialing) notes.push({ kind: "trial" });
+    if (ln.agreed) notes.push({ kind: "agreed" });
+    if (ln.price_missing) notes.push({ kind: "priceMissing" });
+    if (ln.billing_interval === "year") notes.push({ kind: "yearly" });
+    return { key: `${ln.plan_key ?? ln.product ?? "line"}-${i}`, name: ln.name || ln.plan_key || ln.product || "—", notes, amount: money(ln.amount) };
+  });
+  const sum = lines.reduce((acc, ln) => acc + (toNumber(ln.amount) ?? 0), 0);
+  const discountAmount = Math.abs(toNumber(q.discount) ?? 0);
+  const pct = toNumber(q.discount_pct);
+  const months = toNumber(q.annual_paid_months);
+  const annualTotal = toNumber(q.annual_total);
+  return {
+    currency,
+    rows,
+    subtotal: money(q.subtotal ?? sum),
+    discount: discountAmount > 0 ? { kind: q.discount_kind ?? null, pct: pct !== null && pct > 0 ? pct : null, amount: fmtMoney(discountAmount, currency) } : null,
+    pilotFree: q.pilot_free === true,
+    total: money(q.monthly_total),
+    annual: months !== null && months > 0 && annualTotal !== null && !q.pilot_free ? { months, total: fmtMoney(annualTotal, currency) } : null,
   };
 }
