@@ -46,6 +46,7 @@ import { agencyUiEn, agencyUiVi } from "./i18nAgencyUi";
 import { campaignsEn, campaignsVi } from "./i18nCampaigns";
 import { settingsUxEn, settingsUxVi } from "./i18nSettingsUx";
 import { helpEn, helpVi } from "./i18nHelp";
+import { auditLogEn, auditLogVi } from "./i18nAuditLog";
 
 export type Lang = "en" | "vi";
 export const LOCALE_COOKIE = "aa_crm_locale";
@@ -105,6 +106,7 @@ const en = {
   ...campaignsEn, // AA-968: Marketing > Campaigns (lib/i18nCampaigns.ts)
   ...settingsUxEn, // AA-1096 S280: per-form fields and quota, refund limit, markup / price-check notes (lib/i18nSettingsUx.ts)
   ...helpEn, // AA-970 (CRM-37b): What's new, preview panel, help topics, public data pages (lib/i18nHelp.ts)
+  ...auditLogEn, // AA-1129: the words of every audit code, so an access log line is a sentence (lib/i18nAuditLog.ts)
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Home",
@@ -2854,6 +2856,7 @@ const vi: Record<MessageKey, string> = {
   ...campaignsVi, // AA-968
   ...settingsUxVi,
   ...helpVi,
+  ...auditLogVi,
   "app.name": "Adventure Asia Partner",
   "app.short": "AA Partner",
   "nav.home": "Trang chủ",
@@ -3558,7 +3561,7 @@ const vi: Record<MessageKey, string> = {
   "log.ownerOnly": "Chỉ chủ đại lý xem được nhật ký truy cập. Trang chuyến đi của bạn có phần hoạt động riêng.",
   "log.error": "Không tải được nhật ký truy cập. Hãy thử lại.",
   "log.reason": "lý do: {reason}",
-  "log.items": "{n} mục hiển thị",
+  "log.items": "hiển thị {n} mục",
   "log.when": "Thời gian",
   "log.who": "Ai",
   "log.what": "Việc gì",
