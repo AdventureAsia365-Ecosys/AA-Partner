@@ -28,6 +28,19 @@ import { streamUpstream } from "@/lib/proxyResponse";
 import { studioDownloadHeaders } from "@/lib/studio/downloadHeaders";
 import { factWriteRefusal } from "@/lib/studio/facts";
 
+/** The body sent upstream: multipart as bytes (brand-guide upload), anything else as JSON text; none on a read. */
+async function upstreamBody(
+  req: NextRequest, contentType: string, headers: Record<string, string>,
+): Promise<ArrayBuffer | string | undefined> {
+  if (req.method === "GET" || req.method === "HEAD") return undefined;
+  if (contentType.includes("multipart/form-data")) {
+    headers["Content-Type"] = contentType;
+    return req.arrayBuffer();
+  }
+  headers["Content-Type"] = "application/json";
+  try { return await req.text(); } catch { return undefined; /* empty body */ }
+}
+
 async function handler(
   req: NextRequest,
   { params }: { params: Promise<{ path: string[] }> }
@@ -48,21 +61,10 @@ async function handler(
   const headers: Record<string, string> = { Authorization: `Bearer ${auth.token}` };
 
   const contentType = req.headers.get("content-type") ?? "";
-  const isMultipart = contentType.includes("multipart/form-data");
-
-  let body: ArrayBuffer | string | undefined;
-  if (req.method !== "GET" && req.method !== "HEAD") {
-    if (isMultipart) {
-      headers["Content-Type"] = contentType;
-      body = await req.arrayBuffer();
-    } else {
-      headers["Content-Type"] = "application/json";
-      try { body = await req.text(); } catch { /* empty body */ }
-    }
-  }
+  const body = await upstreamBody(req, contentType, headers);
 
   // AA-1144 (B6): the agency's own facts are its price and booking terms only (the multipart body is never a fact).
-  const factRefusal = factWriteRefusal(req.method, path, contentType, typeof body === "string" ? body : undefined);
+  const factRefusal = factWriteRefusal(req.method, path, contentType, body);
   if (factRefusal) {
     return withRenewed(NextResponse.json({ detail: factRefusal.detail }, { status: factRefusal.status }), auth.renewed,
       auth.cfg);

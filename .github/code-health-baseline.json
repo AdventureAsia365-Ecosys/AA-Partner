@@ -178,7 +178,6 @@
   "web/app/_kit/local/studio/PortalSidebar.tsx::PortalSidebar.useEffect().onKey": 11,
   "web/app/_kit/local/studio/api.ts::parseOrThrow": 12,
   "web/app/api/auth/tenant-select/route.ts::POST": 12,
-  "web/app/api/tenant/[...path]/route.ts::handler": 11,
   "web/app/auth/refresh/route.ts::GET": 14,
   "web/app/bff/[...path]/route.ts::forward": 11,
   "web/app/bff/[...path]/route.ts::handle": 24,
