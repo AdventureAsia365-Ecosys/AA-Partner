@@ -12,6 +12,22 @@ import { FACTS_LIB_MESSAGES } from "./lib.messages";
 export const FACT_KINDS = ["price", "season", "visa_entry", "transfer_time", "booking_terms", "other"] as const;
 export type FactKind = (typeof FACT_KINDS)[number];
 
+// AA-1144 (S285 decision B6): an agency's own facts are its markup (price) and its sale terms only; tour facts
+// (seasons, visas and entry, transfer times, anything else) are Adventure Asia's. The form offers these kinds, and
+// "Use my own" only on an Adventure Asia fact of these kinds. An older own fact of another kind still shows (and can
+// be deleted); the CIS facts API itself is a follow-up (another repo).
+export const AGENCY_FACT_KINDS = ["price", "booking_terms"] as const satisfies readonly FactKind[];
+
+/** Whether the agency may write a fact of this kind (a new one, or its own version of an Adventure Asia fact). */
+export function agencyMayWrite(kind: string): boolean {
+  return (AGENCY_FACT_KINDS as readonly string[]).includes(kind);
+}
+
+/** The kinds the form offers: the agency's two, plus the fact's own kind when an older fact of another kind is edited. */
+export function formKinds(current: FactKind): readonly FactKind[] {
+  return agencyMayWrite(current) ? AGENCY_FACT_KINDS : [...AGENCY_FACT_KINDS, current];
+}
+
 const KIND_KEY = {
   price: "kindPrice",
   season: "kindSeason",
@@ -73,7 +89,7 @@ export interface FactForm {
 }
 
 export const EMPTY_FORM: FactForm = {
-  kind: "other", title: "", body: "", provenance: "", country: "", stated_on: "", valid_until: "",
+  kind: "price", title: "", body: "", provenance: "", country: "", stated_on: "", valid_until: "",
 };
 
 export function formOf(f: TenantFact): FactForm {

@@ -32,6 +32,8 @@ export const STAFF_API_PREFIX = "/crm/staff/v1";
 export const STAFF_BFF_ROUTES: readonly StaffBffRoute[] = [
   // S-02 ops release (AA-956 API): the board, one release (counted and audited), the watermarked manifest.
   { method: "GET", pattern: /^ops-releases$/, groups: OPS, card: "AA-1019" },
+  // AA-1144 (B11): the open requests of every agency for extra hotel nights (no personal data).
+  { method: "GET", pattern: /^aa-extra-nights$/, groups: OPS, card: "AA-1144" },
   { method: "GET", pattern: new RegExp(`^agencies/${UUID}/trips/${UUID}/ops-release$`), groups: OPS, card: "AA-1019" },
   { method: "GET", pattern: new RegExp(`^agencies/${UUID}/trips/${UUID}/ops-release/manifest$`), groups: OPS, card: "AA-1019" },
   // S-04 support (L2) and break-glass (L3) sessions (AA-971 API).

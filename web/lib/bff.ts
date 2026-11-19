@@ -156,6 +156,10 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: new RegExp(`^lines/${UUID}/back-to-planning$`), tenant: true, card: "AA-1069" },
   { method: "POST", pattern: new RegExp(`^trips/${UUID}/supplier-requests$`), tenant: true, card: "AA-1069" },
   { method: "POST", pattern: new RegExp(`^trips/${UUID}/supplier-requests/send$`), tenant: true, card: "AA-1069" },
+  // AA-1144 (B11): ask Adventure Asia for hotel nights before or after the tour (an agency sells no hotel of its own).
+  { method: "GET", pattern: new RegExp(`^trips/${UUID}/aa-extra-nights$`), tenant: true, card: "AA-1144" },
+  { method: "POST", pattern: new RegExp(`^trips/${UUID}/aa-extra-nights$`), tenant: true, card: "AA-1144" },
+  { method: "POST", pattern: new RegExp(`^aa-extra-nights/${UUID}/close$`), tenant: true, card: "AA-1144" },
   // AA-1069 (crm-052): the agency service catalogue (writes: owner / agent, the API's money_fields_edit).
   { method: "GET", pattern: /^services$/, tenant: true, card: "AA-1069" },
   { method: "POST", pattern: /^services$/, tenant: true, card: "AA-1069" },

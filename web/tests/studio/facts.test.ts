@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { test } from "vitest";
 
 import {
-  EMPTY_FORM, changedFields, createBody, errorText, formOf, formProblem, overrideForm, ownOnSubject, subjectKey,
+  EMPTY_FORM, agencyMayWrite, changedFields, createBody, errorText, formKinds, formOf, formProblem, overrideForm,
+  ownOnSubject, subjectKey,
   type TenantFact,
 } from "@/lib/studio/facts";
 
@@ -34,7 +35,7 @@ test("an own fact on the same subject is found (not the one being edited)", () =
 
 test("create body and changed fields", () => {
   assert.deepEqual(createBody({ ...EMPTY_FORM, title: " a  b ", body: "c", provenance: "d" }),
-    { kind: "other", title: "a b", body: "c", provenance: "d", country: null, stated_on: null, valid_until: null });
+    { kind: "price", title: "a b", body: "c", provenance: "d", country: null, stated_on: null, valid_until: null });
   assert.deepEqual(changedFields(OWN, formOf(OWN)), {});
   assert.deepEqual(changedFields(OWN, { ...formOf(OWN), valid_until: "2027-03-31" }), { valid_until: "2027-03-31" });
 });
@@ -52,4 +53,12 @@ test("error text", () => {
     "An agency can keep at most 200 facts; delete one first");
   assert.equal(errorText(422, [{ loc: ["body", "title"], msg: "too long" }]), "title: too long");
   assert.equal(errorText(0, null), "Network error");
+});
+
+test("AA-1144 (B6): an agency writes its price (markup) and sale terms only; tour facts stay Adventure Asia's", () => {
+  assert.deepEqual(["price", "booking_terms"].map(agencyMayWrite), [true, true]);
+  assert.deepEqual(["season", "visa_entry", "transfer_time", "other"].map(agencyMayWrite), [false, false, false, false]);
+  assert.equal(EMPTY_FORM.kind, "price");
+  assert.deepEqual(formKinds("price"), ["price", "booking_terms"]);
+  assert.deepEqual(formKinds("season"), ["price", "booking_terms", "season"]); // an older own fact still edits
 });

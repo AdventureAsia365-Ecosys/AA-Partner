@@ -380,9 +380,11 @@ async def _setup(pool: asyncpg.Pool, *roles: str) -> dict[str, Any]:
             ctx, v, {"display_name": "Quách Diệu Linh", "email": "dieu.linh@example.test", "phone": "+84987650123"}
         )
         s["client"] = client["traveler_id"]
-        sup = await suppliers.create_supplier(ctx, v, {"name": "Nhà nghỉ Đồi Thông", "category": "accommodation"})
+        sup = await suppliers.create_supplier(ctx, v, {"name": "Nhà nghỉ Đồi Thông", "category": "flight"})
         line = await lines.create_line(
-            ctx, s["dalat"], {"agency_supplier_id": uuid.UUID(sup["agency_supplier_id"]), "title": "Pine room"}
+            ctx,
+            s["dalat"],
+            {"category": "flight", "agency_supplier_id": uuid.UUID(sup["agency_supplier_id"]), "title": "Pine room"},
         )
         await lines.update_line(ctx, uuid.UUID(line["booking_line_id"]), {"confirmation_no": "PH-88Q1"})
         await templates.create(ctx, v, locale="vi", title="Lời chào Đà Lạt", body="Xin chào {client_first_name}")
@@ -537,8 +539,8 @@ async def test_wildcards_and_a_spaced_at_search_the_plaintext_kinds_only(app_poo
     await _switch_on(app_pool, s["tenant"])
     async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
         v = Vault(s["keys"], ctx)
-        await suppliers.create_supplier(ctx, v, {"name": "100% Lantern Valley", "category": "activity"})
-        await suppliers.create_supplier(ctx, v, {"name": "Quách @ Pine Hill", "category": "accommodation"})
+        await suppliers.create_supplier(ctx, v, {"name": "100% Lantern Valley", "category": "visa"})
+        await suppliers.create_supplier(ctx, v, {"name": "Quách @ Pine Hill", "category": "flight"})
     out = await _search(app_pool, s, "100% lantern")
     assert (out["notice"], _labels(out)) == ("partial_search_refused", {"supplier": ["100% Lantern Valley"]})
     out = await _search(app_pool, s, "Quách @ Pine")  # the client is named Quách: never searched through an "@" term
@@ -553,9 +555,11 @@ async def test_a_booking_reference_with_space_runs_is_found(app_pool: asyncpg.Po
     await _switch_on(app_pool, s["tenant"])
     async with tenant_tx(app_pool, s["who"]["owner"], s["tenant"]) as ctx:
         v = Vault(s["keys"], ctx)
-        sup = await suppliers.create_supplier(ctx, v, {"name": "Lantern boats", "category": "transport"})
+        sup = await suppliers.create_supplier(ctx, v, {"name": "Lantern boats", "category": "other"})
         line = await lines.create_line(
-            ctx, s["hue"], {"agency_supplier_id": uuid.UUID(sup["agency_supplier_id"]), "title": "River boat"}
+            ctx,
+            s["hue"],
+            {"category": "flight", "agency_supplier_id": uuid.UUID(sup["agency_supplier_id"]), "title": "River boat"},
         )
         await lines.update_line(ctx, uuid.UUID(line["booking_line_id"]), {"confirmation_no": "RB   42  K"})
     for q in ("rb 42 k", "RB   42  K"):

@@ -54,6 +54,7 @@ from app.catalogue import service as catalogue
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.esign import terms as esign_terms
 from app.intake import completeness, stage2
+from app.ledger import agency_items
 from app.margin import sees_margin
 from app.payments import schedule_plan
 from app.proposals import aa_days, discount, inclusions, prep_packs, pricing, retail, rules
@@ -122,7 +123,7 @@ OPTIONS_SQL = """
 SELECT o.option_id, o.option_block_id, o.sort_order, o.source, o.title, o.tier, o.agency_supplier_id, o.sell_amount,
        o.net_amount, o.pay_on_arrival, o.choose_later_allowed, o.availability, o.availability_checked_at,
        o.aa_tour_source_id, o.aa_component_id, o.aa_component_kind, o.aa_departure_id, o.aa_nights, o.aa_quote_id,
-       o.aa_quote_valid_until, o.aa_from_price, o.below_from_price, o.source_option_id, o.price_rules,
+       o.aa_quote_valid_until, o.aa_from_price, o.below_from_price, o.source_option_id, o.price_rules, o.category,
        c.served_state AS aa_served_state
   FROM crm.option o
   LEFT JOIN crm.aa_catalog_tour c ON c.source_system = 'cis' AND c.source_id = o.aa_tour_source_id
@@ -197,9 +198,9 @@ INSERT INTO crm.option (option_id, proposal_id, trip_id, option_block_id, sort_o
                         agency_supplier_id, sell_amount, net_amount, pay_on_arrival, choose_later_allowed,
                         availability, availability_checked_at, aa_tour_source_id, aa_component_id, aa_component_kind,
                         aa_departure_id, aa_quote_id, aa_quote_valid_until, aa_from_price, below_from_price,
-                        source_option_id, aa_nights, price_rules)
+                        source_option_id, aa_nights, price_rules, category)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24,
-        $25, $26::jsonb)
+        $25, $26::jsonb, $27)
 """
 UPDATE_OPTION_SQL = """
 UPDATE crm.option SET title = $2, tier = $3, agency_supplier_id = $4, sell_amount = $5, net_amount = $6,
@@ -457,8 +458,7 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
         raise NotFound("proposal_not_found")
     if row["kind"] != KIND:
         raise Conflict("proposal_not_builder", "this version is a text proposal (Proposal tab)")
-    margin = sees_margin(ctx.member_role)
-    s = await _structure(ctx, proposal_id)
+    margin, s = sees_margin(ctx.member_role), await _structure(ctx, proposal_id)
     picks_rows = [dict(r) for r in await ctx.conn.fetch(PICKS_SQL, proposal_id)]
     picks = {str(p["option_block_id"]): str(p["option_id"]) for p in picks_rows}
     defaults = _defaults(s)
@@ -466,8 +466,7 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
     now = dt.datetime.now(dt.UTC)
     # AA-1030: the suggested sell of each AA option (the agency markup, else AA's RRP for a tour); AA-1066: then the
     # agency's price rules, and a per-traveller grid from the agency's age bands.
-    rctx = await _retail_ctx(ctx, s)
-    party = _party(row)
+    rctx, party = await _retail_ctx(ctx, s), _party(row)
     bands = await pricing.settings(ctx)
     counts = pricing.party_counts(_jsonb(row["room_config"]), int(row["party_adults"]), row["party_child_ages"] or [],
                                   bands)  # fmt: skip
@@ -480,6 +479,7 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
             "source": o["source"],
             "title": o["title"],
             "tier": o["tier"],
+            "category": o.get("category"),  # AA-1144: flight | visa | insurance | fee (agency items; NULL = AA / older)
             "agency_supplier_id": str(o["agency_supplier_id"]) if o["agency_supplier_id"] else None,
             "sell_amount": _amount(o["sell_amount"]),
             "sell_delta": _amount(Decimal(o["sell_amount"]) - Decimal(default["sell_amount"])) if default else None,
@@ -534,8 +534,7 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
         })  # fmt: skip
     days = []
     for d in s["days"]:
-        date = _day_date(row["starts_on"], d["day_no"])
-        notes = None
+        date, notes = _day_date(row["starts_on"], d["day_no"]), None
         if d["notes_enc"] is not None:
             notes = await vault.decrypt("proposal_day", "notes_enc", d["proposal_day_id"], d["notes_enc"])
         days.append({
@@ -932,7 +931,7 @@ async def _copy(
             o["net_amount"], o["pay_on_arrival"], o["choose_later_allowed"], o["availability"],
             o["availability_checked_at"], o["aa_tour_source_id"], o["aa_component_id"], o["aa_component_kind"],
             o["aa_departure_id"], o["aa_quote_id"], o["aa_quote_valid_until"], o["aa_from_price"],
-            o["below_from_price"], o["option_id"], o["aa_nights"], _rules_json(o.get("price_rules")),
+            o["below_from_price"], o["option_id"], o["aa_nights"], _rules_json(o.get("price_rules")), o.get("category"),
         )  # fmt: skip
         # AA-1066: the per-traveller rows go with their option.
         await pricing.replace(ctx, proposal_id, option_id, s["prices"].get(str(o["option_id"]), []))
@@ -1065,8 +1064,7 @@ async def update_settings(
     s_plan = await _plan_of(ctx, proposal_id)
     plan = _plan_changes(changes, s_plan["schedule_plan"], starts_on, await _template(ctx))
     if plan is not None:
-        pct = schedule_plan.deposit_pct(plan) or pct
-        balance = schedule_plan.balance_due_on(plan)
+        pct, balance = schedule_plan.deposit_pct(plan) or pct, schedule_plan.balance_due_on(plan)
     policy_id = row.get("cancellation_policy_id")
     if "cancellation_policy_id" in changes:
         policy_id = await cancel_policy.check_choice(ctx, changes["cancellation_policy_id"])
@@ -1287,6 +1285,7 @@ async def update_block(
         raise Invalid("invalid_sort_order")
     title = _text(changes["title"], "title", 120, required=True) if "title" in changes else block["title"]
     kind = _block_type(changes["type"]) if "type" in changes else block["type"]
+    agency_items.block_type_change(kind, block, s["options"])
     swap = block["client_may_swap"] if changes.get("client_may_swap") is None else bool(changes["client_may_swap"])
     await ctx.conn.execute(UPDATE_BLOCK_SQL, block_id, title, kind, swap, default, sort_order, pinned)
     _raise_conflicts(_conflicts(await _structure(ctx, proposal_id)), s)
@@ -1349,10 +1348,11 @@ async def _supplier(ctx: TenantContext, supplier_id: uuid.UUID | None) -> uuid.U
 async def add_agency_option(
     ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, seq: int, block_id: uuid.UUID, body: dict[str, Any]
 ) -> dict[str, Any]:
-    """An item the agency books itself (Suppliers, or typed): sell and net are the agent's (money fields)."""
+    """An agency item (Suppliers, or typed; sell and net are money fields): AA-1144 :mod:`app.ledger.agency_items`."""
     row = await _lock(ctx, proposal_id, seq)
     s = await _structure(ctx, proposal_id)
-    _block(s, block_id)
+    agency_items.block_takes_agency_items(_block(s, block_id)["type"])
+    category = agency_items.category(body.get("category"))
     in_block = [o for o in s["options"] if o["option_block_id"] == block_id]
     if len(in_block) >= MAX_OPTIONS_PER_BLOCK:
         raise Conflict("too_many_options", f"at most {MAX_OPTIONS_PER_BLOCK} options a block")
@@ -1363,7 +1363,7 @@ async def add_agency_option(
         await _supplier(ctx, body.get("agency_supplier_id")), _money_in(body.get("sell_amount"), "sell_amount") or 0,
         _money_in(body.get("net_amount"), "net_amount"), bool(body.get("pay_on_arrival", False)),
         bool(body.get("choose_later_allowed", False)), "agency", None, None, None, None, None, None, None, None, None,
-        None, None, None,
+        None, None, None, category,
     )  # fmt: skip
     await _settle_default(ctx, proposal_id, block_id, await _tier(ctx, vault, row))
     _raise_conflicts(_conflicts(await _structure(ctx, proposal_id)), s)
@@ -1634,7 +1634,7 @@ async def add_aa_option(
         dt.datetime.now(dt.UTC), plan["tour_source_id"], plan["component_id"], plan["component_kind"],
         plan["departure_id"], quote.quote_id, quote.valid_until,
         rules.money(quote.from_price) if quote.from_price is not None else None, below, None, plan.get("nights"),
-        _rules_json(applied),
+        _rules_json(applied), None,
     )  # fmt: skip
     await _settle_default(ctx, proposal_id, block_id, await _tier(ctx, vault, row))
     _raise_conflicts(_conflicts(await _structure(ctx, proposal_id)), s)

@@ -95,7 +95,7 @@ async def _setup(pool: asyncpg.Pool) -> dict[str, Any]:
     await _run(pool, t, "INSERT INTO crm.booking_feed_state DEFAULT VALUES", actor="job:crm_booking_sync")
     supplier = await _run(
         pool, t,
-        "INSERT INTO crm.agency_supplier (kind, name, category) VALUES ('own', 'Riverbend Coaches', 'transport') "
+        "INSERT INTO crm.agency_supplier (kind, name, category) VALUES ('own', 'Riverbend Coaches', 'other') "
         "RETURNING agency_supplier_id",
     )  # fmt: skip
     ids["line"] = await _run(

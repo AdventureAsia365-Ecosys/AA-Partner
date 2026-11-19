@@ -108,8 +108,8 @@ async def test_the_catalogue_and_add_from_catalogue(app_pool: asyncpg.Pool) -> N
         foreign = await catalogue.create_service(
             ctx,
             {
-                "category": "transfer",
-                "name": "Lake shuttle",
+                "category": "visa",
+                "name": "Lake visa desk",
                 "unit_sell": "40",
                 "currency": "QZX",
                 "qty_basis": "per_booking",
@@ -149,7 +149,15 @@ async def test_the_catalogue_and_add_from_catalogue(app_pool: asyncpg.Pool) -> N
         assert denied.value.code == "role_forbidden"
 
     v = await _create(app_pool, s)
-    block = uuid.UUID(_block(v, 1)["option_block_id"])
+    # AA-1144: a catalogue service is an agency item: never on the skeleton's lodging block, only on an Other block.
+    with pytest.raises(Invalid) as refused:
+        await _as(app_pool, s, "agent", builder.add_catalogue_option, _pid(v), v["edit_seq"],
+                  uuid.UUID(_block(v, 1)["option_block_id"]), uuid.UUID(flight["service_id"]))  # fmt: skip
+    assert refused.value.code == "agency_item_not_allowed"
+    day1 = next(d for d in v["days"] if d["day_no"] == 1)
+    v = await _as(app_pool, s, "agent", builder.add_block, _pid(v), v["edit_seq"], uuid.UUID(day1["proposal_day_id"]),
+                  {"title": "Agency services", "type": "other"})  # fmt: skip
+    block = uuid.UUID(_block(v, 1, 1)["option_block_id"])
 
     async def add(role: str, service: dict[str, Any], **kw: Any) -> dict[str, Any]:
         nonlocal v
@@ -174,7 +182,7 @@ async def test_the_catalogue_and_add_from_catalogue(app_pool: asyncpg.Pool) -> N
         o for d in out["days"] for b in d["blocks"] for o in b["options"] if o["title"] == "Valley hop flight x 3"
     )
     assert option["sell_amount"] == "360.00" and option["net_amount"] == "255.00"
-    assert option["agency_supplier_id"] == str(air)
+    assert option["agency_supplier_id"] == str(air) and option["category"] == "flight"
     out = await add("agent", fee)
     assert out["catalogue"]["quantity"] == 1 and out["catalogue"]["net_amount"] is None
     out = await add("agent", nightly, nights=4)
@@ -246,6 +254,7 @@ async def _lines(pool: asyncpg.Pool, d: dict[str, Any], supplier: uuid.UUID, *ti
                 ctx,
                 d["trip"],
                 {
+                    "category": "flight",
                     "agency_supplier_id": supplier,
                     "title": title,
                     "service_from": (dt.date.today() + dt.timedelta(days=60 + i)).isoformat(),
@@ -258,9 +267,9 @@ async def _lines(pool: asyncpg.Pool, d: dict[str, Any], supplier: uuid.UUID, *ti
 async def test_supplier_requests_from_draft_to_confirmation(app_pool: asyncpg.Pool) -> None:
     d = await _mail_setup(app_pool)  # the owner's own Gmail mailbox, an inquiry trip with its lead client
     air = await _supplier(app_pool, d, d["owner"], "Lantern Air", "flight", SUPPLIER_MAIL)
-    boats = await _supplier(app_pool, d, d["owner"], "River Boats", "transport")  # no e-mail
+    boats = await _supplier(app_pool, d, d["owner"], "River Boats", "other")  # no e-mail
     first, second = await _lines(app_pool, d, air, "Flight to the hills", "Flight back")
-    (boat,) = await _lines(app_pool, d, boats, "Boat transfer")
+    (boat,) = await _lines(app_pool, d, boats, "Visa handling")
 
     async with tenant_tx(app_pool, d["owner"], d["tenant"]) as ctx:
         built = await requests.build(ctx, Vault(d["keys"], ctx), d["trip"])
@@ -361,7 +370,7 @@ async def test_supplier_requests_from_draft_to_confirmation(app_pool: asyncpg.Po
 async def test_a_supplier_request_needs_lines_of_that_supplier(app_pool: asyncpg.Pool) -> None:
     d = await _mail_setup(app_pool)
     air = await _supplier(app_pool, d, d["owner"], "Lantern Air", "flight", SUPPLIER_MAIL)
-    van = await _supplier(app_pool, d, d["owner"], "Hill Vans", "transport", "desk@hill-vans.example.test")
+    van = await _supplier(app_pool, d, d["owner"], "Hill Vans", "other", "desk@hill-vans.example.test")
     (flight,) = await _lines(app_pool, d, air, "Flight to the hills")
     (ride,) = await _lines(app_pool, d, van, "Van to the lake")
     async with tenant_tx(app_pool, d["owner"], d["tenant"]) as ctx:

@@ -96,10 +96,17 @@ def _block(v: dict[str, Any], day_no: int, index: int = 0) -> dict[str, Any]:
 
 
 async def _option(pool: asyncpg.Pool, s: dict[str, Any], v: dict[str, Any], block: dict[str, Any], **body: Any):
+    """An agency item. AA-1144: only a flight, visa, insurance or fee, only on an Other block, so the helper turns the
+    block into an Other block first (the tests here exercise the builder's choices, picks and totals, not what an
+    agency may sell; tests/integration/test_aa1144_agency_items_api.py holds that rule)."""
     body.setdefault("title", "Homestay")
-    return await _as(
-        pool, s, "agent", builder.add_agency_option, _pid(v), v["edit_seq"], uuid.UUID(block["option_block_id"]), body
-    )
+    body.setdefault("category", "fee")
+    block_id = uuid.UUID(block["option_block_id"])
+    blocks = [b for d in v["days"] for b in d["blocks"]]
+    current = next((b for b in blocks if b["option_block_id"] == block["option_block_id"]), block)
+    if current["type"] != "other":
+        v = await _as(pool, s, "agent", builder.update_block, _pid(v), v["edit_seq"], block_id, {"type": "other"})
+    return await _as(pool, s, "agent", builder.add_agency_option, _pid(v), v["edit_seq"], block_id, body)
 
 
 async def test_the_skeleton_follows_stage_1_and_2(app_pool: asyncpg.Pool) -> None:
@@ -133,12 +140,15 @@ async def test_the_skeleton_follows_stage_1_and_2(app_pool: asyncpg.Pool) -> Non
 
 
 async def test_rule_5_the_stage_2_tier_sets_the_lodging_default(app_pool: asyncpg.Pool) -> None:
+    """AA-1144: a lodging block takes AA hotel rooms only (an agency hotel is refused), so the tiers are AA rooms."""
     s = await _setup(app_pool, tier="premium")
+    await _catalog_tour(app_pool)
+    fake = FakeBooking(b2b_price="80.00")
     v = await _create(app_pool, s)
-    block = _block(v, 1)
-    v = await _option(app_pool, s, v, block, title="Guesthouse", tier="comfort", sell_amount=Decimal("100"))
+    room = {"component_id": "hr:1", "component_kind": "hotel_room", "nights": 1}
+    v = await _aa(app_pool, s, fake, v, **room, tier="comfort", sell_amount=Decimal("100"))
     assert _block(v, 1)["options"][0]["is_default"]  # the first option becomes the default
-    v = await _option(app_pool, s, v, block, title="Dwarika's", tier="premium", sell_amount=Decimal("400"))
+    v = await _aa(app_pool, s, fake, v, **room, tier="premium", sell_amount=Decimal("400"))
     options = _block(v, 1)["options"]
     assert [o["is_default"] for o in options] == [False, True]  # the lead asked for premium
     assert options[0]["sell_delta"] == "-300.00" and options[1]["sell_delta"] == "0.00"

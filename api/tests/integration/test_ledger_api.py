@@ -67,7 +67,7 @@ async def test_the_ledger_end_to_end(app_pool: asyncpg.Pool) -> None:
         own = await suppliers.create_supplier(
             ctx,
             Vault(s["keys"], ctx),
-            {"name": "Hanoi Pearl", "category": "accommodation", "contact_name": "Lan", "default_commission_pct": 8},
+            {"name": "Hanoi Pearl", "category": "flight", "contact_name": "Lan", "default_commission_pct": 8},
         )
         assert own["has_contact_name"] and not own["has_contact_email"]
         shown = await suppliers.reveal_contact(
@@ -82,7 +82,9 @@ async def test_the_ledger_end_to_end(app_pool: asyncpg.Pool) -> None:
 
     # A planning line: the booked trip now waits on the supplier.
     async with tenant_tx(app_pool, agent, s["tenant"]) as ctx:
-        line = await lines.create_line(ctx, s["trip"], {"agency_supplier_id": supplier, "title": "Hanoi 2 nights"})
+        line = await lines.create_line(
+            ctx, s["trip"], {"category": "flight", "agency_supplier_id": supplier, "title": "Hanoi 2 nights"}
+        )
         assert await ctx.conn.fetchval("SELECT waiting_on FROM crm.trip") == "supplier"
     line_id = uuid.UUID(line["booking_line_id"])
 
@@ -119,7 +121,14 @@ async def test_the_ledger_end_to_end(app_pool: asyncpg.Pool) -> None:
     async with tenant_tx(app_pool, owner, s["tenant"]) as ctx:
         await fx.update_payment_settings(ctx, {"booking_validation_level": "strict"})
         second = await lines.create_line(
-            ctx, s["trip"], {"agency_supplier_id": supplier, "title": "Hanoi 1 night", "confirmation_no": "hp 1001"}
+            ctx,
+            s["trip"],
+            {
+                "category": "flight",
+                "agency_supplier_id": supplier,
+                "title": "Hanoi 1 night",
+                "confirmation_no": "hp 1001",
+            },
         )
         for kind in ("cost", "sell", "commission_expected"):
             await lines.put_money(
@@ -133,7 +142,9 @@ async def test_the_ledger_end_to_end(app_pool: asyncpg.Pool) -> None:
     # The assistant: no money, no totals; never blocked by a missing commission (owner task).
     async with tenant_tx(app_pool, agent, s["tenant"]) as ctx:
         third = await lines.create_line(
-            ctx, s["trip"], {"agency_supplier_id": supplier, "title": "Boat", "confirmation_no": "B-7"}
+            ctx,
+            s["trip"],
+            {"category": "flight", "agency_supplier_id": supplier, "title": "Boat", "confirmation_no": "B-7"},
         )
         await lines.put_money(
             ctx,
@@ -175,7 +186,9 @@ async def test_a_money_write_by_the_assistant_is_refused_by_the_database(app_poo
     async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
         supplier = await suppliers.create_supplier(ctx, Vault(s["keys"], ctx), {"name": "Pearl"})
         line = await lines.create_line(
-            ctx, s["trip"], {"agency_supplier_id": supplier["agency_supplier_id"], "title": "Hanoi"}
+            ctx,
+            s["trip"],
+            {"category": "flight", "agency_supplier_id": supplier["agency_supplier_id"], "title": "Hanoi"},
         )
     with pytest.raises(Exception) as err:  # noqa: PT011 — the service maps 42501 margin_forbidden to 403
         async with tenant_tx(app_pool, s["who"]["assistant"], s["tenant"]) as ctx:
@@ -183,7 +196,11 @@ async def test_a_money_write_by_the_assistant_is_refused_by_the_database(app_poo
     assert getattr(err.value, "code", None) == "role_forbidden"
     with pytest.raises(Invalid):
         async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
-            await lines.create_line(ctx, s["trip"], {"agency_supplier_id": supplier["agency_supplier_id"], "title": ""})
+            await lines.create_line(
+                ctx,
+                s["trip"],
+                {"category": "flight", "agency_supplier_id": supplier["agency_supplier_id"], "title": ""},
+            )
 
 
 async def test_the_synthetic_fx_job_fills_platform_rates_once(app_pool: asyncpg.Pool) -> None:
@@ -214,7 +231,9 @@ async def test_ledger_totals_never_add_two_base_currencies(app_pool: asyncpg.Poo
     async def confirmed_line(conf: str, cost: str, sell: str) -> None:
         async with tenant_tx(app_pool, owner, s["tenant"]) as ctx:
             made = await lines.create_line(
-                ctx, s["trip"], {"agency_supplier_id": supplier, "title": conf, "confirmation_no": conf}
+                ctx,
+                s["trip"],
+                {"category": "flight", "agency_supplier_id": supplier, "title": conf, "confirmation_no": conf},
             )
             line_id = uuid.UUID(made["booking_line_id"])
             await lines.put_money(

@@ -140,7 +140,7 @@ export function SuppliersView({
         </label>
         <label style={{ display: "grid", gap: 2, fontSize: 12 }}>
           {tr("suppliers.category")}
-          <select name="category" style={field} defaultValue={supplier?.category ?? "accommodation"}>
+          <select name="category" style={field} defaultValue={supplier?.category ?? "flight"}>
             {categories.map((c) => (
               <option key={c} value={c}>
                 {tr(`suppliers.category.${c}`)}

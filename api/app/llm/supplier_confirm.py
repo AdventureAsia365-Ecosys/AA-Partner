@@ -4,9 +4,8 @@ confirmation to AI -> preview card with suggested line", A-21; root ADR 0019 b6)
 Scope, fixed by the card and b6:
 
 - **Only the agency's own ancillary suppliers**: an own supplier (``agency_supplier.kind = 'own'``, never the AA row)
-  of a category in :data:`SUPPLIER_CATEGORIES` (flights, insurance, visas, transfers = ``transport``, fees =
-  ``other``). Hotels, activities, guides, restaurants and DMCs are refused (``supplier_not_ancillary``): ground services
-  are AA's (b6).
+  of a category in :data:`SUPPLIER_CATEGORIES` (flights, insurance, visas, fees = ``other``; AA-1144: transfers are
+  AA's too). Any other category is refused (``supplier_not_ancillary``): ground services are AA's (b6 as amended).
 - **Attached to the supplier booking requests** (crm-053, AA-1069): the source is an inbound e-mail on the trip's
   supplier request thread with that supplier (``crm.conversation.agency_supplier_id``), or text the agent pastes.
   Only the message's **body text** is read: its attachments (a ticket PDF, a passport scan a supplier sent back) are
@@ -38,6 +37,7 @@ from typing import Any
 
 from app import platform_settings as ps
 from app.errors import Conflict, Forbidden, Invalid, NotFound, PayloadTooLarge
+from app.ledger import agency_items
 from app.ledger import lines as ledger_lines
 from app.ledger import requests as ledger_requests
 from app.llm import ai_drafts, structured
@@ -51,9 +51,9 @@ ROLE = "writer"
 KIND = "supplier_confirmation"
 PROMPT_VERSION = "crm-supplier-confirm-1"
 MAIL_PURPOSE = "mail"
-# Root ADR 0019 b6: the non-AA ancillaries the CRM sells (flights, insurance, visas, transfers, fees), as the
-# crm.agency_supplier categories name them.
-SUPPLIER_CATEGORIES = ("flight", "insurance", "visa", "transport", "other")
+# Root ADR 0019 b6 as amended by AA-1144: the agency's own suppliers (flights, insurance, visas, fees = other), as the
+# crm.agency_supplier categories name them (crm-079).
+SUPPLIER_CATEGORIES = agency_items.SUPPLIER_CATEGORIES
 STATUSES = ("confirmed", "declined", "unclear")
 ACTIONS = ("confirm", "back_to_planning")
 REFERENCE_CHARS = 80  # technical-constant: crm.booking_line.confirmation_no CHECK (1..80 characters)
@@ -216,7 +216,7 @@ async def run(
     if supplier["category"] not in SUPPLIER_CATEGORIES:
         raise Invalid(
             "supplier_not_ancillary",
-            "AI reads confirmations of flight, insurance, visa, transfer and fee suppliers only",
+            "AI reads confirmations of flight, insurance, visa and fee suppliers only",
         )
     open_lines = list(await ctx.conn.fetch(LINES_SQL, trip_id, agency_supplier_id))
     if not open_lines:

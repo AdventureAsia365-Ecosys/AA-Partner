@@ -25,6 +25,7 @@ import { SupplierRequestsPanel } from "@/components/catalogue/SupplierRequestsPa
 import { AaItemForm } from "@/components/ledger/AaItemForm";
 import { useTripClosed, useTripUpdating } from "@/components/pipeline/TripClosed";
 import { aaBadgeKey, aaErrorKey, aaResultKey, allowedAaActions, isRetrying, type AaAction } from "@/lib/aa";
+import { AGENCY_ITEM_CATEGORIES } from "@/lib/agencyItems";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
@@ -134,6 +135,7 @@ export function LinesPanel({
   async function add(form: FormData) {
     const body = {
       agency_supplier_id: String(form.get("agency_supplier_id") ?? ""),
+      category: String(form.get("category")), // AA-1144: flight | visa | insurance | fee (the select below)
       title: String(form.get("title") ?? "").trim(),
       confirmation_no: String(form.get("confirmation_no") ?? "").trim() || null,
       service_from: String(form.get("service_from") ?? "") || null,
@@ -522,6 +524,16 @@ export function LinesPanel({
                 {own.map((s) => (
                   <option key={s.agency_supplier_id} value={s.agency_supplier_id}>
                     {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: "grid", gap: 2, fontSize: 12 }}>
+              {tr("agencyItem.category")}
+              <select name="category" style={field} defaultValue="flight" data-testid="ledger-add-category">
+                {AGENCY_ITEM_CATEGORIES.map((c) => (
+                  <option key={c} value={c}>
+                    {tr(`agencyItem.category.${c}`)}
                   </option>
                 ))}
               </select>

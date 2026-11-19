@@ -173,7 +173,7 @@ async def test_aa_money_is_the_jobs_and_frozen_at_the_quote_lock(app_pool: async
     )  # fmt: skip
     assert agency_line is None
     supplier = await _run(app_pool, t, "INSERT INTO crm.agency_supplier (kind, name, category) "
-                          "VALUES ('own', 'Hanoi Pearl', 'accommodation') RETURNING agency_supplier_id",
+                          "VALUES ('own', 'Hanoi Pearl', 'flight') RETURNING agency_supplier_id",
                           actor="seed:test")  # fmt: skip
     own = await _run(app_pool, t, "INSERT INTO crm.booking_line (trip_id, agency_supplier_id, title) "
                      "VALUES ($1, $2, 'Hotel') RETURNING booking_line_id", ids["trip"], supplier,

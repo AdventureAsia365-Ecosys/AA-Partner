@@ -23,6 +23,11 @@ Route                                          What                             
 ``POST   /trips/{id}/supplier-requests/send``  AA-1069: send one supplier's draft (agency     MESSAGE_SEND
                                                mailbox) and mark its lines requested
 ``POST   /lines/{id}/cancel``                  cancel                                         every role
+``GET    /trips/{id}/aa-extra-nights``         AA-1144 B11: the trip's requests to AA for     every role
+                                               extra hotel nights
+``POST   /trips/{id}/aa-extra-nights``         AA-1144 B11: ask AA for nights before / after  every role
+                                               the tour (no agency hotel line)
+``POST   /aa-extra-nights/{id}/close``         AA-1144 B11: quoted or not needed              every role
 ``DELETE /lines/{id}``                         a planning line to the trash                   owner, agent
 ``PUT    /lines/{id}/money``                   cost / sell / commission (new row)             owner, agent
 ``GET    /bookings``                           A-11 ledger, base-currency totals (margin)     every role
@@ -67,6 +72,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
+from app.booking import extra_nights
 from app.cancel_policy import service as cancel_policy
 from app.db import request_pool
 from app.ledger import fx, lines, requests, suppliers
@@ -123,6 +129,8 @@ class LineIn(_Body):
     collect: Literal["agency", "on_arrival"] = "agency"
     confirm_class: Literal["confirmed", "aa_on_request", "agency_booking"] | None = None
     visible_to_travelers: bool = False
+    # AA-1144: flight | visa | insurance | fee (else 422 invalid_category with the reason; app.ledger.agency_items)
+    category: str | None = Field(default=None, max_length=40)
 
 
 class LineChange(_Body):
@@ -134,6 +142,23 @@ class LineChange(_Body):
     collect: Literal["agency", "on_arrival"] | None = None
     confirm_class: Literal["confirmed", "aa_on_request", "agency_booking"] | None = None
     visible_to_travelers: bool | None = None
+    category: str | None = Field(default=None, max_length=40)
+
+
+class ExtraNightsIn(_Body):
+    """AA-1144 (B11): the bounds are the crm-079 CHECKs; the service words each refusal."""
+
+    position: Literal["before", "after"]
+    place: str = Field(min_length=1, max_length=80)
+    check_in: dt.date
+    nights: int = Field(ge=1, le=60)
+    rooms: int = Field(ge=1, le=30)
+    adults: int = Field(ge=1, le=60)
+    children: int = Field(default=0, ge=0, le=60)
+
+
+class ExtraNightsClose(_Body):
+    reason: Literal["quoted", "not_needed"]
 
 
 class MoneyIn(_Body):
@@ -348,6 +373,31 @@ async def post_trip_line(
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_EDIT) as ctx:
         return await lines.create_line(ctx, trip_id, body.model_dump())
+
+
+@router.get("/trips/{trip_id}/aa-extra-nights")
+async def get_extra_nights(request: Request, caller: CallerDep, tenant_id: TenantDep, trip_id: uuid.UUID) -> dict:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_VIEW) as ctx:
+        return await extra_nights.list_for_trip(ctx, trip_id)
+
+
+@router.post("/trips/{trip_id}/aa-extra-nights", status_code=201)
+async def post_extra_nights(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, trip_id: uuid.UUID, body: ExtraNightsIn
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_EDIT) as ctx:
+        return await extra_nights.create(ctx, trip_id, body.model_dump())
+
+
+@router.post("/aa-extra-nights/{request_id}/close")
+async def post_extra_nights_close(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, request_id: uuid.UUID, body: ExtraNightsClose
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_EDIT) as ctx:
+        return await extra_nights.close(ctx, request_id, body.reason)
 
 
 @router.patch("/lines/{line_id}")

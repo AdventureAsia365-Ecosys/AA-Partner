@@ -13,6 +13,8 @@ Route                                                       What
                                                             404 ``release_not_found`` without a confirmed AA line
 ``GET  /agencies/{tenant}/trips/{trip}/ops-release/manifest``  the minimal supplier manifest (CSV text, watermarked,
                                                             logged; ``?fields=`` picks the columns)
+``GET  /aa-extra-nights``                                    AA-1144 B11: the open requests of every agency for
+                                                            extra hotel nights (no personal data)
 ==========================================================  ======================================================
 
 Every route is a GET (the staff class stays read-only, AA-971): a view and a manifest write only their own audit line,
@@ -29,6 +31,7 @@ from fastapi import Depends, Query, Request
 
 from app.auth.identity_config import GROUP_CRM_OPS, STAFF
 from app.auth.route_guard import Caller, class_router, require_group
+from app.booking import extra_nights
 from app.db import request_pool
 from app.ops_release import staff
 from app.vault.provider import require_keys
@@ -69,3 +72,9 @@ async def get_manifest(
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     return await staff.manifest(pool, keys, caller, tenant_id, trip_id, list(fields or []))
+
+
+@router.get("/aa-extra-nights")
+async def get_extra_nights(request: Request, caller: Ops) -> dict[str, Any]:
+    pool = await request_pool(request)
+    return await extra_nights.staff_board(pool, caller)

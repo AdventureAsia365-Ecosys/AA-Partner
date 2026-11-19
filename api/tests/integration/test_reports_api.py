@@ -113,7 +113,9 @@ async def _confirmed_line(
     cost: str, sell: str, *, confirm: bool = True,
 ) -> None:  # fmt: skip
     async with tenant_tx(pool, who, tenant) as ctx:
-        line = await lines.create_line(ctx, trip, {"agency_supplier_id": supplier, "title": title})
+        line = await lines.create_line(
+            ctx, trip, {"category": "flight", "agency_supplier_id": supplier, "title": title}
+        )
         line_id = uuid.UUID(line["booking_line_id"])
         await lines.update_line(ctx, line_id, {"confirmation_no": f"LP-{uuid.uuid4().hex[:6]}"})
         await lines.put_money(
@@ -151,9 +153,7 @@ async def _setup(pool: asyncpg.Pool) -> dict[str, Any]:
     await allow_export(pool, tenant)  # AA-1116: the CSV export is the plan's insights_export
     keys = _keys()
     async with tenant_tx(pool, who["agent"], tenant) as ctx:
-        own = await suppliers.create_supplier(
-            ctx, Vault(keys, ctx), {"name": "Lotus Lodge", "category": "accommodation"}
-        )
+        own = await suppliers.create_supplier(ctx, Vault(keys, ctx), {"name": "Lotus Lodge", "category": "flight"})
     supplier = uuid.UUID(own["agency_supplier_id"])
     await _confirmed_line(pool, tenant, who["agent"], t["booked"], supplier, "=HYPERLINK(1)", "100", "130")
     await _confirmed_line(pool, tenant, who["agent"], t["booked"], supplier, "River dinner", "40", "50")

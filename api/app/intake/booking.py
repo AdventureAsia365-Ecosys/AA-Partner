@@ -788,7 +788,7 @@ async def _proposal(
         None, None, sell, rules.money(quote.b2b_price), False, False,
         builder.AVAILABILITY_FROM_QUOTE[quote.availability], dt.datetime.now(dt.UTC), plan["tour_source_id"],
         plan["component_id"], "trip_plan", plan["departure_id"], quote.quote_id, quote.valid_until,
-        rules.money(quote.from_price) if quote.from_price is not None else None, below, None, None, None,
+        rules.money(quote.from_price) if quote.from_price is not None else None, below, None, None, None, None,
     )  # fmt: skip
     await ctx.conn.execute(builder.SET_DEFAULT_SQL, block_id, option_id, True)
     await pricing.replace(ctx, proposal_id, option_id, rows)

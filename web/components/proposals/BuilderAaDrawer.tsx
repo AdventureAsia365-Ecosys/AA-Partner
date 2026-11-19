@@ -12,11 +12,14 @@ import Link from "next/link";
 import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { BuilderCatalogueTab } from "@/components/catalogue/BuilderCatalogueTab";
+import { AgencyBlockNote } from "@/components/proposals/AgencyBlockNote";
 import { BuilderAiIdeasTab } from "@/components/proposals/BuilderAiIdeasTab";
 import { type AaProduct, type CatalogTour } from "@/lib/aa";
+import { AGENCY_ITEM_CATEGORIES, drawerTabs, type AgencyItemCategory } from "@/lib/agencyItems";
 import { AA_TARIFF_PATH } from "@/lib/aaTariff";
 import { bffSend } from "@/lib/bffClient";
-import { builderErrorKey, dayOfBlock, moneyInput, TIERS, type BuilderView, type Tier } from "@/lib/builder";
+import { builderErrorKey, dayOfBlock, moneyInput, TIERS, type BlockType, type BuilderView, type Tier } from "@/lib/builder";
+import type { DateLocale } from "@/lib/dates";
 import { fmt, plural, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { formatMoney } from "@/lib/ledger";
 
@@ -43,6 +46,7 @@ export interface Supplier {
 export function BuilderAaDrawer({
   view,
   blockId,
+  blockType,
   canMoney,
   canTariff = false,
   suppliers,
@@ -53,6 +57,8 @@ export function BuilderAaDrawer({
 }: {
   view: BuilderView;
   blockId: string;
+  /** AA-1144: the agency's own items (flight, visa, insurance, fee) only on an Other block. */
+  blockType: BlockType;
   canMoney: boolean;
   /** AA-1030: the member may open the agency's AA prices (/me permissions.aa_tariff_view): the drawer links to them. */
   canTariff?: boolean;
@@ -78,6 +84,7 @@ export function BuilderAaDrawer({
   const [title, setTitle] = useState("");
   const [tier, setTier] = useState<Tier | "">("");
   const [supplier, setSupplier] = useState("");
+  const [category, setCategory] = useState<AgencyItemCategory>("flight");
   const [payOnArrival, setPayOnArrival] = useState(false);
   const [busy, setBusy] = useState(false);
   const [offline, setOffline] = useState(false);
@@ -148,7 +155,7 @@ export function BuilderAaDrawer({
       setError(tr("builder.err.generic"));
       return;
     }
-    const body: Record<string, unknown> = { title: title.trim(), pay_on_arrival: payOnArrival };
+    const body: Record<string, unknown> = { title: title.trim(), pay_on_arrival: payOnArrival, category };
     if (tier) body.tier = tier;
     if (supplier) body.agency_supplier_id = supplier;
     if (canMoney && sellMoney !== null) body.sell_amount = sellMoney;
@@ -178,7 +185,7 @@ export function BuilderAaDrawer({
     // not a dialog (aa-kit/no-raw-dialog); the two sources are toggle buttons (aria-pressed), not a half-built tab list.
     <div role="group" aria-label={tr("builder.add")} data-testid="builder-drawer" style={{ display: "grid", gap: 8, padding: 12, borderRadius: 8, border: `1px solid ${K.line2}`, background: K.bg }}>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        {(["aa", "agency", "catalogue", "ai"] as const).map((x) => (
+        {drawerTabs(blockType).map((x) => (
           <Button key={x} size="sm" variant={tab === x ? "primary" : "ghost"} aria-pressed={tab === x} onClick={() => setTab(x)}>
             {tr(`builder.drawer.${x}`)}
           </Button>
@@ -288,9 +295,20 @@ export function BuilderAaDrawer({
           </div>
         </div>
       )}
+      <AgencyBlockNote blockType={blockType} tripId={view.trip_id} lang={lang} locale={locale as DateLocale} />
       <BuilderMoreTab tab={tab} view={view} blockId={blockId} canMoney={canMoney} lang={lang} locale={locale} write={write} onClose={onClose} />
       {tab === "agency" && (
         <div style={{ display: "grid", gap: 8 }} data-testid="builder-agency">
+          <label style={label}>
+            {tr("agencyItem.category")}
+            <select style={field} value={category} onChange={(e) => setCategory(e.target.value as AgencyItemCategory)} data-testid="builder-agency-category">
+              {AGENCY_ITEM_CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {tr(`agencyItem.category.${c}`)}
+                </option>
+              ))}
+            </select>
+          </label>
           <label style={label}>
             {tr("builder.option.title")}
             <input style={field} value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} data-testid="builder-agency-title" />

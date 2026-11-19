@@ -98,7 +98,7 @@ async def test_a_service_names_a_live_own_supplier(app_pool: asyncpg.Pool) -> No
     assert err.value.sqlstate == "CRM52"
     gone = await _run(
         app_pool, ids["tenant"],
-        "INSERT INTO crm.agency_supplier (kind, name, category) VALUES ('own', 'Old Ferry', 'transport') "
+        "INSERT INTO crm.agency_supplier (kind, name, category) VALUES ('own', 'Old Ferry', 'other') "
         "RETURNING agency_supplier_id",
     )  # fmt: skip
     await _run(app_pool, ids["tenant"],
