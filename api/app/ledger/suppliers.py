@@ -21,24 +21,15 @@ from typing import Any
 import asyncpg
 
 from app.errors import Conflict, Invalid, NotFound
-from app.ledger import refusal
+from app.ledger import agency_items, refusal
 from app.tenancy import AnyContext, TenantContext
 from app.travellers.fields import REVEAL_REASONS
 from app.vault import Vault
 
 TABLE = "agency_supplier"
-CATEGORIES = (
-    "accommodation",
-    "transport",
-    "activity",
-    "guide",
-    "restaurant",
-    "flight",
-    "insurance",
-    "visa",
-    "dmc",
-    "other",
-)
+# AA-1144 (crm-080, root ADR 0019 b6 as amended): an own supplier provides a flight, insurance, a visa or other (the
+# agency fee, a consolidator); hotels, transfers, guides, restaurants, activities and DMCs are Adventure Asia's.
+CATEGORIES = agency_items.SUPPLIER_CATEGORIES
 CONTACT_FIELDS = {"contact_name": "contact_name_enc", "contact_email": "contact_email_enc"}
 ENSURE_AA_SQL = "SELECT crm.ensure_aa_supplier()"
 LIST_SQL = """
@@ -79,9 +70,7 @@ def _name(value: Any) -> str:
 
 
 def _category(value: Any) -> str:
-    if value not in CATEGORIES:
-        raise Invalid("invalid_category", ", ".join(CATEGORIES))
-    return str(value)
+    return agency_items.supplier_category(value)
 
 
 def _pct(value: Any) -> Decimal | None:

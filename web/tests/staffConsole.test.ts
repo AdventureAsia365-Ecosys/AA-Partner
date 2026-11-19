@@ -302,6 +302,7 @@ describe("the staff BFF", () => {
   // carries the Lax staff cookie but cannot send the console header.
   const SAMPLE_PATHS: Record<string, string> = {
     "ops-releases": "ops-releases",
+    "aa-extra-nights": "aa-extra-nights", // AA-1144 (B11)
     release: `agencies/${TENANT}/trips/${TRIP}/ops-release`,
     manifest: `agencies/${TENANT}/trips/${TRIP}/ops-release/manifest`,
     supportAgencies: "support/agencies",

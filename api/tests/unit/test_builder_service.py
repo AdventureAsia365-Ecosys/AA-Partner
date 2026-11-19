@@ -353,24 +353,38 @@ async def test_blocks() -> None:
 
 
 async def test_options() -> None:
-    conn = _conn(blocks=_blocks(default1=None)).on("FROM crm.agency_supplier", {"agency_supplier_id": BASE,
-                                                                                "kind": "agency"})  # fmt: skip
+    # AA-1144: an agency item is a flight, visa, insurance or fee, on an Other block only.
+    other = _blocks(default1=None)
+    other[0]["type"] = "other"
+    with pytest.raises(Invalid) as err:
+        await _run(builder.add_agency_option, P, 5, B1, {"title": "Camp", "category": "fee"},
+                   conn=_conn(blocks=_blocks(default1=None)))  # fmt: skip
+    assert err.value.code == "agency_item_not_allowed"
+    for category in ("transfer", "other", None):
+        with pytest.raises(Invalid) as err:
+            await _run(builder.add_agency_option, P, 5, B1, {"title": "Camp", "category": category},
+                       conn=_conn(blocks=other))  # fmt: skip
+        assert err.value.code == "invalid_category"
+    conn = _conn(blocks=other).on("FROM crm.agency_supplier", {"agency_supplier_id": BASE, "kind": "agency"})
     await _run(builder.add_agency_option, P, 5, B1, {"title": "Camp", "sell_amount": Decimal("1.50"),
-               "agency_supplier_id": BASE, "tier": "budget"}, conn=conn)  # fmt: skip
+               "agency_supplier_id": BASE, "tier": "budget", "category": "fee"}, conn=conn)  # fmt: skip
     assert conn.sql("SET default_option_id = $2")[0] == (B1, O1, False)  # rule 5 fallback: the first open option
+    assert conn.sql("INSERT INTO crm.option")[0][-1] == "fee"
+    fee = {"title": "Camp", "category": "fee"}
     with pytest.raises(Invalid):
-        await _run(builder.add_agency_option, P, 5, B1, {"title": "Camp", "tier": "gold"})
+        await _run(builder.add_agency_option, P, 5, B1, {**fee, "tier": "gold"}, conn=_conn(blocks=other))
     with pytest.raises(Invalid):
-        await _run(builder.add_agency_option, P, 5, B1, {"title": "Camp", "sell_amount": Decimal("1.001")})
+        await _run(
+            builder.add_agency_option, P, 5, B1, {**fee, "sell_amount": Decimal("1.001")}, conn=_conn(blocks=other)
+        )
     with pytest.raises(NotFound):
-        await _run(builder.add_agency_option, P, 5, B1, {"title": "Camp", "agency_supplier_id": BASE})
-    aa_supplier = _conn().on("FROM crm.agency_supplier", {"agency_supplier_id": BASE, "kind": "aa"})
+        await _run(builder.add_agency_option, P, 5, B1, {**fee, "agency_supplier_id": BASE}, conn=_conn(blocks=other))
+    aa_supplier = _conn(blocks=other).on("FROM crm.agency_supplier", {"agency_supplier_id": BASE, "kind": "aa"})
     with pytest.raises(Invalid):
-        await _run(builder.add_agency_option, P, 5, B1, {"title": "Camp", "agency_supplier_id": BASE},
-                   conn=aa_supplier)  # fmt: skip
+        await _run(builder.add_agency_option, P, 5, B1, {**fee, "agency_supplier_id": BASE}, conn=aa_supplier)
     full = [_opt(uuid.uuid4(), B1, "x", "1") for _ in range(12)]
     with pytest.raises(Conflict):
-        await _run(builder.add_agency_option, P, 5, B1, {"title": "Camp"}, conn=_conn(options=full))
+        await _run(builder.add_agency_option, P, 5, B1, fee, conn=_conn(blocks=other, options=full))
     conn = _conn()
     await _run(builder.update_option, P, 5, O2, {"sell_amount": Decimal("150"), "tier": "comfort"}, conn=conn)
     assert conn.sql("UPDATE crm.option SET title")[0][8] is True  # 150 for two is below the 200 "from" price
@@ -400,7 +414,7 @@ async def test_rule_5_never_moves_a_default_the_agent_chose(monkeypatch: pytest.
         blocks[0]["default_pinned"] = pinned
         options = [_opt(O2, B1, "Lodge", "300", tier="premium"), extra, _opt(O3, B2, "Rafting", "100")]
         conn = _conn(blocks=blocks, options=options)
-        await _run(builder.add_agency_option, P, 5, B1, {"title": "Camp", "tier": "budget"}, conn=conn)
+        await builder._settle_default(tenant_ctx(conn), P, B1, "comfort")  # AA-1144: no agency item on a lodging block
         assert bool(conn.sql("SET default_option_id = $2, default_pinned")) is moved
         if moved:
             assert conn.sql("SET default_option_id = $2, default_pinned")[0] == (B1, o9, False)

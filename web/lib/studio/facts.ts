@@ -12,6 +12,71 @@ import { FACTS_LIB_MESSAGES } from "./lib.messages";
 export const FACT_KINDS = ["price", "season", "visa_entry", "transfer_time", "booking_terms", "other"] as const;
 export type FactKind = (typeof FACT_KINDS)[number];
 
+// AA-1144 (S285 decision B6): an agency's own facts are its markup (price) and its sale terms only; tour facts
+// (seasons, visas and entry, transfer times, anything else) are Adventure Asia's. The form offers these kinds, and
+// "Use my own" only on an Adventure Asia fact of these kinds. An older own fact of another kind still shows (and can
+// be deleted); the CIS facts API itself is a follow-up (another repo).
+export const AGENCY_FACT_KINDS = ["price", "booking_terms"] as const satisfies readonly FactKind[];
+
+/** Whether the agency may write a fact of this kind (a new one, or its own version of an Adventure Asia fact). */
+export function agencyMayWrite(kind: unknown): boolean {
+  return typeof kind === "string" && (AGENCY_FACT_KINDS as readonly string[]).includes(kind);
+}
+
+/** Why the tenant proxy refuses a facts write before it reaches CIS (status + plain words for the member). */
+export interface FactWriteRefusal {
+  status: 400 | 422;
+  detail: string;
+}
+
+export const FACT_KIND_REFUSAL =
+  "An agency's own facts are its price and its booking terms only. Seasons, visas and entry, transfer times and " +
+  "other tour facts come from Adventure Asia.";
+
+const NOT_JSON: FactWriteRefusal = { status: 400, detail: "A fact is sent as JSON." };
+
+/** "create" (POST v1/facts), "edit" (PATCH v1/facts/{id}) or null (any other route or method). */
+function factWriteOp(method: string, segments: readonly string[]): "create" | "edit" | null {
+  if (segments[0] !== "v1" || segments[1] !== "facts") return null;
+  const m = method.toUpperCase();
+  if (m === "POST" && segments.length === 2) return "create";
+  return m === "PATCH" && segments.length === 3 ? "edit" : null;
+}
+
+/** The JSON object a facts write sends, or null when the proxy cannot read one (CIS reads JSON only). */
+function factJsonObject(contentType: string, body: ArrayBuffer | string | undefined): Record<string, unknown> | null {
+  if (contentType.includes("multipart/form-data") || typeof body !== "string") return null;
+  try {
+    const parsed: unknown = JSON.parse(body);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * AA-1144 (B6) in the tenant proxy (app/api/tenant/[...path]/route.ts): the CIS facts API takes every kind, so the
+ * proxy refuses a new own fact (POST v1/facts) whose kind is not the agency's (a missing kind would be "other" in
+ * CIS), and an edit (PATCH v1/facts/{id}) that sets such a kind. An edit that leaves the kind alone (an older fact of
+ * another kind) and a delete pass. A body the proxy cannot read is refused too: what passes is what the check saw.
+ */
+export function factWriteRefusal(
+  method: string, segments: readonly string[], contentType: string, body: ArrayBuffer | string | undefined,
+): FactWriteRefusal | null {
+  const op = factWriteOp(method, segments);
+  if (!op) return null;
+  const fields = factJsonObject(contentType, body);
+  if (!fields) return NOT_JSON;
+  const setsKind = op === "create" || Object.hasOwn(fields, "kind");
+  return setsKind && !agencyMayWrite(fields.kind) ? { status: 422, detail: FACT_KIND_REFUSAL } : null;
+}
+
+/** The kinds the form offers: the agency's two, plus the fact's own kind when an older fact of another kind is edited. */
+export function formKinds(current: FactKind): readonly FactKind[] {
+  return agencyMayWrite(current) ? AGENCY_FACT_KINDS : [...AGENCY_FACT_KINDS, current];
+}
+
 const KIND_KEY = {
   price: "kindPrice",
   season: "kindSeason",
@@ -73,7 +138,7 @@ export interface FactForm {
 }
 
 export const EMPTY_FORM: FactForm = {
-  kind: "other", title: "", body: "", provenance: "", country: "", stated_on: "", valid_until: "",
+  kind: "price", title: "", body: "", provenance: "", country: "", stated_on: "", valid_until: "",
 };
 
 export function formOf(f: TenantFact): FactForm {

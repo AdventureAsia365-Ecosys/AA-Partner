@@ -149,7 +149,15 @@ async def test_the_catalogue_and_add_from_catalogue(app_pool: asyncpg.Pool) -> N
         assert denied.value.code == "role_forbidden"
 
     v = await _create(app_pool, s)
-    block = uuid.UUID(_block(v, 1)["option_block_id"])
+    # AA-1144: a catalogue service is an agency item: never on the skeleton's lodging block, only on an Other block.
+    with pytest.raises(Invalid) as refused:
+        await _as(app_pool, s, "agent", builder.add_catalogue_option, _pid(v), v["edit_seq"],
+                  uuid.UUID(_block(v, 1)["option_block_id"]), uuid.UUID(flight["service_id"]))  # fmt: skip
+    assert refused.value.code == "agency_item_not_allowed"
+    day1 = next(d for d in v["days"] if d["day_no"] == 1)
+    v = await _as(app_pool, s, "agent", builder.add_block, _pid(v), v["edit_seq"], uuid.UUID(day1["proposal_day_id"]),
+                  {"title": "Agency services", "type": "other"})  # fmt: skip
+    block = uuid.UUID(_block(v, 1, 1)["option_block_id"])
 
     async def add(role: str, service: dict[str, Any], **kw: Any) -> dict[str, Any]:
         nonlocal v
@@ -174,7 +182,7 @@ async def test_the_catalogue_and_add_from_catalogue(app_pool: asyncpg.Pool) -> N
         o for d in out["days"] for b in d["blocks"] for o in b["options"] if o["title"] == "Valley hop flight x 3"
     )
     assert option["sell_amount"] == "360.00" and option["net_amount"] == "255.00"
-    assert option["agency_supplier_id"] == str(air)
+    assert option["agency_supplier_id"] == str(air) and option["category"] == "flight"
     out = await add("agent", fee)
     assert out["catalogue"]["quantity"] == 1 and out["catalogue"]["net_amount"] is None
     out = await add("agent", nightly, nights=4)

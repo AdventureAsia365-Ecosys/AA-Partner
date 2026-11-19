@@ -40,7 +40,7 @@ from app import cancellation, stages
 from app.booking import views as aa_views
 from app.commissions import service as commissions
 from app.errors import Conflict, Forbidden, Invalid, NotFound
-from app.ledger import fx, refusal
+from app.ledger import agency_items, fx, refusal
 from app.margin import sees_margin
 from app.tenancy import AnyContext, TenantContext
 
@@ -53,7 +53,7 @@ MAX_LEDGER = 500
 ADD_COMMISSION_TASK = "add_commission"
 
 _LINE_COLUMNS = """
-l.booking_line_id, l.trip_id, l.supplier_kind, l.agency_supplier_id, s.name AS supplier_name, l.status,
+l.booking_line_id, l.trip_id, l.supplier_kind, l.agency_supplier_id, s.name AS supplier_name, l.status, l.category,
 l.aa_sub_status, l.title, l.confirmation_no, l.service_from, l.service_to, l.collect, l.confirm_class,
 l.visible_to_travelers, l.confirmed_at, l.departure_id, l.created_at, l.updated_at, l.requested_at, l.request_ref,
 l.aa_tour_source_id, l.aa_component_kind, l.aa_currency, l.aa_pax, l.quote_valid_until, l.hold_expires_at,
@@ -101,8 +101,8 @@ SELECT c.agency_supplier_id, c.conversation_id,
 SUPPLIER_SQL = "SELECT kind, deleted_at FROM crm.agency_supplier WHERE agency_supplier_id = $1"
 INSERT_SQL = """
 INSERT INTO crm.booking_line (trip_id, agency_supplier_id, title, confirmation_no, service_from, service_to, collect,
-                              confirm_class, visible_to_travelers)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                              confirm_class, visible_to_travelers, category)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING booking_line_id
 """
 TRIP_OF_LINE_SQL = """
@@ -189,6 +189,7 @@ EDITABLE = (
     "confirm_class",
     "visible_to_travelers",
     "agency_supplier_id",
+    "category",  # AA-1144: flight | visa | insurance | fee (app.ledger.agency_items)
 )
 
 
@@ -253,6 +254,24 @@ def _uuid(value: Any, field: str) -> uuid.UUID:
         raise Invalid(f"invalid_{field}", "an id") from None
 
 
+def _visible(value: Any) -> bool:
+    if not isinstance(value, bool):
+        raise Invalid("invalid_visible_to_travelers", "true or false")
+    return value
+
+
+# The fields a member changes with a plain check (update_line): one validator each.
+_SIMPLE: dict[str, Any] = {
+    "title": _title,
+    "service_from": lambda v: _date(v, "service_from"),
+    "service_to": lambda v: _date(v, "service_to"),
+    "collect": lambda v: _choice(v, COLLECT, "collect"),
+    "confirm_class": lambda v: _choice(v, CONFIRM_CLASSES, "confirm_class", optional=True),
+    "visible_to_travelers": _visible,
+    "category": agency_items.category,
+}
+
+
 def _db(exc: asyncpg.PostgresError) -> Exception:
     mapped = refusal(exc)
     return mapped if mapped is not None else exc
@@ -315,6 +334,7 @@ def _line_view(row: Any, money: dict[str, Any] | None, trip_stage: str | None = 
         "status": row["status"],
         "aa_sub_status": row["aa_sub_status"],
         "title": row["title"],
+        "category": row.get("category"),  # AA-1144: an agency line's type (NULL = AA, or made before crm-080)
         "confirmation_no": row["confirmation_no"],
         "service_from": row["service_from"].isoformat() if row["service_from"] else None,
         "service_to": row["service_to"].isoformat() if row["service_to"] else None,
@@ -467,9 +487,8 @@ async def create_line(ctx: TenantContext, trip_id: uuid.UUID, body: dict[str, An
     start, end = _date(body.get("service_from"), "service_from"), _date(body.get("service_to"), "service_to")
     if start and end and end < start:
         raise Invalid("invalid_service_to", "on or after the start date")
-    visible = body.get("visible_to_travelers", False)
-    if not isinstance(visible, bool):
-        raise Invalid("invalid_visible_to_travelers", "true or false")
+    visible = _visible(body.get("visible_to_travelers", False))
+    category = agency_items.category(body.get("category"))  # AA-1144: the closed list, required on a new line
     try:
         async with ctx.conn.transaction():
             line_id = await ctx.conn.fetchval(
@@ -483,6 +502,7 @@ async def create_line(ctx: TenantContext, trip_id: uuid.UUID, body: dict[str, An
                 _choice(body.get("collect", "agency"), COLLECT, "collect"),
                 _choice(body.get("confirm_class"), CONFIRM_CLASSES, "confirm_class", optional=True),
                 visible,
+                category,
             )
     except asyncpg.PostgresError as exc:
         raise _db(exc) from None
@@ -512,8 +532,8 @@ async def update_line(ctx: TenantContext, line_id: uuid.UUID, changes: dict[str,
         if field not in changes:
             continue
         value = changes[field]
-        if field == "title":
-            value = _title(value)
+        if field in _SIMPLE:
+            value = _SIMPLE[field](value)
         elif field == "confirmation_no":
             value = _confirmation(value)
             if value is None and current["status"] == "confirmed" and current["supplier_kind"] == "agency":
@@ -522,15 +542,6 @@ async def update_line(ctx: TenantContext, line_id: uuid.UUID, changes: dict[str,
                     raise Conflict(
                         "line_incomplete", "a confirmed line keeps its confirmation number", missing=["confirmation_no"]
                     )
-        elif field in ("service_from", "service_to"):
-            value = _date(value, field)
-        elif field == "collect":
-            value = _choice(value, COLLECT, field)
-        elif field == "confirm_class":
-            value = _choice(value, CONFIRM_CLASSES, field, optional=True)
-        elif field == "visible_to_travelers":
-            if not isinstance(value, bool):
-                raise Invalid("invalid_visible_to_travelers", "true or false")
         else:  # agency_supplier_id: a planning line moves to another own supplier
             value = _uuid(value, field)
             await _own_supplier(ctx, value)

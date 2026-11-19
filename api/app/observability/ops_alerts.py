@@ -117,6 +117,12 @@ CHECKS: dict[str, Check] = {
         "A confirmed AA departure is 21 days away and the agency's traveller details are incomplete. Open S-02 (ops "
         "releases) and follow up with the agency.",
     ),
+    "aa_extra_nights_requested": Check(
+        "Agency asks AA for extra hotel nights",
+        "An agency asked Adventure Asia for hotel nights before or after a tour (agencies sell no hotel of "
+        "their own). Open the CRM staff console > Ops > Extra nights, quote the nights from an AA supplier hotel in "
+        "Booking and answer the agency.",
+    ),
     "ops_release_withdrawn": Check(
         "Ops release withdrawn",
         "A trip with an AA line was cancelled or the agency withdrew its release: AA ops no longer hold the traveller "
@@ -172,6 +178,7 @@ EVENT_CHECKS = frozenset(
         "breakglass_owner_not_mailed",
         "ops_release_incomplete_t21",
         "ops_release_withdrawn",
+        "aa_extra_nights_requested",
         "membership_feed_stuck",
         "membership_apply_refused",
         "bulk_reveal",

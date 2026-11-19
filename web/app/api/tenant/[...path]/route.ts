@@ -17,6 +17,8 @@
 //     renews an exchanged (partner) studio token that is about to expire (lib/studio/auth-server.ts requireStudio).
 //   - AA-1036 (R3 slice 1, root ADR 0019 d6): moved into the one agency app; CIS is the app's CIS_API_URL, the write
 //     guard is the app's own (lib/writeGuard.ts, the request's public origin).
+//   - AA-1144 (B6): a facts write of a kind that is not the agency's (price, booking terms) is refused here, before
+//     CIS (lib/studio/facts.ts factWriteRefusal); CIS's own check is a follow-up in AA-CIS-App.
 import { NextRequest, NextResponse } from "next/server";
 import { requestConfig } from "@/lib/config";
 import { requireStudio, withRenewed } from "@/lib/studio/auth-server";
@@ -24,6 +26,20 @@ import { refuseForeignWrite } from "@/lib/writeGuard";
 import { proxyPath } from "@/lib/bffPath";
 import { streamUpstream } from "@/lib/proxyResponse";
 import { studioDownloadHeaders } from "@/lib/studio/downloadHeaders";
+import { factWriteRefusal } from "@/lib/studio/facts";
+
+/** The body sent upstream: multipart as bytes (brand-guide upload), anything else as JSON text; none on a read. */
+async function upstreamBody(
+  req: NextRequest, contentType: string, headers: Record<string, string>,
+): Promise<ArrayBuffer | string | undefined> {
+  if (req.method === "GET" || req.method === "HEAD") return undefined;
+  if (contentType.includes("multipart/form-data")) {
+    headers["Content-Type"] = contentType;
+    return req.arrayBuffer();
+  }
+  headers["Content-Type"] = "application/json";
+  try { return await req.text(); } catch { return undefined; /* empty body */ }
+}
 
 async function handler(
   req: NextRequest,
@@ -45,17 +61,13 @@ async function handler(
   const headers: Record<string, string> = { Authorization: `Bearer ${auth.token}` };
 
   const contentType = req.headers.get("content-type") ?? "";
-  const isMultipart = contentType.includes("multipart/form-data");
+  const body = await upstreamBody(req, contentType, headers);
 
-  let body: ArrayBuffer | string | undefined;
-  if (req.method !== "GET" && req.method !== "HEAD") {
-    if (isMultipart) {
-      headers["Content-Type"] = contentType;
-      body = await req.arrayBuffer();
-    } else {
-      headers["Content-Type"] = "application/json";
-      try { body = await req.text(); } catch { /* empty body */ }
-    }
+  // AA-1144 (B6): the agency's own facts are its price and booking terms only (the multipart body is never a fact).
+  const factRefusal = factWriteRefusal(req.method, path, contentType, body);
+  if (factRefusal) {
+    return withRenewed(NextResponse.json({ detail: factRefusal.detail }, { status: factRefusal.status }), auth.renewed,
+      auth.cfg);
   }
 
   try {

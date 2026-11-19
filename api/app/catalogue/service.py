@@ -26,13 +26,13 @@ from typing import Any
 import asyncpg
 
 from app.errors import Conflict, Forbidden, Invalid, NotFound
-from app.ledger import fx
+from app.ledger import agency_items, fx
 from app.margin import sees_margin
 from app.proposals import rules
 from app.tenancy import TenantContext
 
 TABLE = "agency_service"
-CATEGORIES = ("flight", "insurance", "visa", "transfer", "fee")
+CATEGORIES = agency_items.CATEGORIES  # AA-1144 (crm-080): flight, visa, insurance, fee; transfers are AA's
 QTY_BASES = ("per_person", "per_adult", "per_booking", "per_room", "per_night", "per_person_night")
 MAX_UNIT = Decimal("99999999.99")
 MAX_OPTION = Decimal("999999999999.99")
@@ -432,6 +432,7 @@ async def plan_option(
         raise Invalid("invalid_quantity", "the amount is too large")
     body = {
         "title": option_title(row["name"], qty),
+        "category": row["category"],
         "agency_supplier_id": row["agency_supplier_id"],
         "sell_amount": sell,
         "net_amount": net,

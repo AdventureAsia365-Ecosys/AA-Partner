@@ -22,7 +22,7 @@ import { FACTS_MESSAGES } from "./brand.messages";
 
 type FactsT = Translator<typeof FACTS_MESSAGES.en>;
 import {
-  EMPTY_FORM, FACT_KINDS, FACTS_API, MAX_BODY, MAX_COUNTRY, MAX_SOURCE, MAX_TITLE, kindLabel, problemText,
+  EMPTY_FORM, FACTS_API, agencyMayWrite, formKinds, MAX_BODY, MAX_COUNTRY, MAX_SOURCE, MAX_TITLE, kindLabel, problemText,
   changedFields, createBody, factCall, formOf, formProblem, overrideForm, ownOnSubject,
   type FactForm, type FactKind, type TenantFact, type TenantFactList,
 } from "@/lib/studio/facts";
@@ -123,6 +123,8 @@ export function BrandFacts() {
             </Button>
           );
         }
+        // AA-1144 (B6): only a price or sale terms of the agency's own; tour facts stay Adventure Asia's.
+        if (!agencyMayWrite(f.kind)) return null;
         return <Button size="sm" variant="secondary" onClick={() => setCreating(overrideForm(f))}>{t("useMyOwn")}</Button>;
       },
     },
@@ -216,7 +218,7 @@ function FactFields({ form, setForm, disabled, idPrefix }: {
       <Field label={t("kind")} htmlFor={id("kind")}>
         <select id={id("kind")} value={form.kind} disabled={disabled} style={fieldStyle}
           onChange={(e) => set("kind", e.target.value as FactKind)}>
-          {FACT_KINDS.map((k) => <option key={k} value={k}>{kindLabel(k, lang)}</option>)}
+          {formKinds(form.kind).map((k) => <option key={k} value={k}>{kindLabel(k, lang)}</option>)}
         </select>
       </Field>
       <Field label={t("subject")} htmlFor={id("title")} hint={t("subjectHint")}>

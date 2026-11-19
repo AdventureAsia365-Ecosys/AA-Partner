@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { test } from "vitest";
 
 import {
-  EMPTY_FORM, changedFields, createBody, errorText, formOf, formProblem, overrideForm, ownOnSubject, subjectKey,
+  EMPTY_FORM, FACT_KIND_REFUSAL, agencyMayWrite, changedFields, createBody, errorText, factWriteRefusal, formKinds,
+  formOf, formProblem, overrideForm, ownOnSubject, subjectKey,
   type TenantFact,
 } from "@/lib/studio/facts";
 
@@ -34,7 +35,7 @@ test("an own fact on the same subject is found (not the one being edited)", () =
 
 test("create body and changed fields", () => {
   assert.deepEqual(createBody({ ...EMPTY_FORM, title: " a  b ", body: "c", provenance: "d" }),
-    { kind: "other", title: "a b", body: "c", provenance: "d", country: null, stated_on: null, valid_until: null });
+    { kind: "price", title: "a b", body: "c", provenance: "d", country: null, stated_on: null, valid_until: null });
   assert.deepEqual(changedFields(OWN, formOf(OWN)), {});
   assert.deepEqual(changedFields(OWN, { ...formOf(OWN), valid_until: "2027-03-31" }), { valid_until: "2027-03-31" });
 });
@@ -52,4 +53,44 @@ test("error text", () => {
     "An agency can keep at most 200 facts; delete one first");
   assert.equal(errorText(422, [{ loc: ["body", "title"], msg: "too long" }]), "title: too long");
   assert.equal(errorText(0, null), "Network error");
+});
+
+test("AA-1144 (B6): an agency writes its price (markup) and sale terms only; tour facts stay Adventure Asia's", () => {
+  assert.deepEqual(["price", "booking_terms"].map(agencyMayWrite), [true, true]);
+  assert.deepEqual(["season", "visa_entry", "transfer_time", "other"].map(agencyMayWrite), [false, false, false, false]);
+  assert.equal(EMPTY_FORM.kind, "price");
+  assert.deepEqual(formKinds("price"), ["price", "booking_terms"]);
+  assert.deepEqual(formKinds("season"), ["price", "booking_terms", "season"]); // an older own fact still edits
+});
+
+test("AA-1144 (B6): the tenant proxy refuses a facts write of a tour kind before CIS", () => {
+  const json = "application/json";
+  const fact = (kind?: unknown) => JSON.stringify({ ...(kind === undefined ? {} : { kind }), title: "Ferry to Isla Verde",
+    body: "Two hours.", provenance: "Our own trip notes" });
+  const kindRefusal = { status: 422, detail: FACT_KIND_REFUSAL };
+  // A new own fact: price and booking terms pass; a tour kind, a missing kind (CIS would make it "other") refuse.
+  assert.equal(factWriteRefusal("POST", ["v1", "facts"], json, fact("price")), null);
+  assert.equal(factWriteRefusal("post", ["v1", "facts"], json, fact("booking_terms")), null);
+  for (const kind of ["season", "visa_entry", "transfer_time", "other", undefined, null, 3, ["price"]]) {
+    assert.deepEqual(factWriteRefusal("POST", ["v1", "facts"], json, fact(kind)), kindRefusal, String(kind));
+  }
+  // An edit: setting a tour kind (or null) refuses; leaving the kind alone passes, also on an older fact.
+  assert.deepEqual(factWriteRefusal("PATCH", ["v1", "facts", "fact_x1"], json, fact("transfer_time")), kindRefusal);
+  assert.deepEqual(factWriteRefusal("PATCH", ["v1", "facts", "fact_x1"], json, JSON.stringify({ kind: null })),
+    kindRefusal);
+  assert.equal(factWriteRefusal("PATCH", ["v1", "facts", "fact_x1"], json, JSON.stringify({ body: "Three hours." })),
+    null);
+  assert.equal(factWriteRefusal("PATCH", ["v1", "facts", "fact_x1"], json, fact("price")), null);
+  // A body the check cannot read never passes.
+  const notJson = { status: 400, detail: "A fact is sent as JSON." };
+  assert.deepEqual(factWriteRefusal("POST", ["v1", "facts"], json, "{kind: season"), notJson);
+  assert.deepEqual(factWriteRefusal("POST", ["v1", "facts"], json, undefined), notJson);
+  assert.deepEqual(factWriteRefusal("POST", ["v1", "facts"], json, "[]"), notJson);
+  assert.deepEqual(factWriteRefusal("PATCH", ["v1", "facts", "fact_x1"], "multipart/form-data; boundary=x", "--x"),
+    notJson);
+  // Other routes and methods are not this check's business.
+  assert.equal(factWriteRefusal("DELETE", ["v1", "facts", "fact_x1"], json, undefined), null);
+  assert.equal(factWriteRefusal("GET", ["v1", "facts"], json, undefined), null);
+  assert.equal(factWriteRefusal("POST", ["v1", "brand"], json, fact("season")), null);
+  assert.equal(factWriteRefusal("POST", ["v1", "facts", "fact_x1", "extra"], json, fact("season")), null);
 });

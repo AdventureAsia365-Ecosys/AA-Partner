@@ -196,7 +196,8 @@ ACCOUNT_CLEANUP_MODULES = frozenset({"app/members/accounts.py"})
 STAFF_SESSION_MODULES = frozenset({"app/support/sessions.py"})
 SUPPORT_READ_MODULES = frozenset({"app/support/reads.py"})
 # AA-956 (CRM-26): AA ground operations reading an agency's ops releases (actor ops:<sub>, S-02).
-OPS_RELEASE_STAFF_MODULES = frozenset({"app/ops_release/staff.py"})
+# AA-1144: the staff list of the extra-night requests to AA (B11) reads with the same AA ops context.
+OPS_RELEASE_STAFF_MODULES = frozenset({"app/ops_release/staff.py", "app/booking/extra_nights.py"})
 CONTEXT_TYPES = frozenset(
     {
         "TenantContext",
@@ -437,7 +438,8 @@ def test_system_tx_is_used_only_by_the_job_modules() -> None:
 
 
 def test_ops_tx_is_used_only_by_the_ops_release_staff_module() -> None:
-    """AA-956: the AA ops context (actor ops:<sub>, no membership) is opened only by the S-02 module."""
+    """AA-956: the AA ops context (actor ops:<sub>, no membership) is opened only by the S-02 module (and the AA-1144
+    extra-night request list)."""
     assert _users_of("ops_tx", OPS_RELEASE_STAFF_MODULES) == []
 
 

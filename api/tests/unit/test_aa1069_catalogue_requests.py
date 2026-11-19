@@ -280,6 +280,7 @@ async def test_plan_option_is_a_snapshot_with_the_tier() -> None:
     )
     assert body == {
         "title": "Valley hop flight x 3",
+        "category": "flight",
         "agency_supplier_id": SUPPLIER,
         "sell_amount": Decimal("360.00"),
         "net_amount": Decimal("255.00"),

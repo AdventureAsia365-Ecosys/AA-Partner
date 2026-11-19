@@ -200,7 +200,7 @@ async def test_the_ledger_has_totals_for_owner_and_agent_only() -> None:
 
 @pytest.mark.asyncio
 async def test_create_line_needs_an_own_supplier() -> None:
-    body = {"agency_supplier_id": str(SUPPLIER), "title": "Hanoi 2 nights", "collect": "agency"}
+    body = {"agency_supplier_id": str(SUPPLIER), "title": "Hanoi 2 nights", "collect": "agency", "category": "flight"}
     aa = _conn(**{"SELECT kind, deleted_at FROM crm.agency_supplier": {"kind": "aa", "deleted_at": None}})
     with _raises(Forbidden, "aa_line_read_only"):
         await lines.create_line(tenant_ctx(aa), TRIP, body)
@@ -216,6 +216,9 @@ async def test_create_line_needs_an_own_supplier() -> None:
         await lines.create_line(ctx, TRIP, {**body, "service_from": "2026-11-04", "service_to": "2026-11-02"})
     with _raises(Invalid, "invalid_title"):
         await lines.create_line(ctx, TRIP, {**body, "title": " "})
+    for category in ("transfer", "other", None):  # AA-1144: the closed list (flight, visa, insurance, fee)
+        with _raises(Invalid, "invalid_category"):
+            await lines.create_line(ctx, TRIP, {**body, "category": category})
 
 
 @pytest.mark.asyncio
@@ -433,7 +436,7 @@ def _supplier_row(**over: Any) -> dict[str, Any]:
         "agency_supplier_id": SUPPLIER,
         "kind": "own",
         "name": "Hanoi Pearl",
-        "category": "accommodation",
+        "category": "flight",
         "default_commission_pct": Decimal("10.00"),
         "commission_due_days": 45,
         "confirmation_unique": False,
@@ -459,7 +462,7 @@ async def test_the_supplier_list_makes_sure_aa_exists_and_is_one_list_view() -> 
 async def test_create_supplier_seals_the_contact_fields() -> None:
     conn = ScriptedConn().on("FROM crm.agency_supplier s", _supplier_row())
     ctx = tenant_ctx(conn)
-    body = {"name": " Hanoi Pearl ", "category": "accommodation", "contact_name": "Lan", "contact_email": "lan@x.test"}
+    body = {"name": " Hanoi Pearl ", "category": "flight", "contact_name": "Lan", "contact_email": "lan@x.test"}
     await suppliers.create_supplier(ctx, FakeVault(), body)  # type: ignore[arg-type]
     ((_id, name, category, name_enc, email_enc, pct, unique, due_days),) = conn.sql("INSERT INTO crm.agency_supplier")
     assert name == "Hanoi Pearl" and name_enc.startswith(b"enc:agency_supplier.contact_name_enc:")

@@ -211,7 +211,7 @@ describe("role-hidden links", () => {
 
   it("the builder drawer links AA prices only when the member may see them", () => {
     const view = { currency: "USD", days: [], status: "draft" } as unknown as Parameters<typeof BuilderAaDrawer>[0]["view"];
-    const props = { view, blockId: "b1", canMoney: true, suppliers: [], lang: "en" as const, locale: "en-AU", write: async () => true, onClose: () => {} };
+    const props = { view, blockId: "b1", blockType: "other" as const, canMoney: true, suppliers: [], lang: "en" as const, locale: "en-AU", write: async () => true, onClose: () => {} };
     const drawer = (over: Record<string, unknown>) => renderToString(createElement(BuilderAaDrawer, { ...props, ...over }));
     expect(drawer({ canTariff: true })).toContain('data-testid="builder-aa-tariff-link"');
     expect(drawer({})).not.toContain("builder-aa-tariff-link");

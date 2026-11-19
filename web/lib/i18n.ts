@@ -31,6 +31,7 @@ import { workflowsEn, workflowsVi } from "./i18nWorkflows";
 import { retailPricingEn, retailPricingVi } from "./i18nRetailPricing";
 import { retailPaymentsEn, retailPaymentsVi } from "./i18nRetailPayments";
 import { financeEn, financeVi } from "./i18nFinance";
+import { agencyItemsEn, agencyItemsVi } from "./i18nAgencyItems";
 import { catalogueEn, catalogueVi } from "./i18nCatalogue";
 import { travelOpsEn, travelOpsVi } from "./i18nTravelOps";
 import { aaCancelEn, aaCancelVi } from "./i18nAaCancel";
@@ -90,6 +91,7 @@ const en = {
   ...retailPaymentsEn, // AA-1067: instalments, reminders, the cancellation policy and charge (lib/i18nRetailPayments.ts)
   ...financeEn, // AA-1068: trip Money card, supplier bills, Bookings with AA, departures, profit, Home today (lib/i18nFinance.ts)
   ...catalogueEn, // AA-1069: the Services catalogue, From catalogue in the builder, supplier requests (lib/i18nCatalogue.ts)
+  ...agencyItemsEn, // AA-1144: the agency's own items, the AA-only blocks, Ask AA for extra nights (lib/i18nAgencyItems.ts)
   ...travelOpsEn, // AA-1070: departures, the trip's Travel panel, Settings > Travel, the portal's travel section
   ...aaCancelEn, // AA-1070 (crm-13): AA cancelled a departure
   ...tourRetiredEn, // AA-1093: an AA tour Adventure Asia no longer offers (lib/i18nTourRetired.ts)
@@ -2838,6 +2840,7 @@ const vi: Record<MessageKey, string> = {
   ...retailPaymentsVi,
   ...financeVi,
   ...catalogueVi,
+  ...agencyItemsVi,
   ...travelOpsVi,
   ...aaCancelVi,
   ...tourRetiredVi,

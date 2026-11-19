@@ -605,7 +605,7 @@ export function BuilderPage({
                     </div>
                   )}
                   {draft && drawer === block.option_block_id && (
-                    <BuilderAaDrawer view={view} blockId={block.option_block_id} canMoney={canMoney} canTariff={canTariff} suppliers={suppliers} lang={lang} locale={locale} write={write} onClose={() => setDrawer(null)} />
+                    <BuilderAaDrawer view={view} blockId={block.option_block_id} blockType={block.type} canMoney={canMoney} canTariff={canTariff} suppliers={suppliers} lang={lang} locale={locale} write={write} onClose={() => setDrawer(null)} />
                   )}
                 </section>
               ))}

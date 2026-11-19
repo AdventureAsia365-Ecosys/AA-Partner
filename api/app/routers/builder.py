@@ -165,6 +165,8 @@ class OptionIn(_Body):
     net_amount: Money | None = None
     pay_on_arrival: bool = False
     choose_later_allowed: bool = False
+    # AA-1144: flight | visa | insurance | fee, on an Other block only (422 with the reason; app.ledger.agency_items)
+    category: str | None = Field(default=None, max_length=40)
 
 
 class CatalogueOptionIn(_Body):
