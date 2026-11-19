@@ -16,9 +16,10 @@ Tech lead decisions: admin MFA = TOTP (S283); drop the WAF geo rule of the staff
   registers crm-082, there is no readiness raise, and the settings lint requires every compiled key to have a reader and
   every constant a compiled key, which a split code PR from `origin/main` could not satisfy. A migration-only PR
   would fail the other way: its compiled default (seed parity) would have no reader (dead-setting lint).
-- **crm-082, not crm-081** (review fix): the agency facts lock lane of the same wave holds crm-081 (the quote item
-  display note). That PR merges first; Guard 0 here requires crm-081 registered. The two Partner migrations ship as
-  one Migration Apply batch (crm 081-082).
+- **crm-082, not crm-081** (review fix): AA-1144 holds crm-081 (`api/migrations/081_crm_option_display_note.sql`,
+  PR #360, the quote item display note), already on `main`. Guard 0 here requires crm-081 registered, the same way
+  crm-081 requires crm-080. No readiness entry: like crm-075 and crm-077 (settings rows), the reader serves the compiled
+  default until Migration Apply registers crm-082, so `app/db.py` REQUIRED_SCHEMA_VERSIONS stays unchanged.
 
 ## Changed
 - `app/auth/route_guard.py` calls `admin_mfa.check` before building the caller; nothing is refused while the switch

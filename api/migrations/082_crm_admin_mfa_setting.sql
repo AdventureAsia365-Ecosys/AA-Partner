@@ -3,10 +3,9 @@
 -- staff session signed in without an authenticator code, as a CRM setting.
 --
 -- Owner: AA-Partner (api/migrations/082_crm_admin_mfa_setting.sql). AA-CIS-Infra db/migrations/crm/ holds the byte copy
--- Migration Apply runs. Key crm-082, right after crm-081 (the agency facts lock's quote item display note, a separate
--- PR of the same wave that merges first; this file was crm-081 before the two met); if the numbers move, renumber:
--- file name, this header, Guard 0 and the registration below, and the tests that name it (git grep '082_' and
--- 'crm-082').
+-- Migration Apply runs. Key crm-082, right after crm-081 (AA-1144's 081_crm_option_display_note.sql, PR #360, the
+-- quote item display note; this file was crm-081 before the two met); if the numbers move, renumber: file name, this
+-- header, Guard 0 and the registration below, and the tests that name it (git grep '082_' and 'crm-082').
 --
 -- Why. WORKFORCE staff sign in with an e-mail one-time code; anyone who controls their mailbox can open every agency's
 -- data on /crm/ops/v1 and /crm/staff/v1. The pool allows TOTP as optional MFA; a staff member with TOTP enrolled signs in
