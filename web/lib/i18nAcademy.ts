@@ -40,6 +40,7 @@ export const academyEn = {
   "academy.path.enrolled": "Enrolled",
   "academy.path.completed": "Completed",
   "academy.path.progress": "{done} of {total} required modules complete",
+  "academy.path.progress.one": "{done} of {total} required module complete",
   "academy.path.planned": "Coming later: {list}",
   "academy.path.finalQuiz": "Take the final quiz",
   "academy.path.finalQuizLocked": "The final quiz opens when every required module is complete.",
@@ -102,6 +103,7 @@ export const academyEn = {
 
   // Quiz
   "academy.quiz.finalTitle": "Final quiz",
+  "academy.quiz.holdsCertificate": "You already hold this path's certificate.",
   "academy.quiz.intro": "Answer every question, then submit. The correct answers and explanations show after you submit.",
   "academy.quiz.starting": "Preparing your questions…",
   "academy.quiz.question": "Question {n} of {total}",
@@ -207,6 +209,7 @@ export const academyVi: Record<keyof typeof academyEn, string> = {
   "academy.path.enrolled": "Đã đăng ký",
   "academy.path.completed": "Đã hoàn thành",
   "academy.path.progress": "Đã xong {done} trên {total} module bắt buộc",
+  "academy.path.progress.one": "Đã xong {done} trên {total} module bắt buộc",
   "academy.path.planned": "Sắp có: {list}",
   "academy.path.finalQuiz": "Làm bài kiểm tra cuối",
   "academy.path.finalQuizLocked": "Bài kiểm tra cuối mở khi mọi module bắt buộc đã xong.",
@@ -266,6 +269,7 @@ export const academyVi: Record<keyof typeof academyEn, string> = {
   "academy.lesson.videoError": "Không tải được video. Hãy tải lại trang để thử lại.",
 
   "academy.quiz.finalTitle": "Bài kiểm tra cuối",
+  "academy.quiz.holdsCertificate": "Bạn đã có chứng chỉ của lộ trình này.",
   "academy.quiz.intro": "Trả lời mọi câu hỏi rồi nộp bài. Đáp án đúng và giải thích hiện sau khi nộp.",
   "academy.quiz.starting": "Đang chuẩn bị câu hỏi…",
   "academy.quiz.question": "Câu {n} / {total}",

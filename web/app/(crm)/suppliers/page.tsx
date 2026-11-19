@@ -23,7 +23,7 @@ export default async function SuppliersPage() {
       {!view.ok ? (
         <ErrorState message={t(ctx.lang, "error.api")} />
       ) : (
-        <SuppliersView suppliers={view.data.suppliers} categories={view.data.categories} role={ctx.role} lang={ctx.lang} />
+        <SuppliersView suppliers={view.data.suppliers} categories={view.data.categories} role={ctx.role} lang={ctx.lang} locale={ctx.locale} />
       )}
     </div>
   );

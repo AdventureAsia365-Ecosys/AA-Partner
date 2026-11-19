@@ -106,3 +106,13 @@ export async function loadTrip(cisApiUrl: string, tourId: string, fetchImpl: Fet
 export function itineraryParagraphs(textValue: string): string[] {
   return textValue.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
 }
+
+const DAY_HEADING = /^day\s+\d+\b/i;
+
+/** AA-1129 (P5, S283 audit row 17): a paragraph that starts with a "Day N — title" line (followed by ONE newline in
+ *  the CIS text) is split into that day heading and its text; any other paragraph has no heading. */
+export function dayBlock(paragraph: string): { heading: string | null; body: string } {
+  const [first, ...rest] = paragraph.split("\n");
+  if (!DAY_HEADING.test(first.trim())) return { heading: null, body: paragraph };
+  return { heading: first.trim(), body: rest.join("\n").trim() };
+}

@@ -583,6 +583,12 @@ service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
   reaches the page as `x-nonce` (`app/layout.tsx` restore scripts) and in the request CSP (Next's own scripts). The
   paths the proxy skips (`/_next/*`, `/favicon.ico`, the mail import upload) get the policy without a nonce from
   `next.config.ts`.
+- **Client host is white-label** (AA-1129 P5): the inquiry form `/c/f/<key>` shows the agency's name as the brand
+  mark and tab title; an unknown key answers HTTP 404 (`app/c/f/[publicKey]/not-found.tsx`); the visitor switches EN /
+  VI with `?lang=` for that visit (the client host has no `/prefs`); an agency with no privacy link gets a short
+  fallback line on what the details are for. The client host 404 has no brand mark and no Home link (the host has no
+  home page) and its default tab title is neutral (root `generateMetadata` by `x-aa-host-kind`). The trip page turns a
+  "Day N — title" line into a day heading (`lib/tripPage.ts` `dayBlock`).
 - **Book now on the trip page** (AA-1072): a link with an agency's inquiry form key (`/trip/<tourId>?f=<key>[&p=<AA tour
   key>]`) shows that agency's booking widget (`web/components/booking/BookNowWidget.tsx`, `web/lib/bookNow.ts`; words
   EN by default, VI by the visitor's cookie, `web/lib/i18nBookNow.ts`) instead of the AA contact button; section "Book
@@ -770,7 +776,10 @@ studio rules. Deploy Web Dev verifies the studio paths and runs the studio smoke
   `lib/studio/lib.messages.ts`). The draft legal pages and the Facebook guide are structured per-language documents
   (`legal/*/<name>.messages.ts`, `help/facebook/facebookGuide.messages.ts`); the English legal text applies, the
   Vietnamese page says it is a translation. Text from APIs (goal names, notification titles, live-writer step labels,
-  activity labels, generated content) is shown as the API sends it. `web/tests/studio/studioI18n.test.ts` keeps every
+  generated content) is shown as the API sends it; Activity action labels are worded by the studio per action id
+  (`lib/studio/activityLabels.messages.ts`, AA-1129), CIS's English label only for an id the studio does not know yet.
+  The CRM layout wraps every CRM page in the same provider (`StudioLang`), so kit core text (DataTable paging,
+  "Columns") follows the person's language there too (AA-1129 P3). `web/tests/studio/studioI18n.test.ts` keeps every
   English key paired with Vietnamese and fails on hard-coded English in studio components.
 - **Own e-mail** (an AA-1007 leftover): `/auth/callback` keeps the id token's `email` (same client and `sub`,
   `lib/oauth.ts` `idTokenEmail`) in the sealed session (`em`, kept across refreshes); `/bff/identity` adds it to its

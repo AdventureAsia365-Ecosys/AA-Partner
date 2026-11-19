@@ -3,6 +3,8 @@
 // vouchers, server-side PDFs, visa tracker, Settings > Travel) and the pure helpers the pages share. Edge-safe,
 // unit-tested (tests/travelOps.test.ts). No passport number, expiry or nationality ever reaches the browser.
 
+import { fmt, plural, t, type Lang, type MessageKey } from "./i18n";
+
 export const PASSPORT_STATUSES = ["ok", "expires_too_soon", "missing", "no_trip_end"] as const;
 export type PassportStatus = (typeof PASSPORT_STATUSES)[number];
 export const ROOM_TYPES = ["single", "double", "twin", "triple", "quad", "family"] as const;
@@ -202,6 +204,15 @@ export const DEPARTURE_REF = /^[A-Za-z0-9:_.-]{1,80}$/;
 
 export function paxTotal(p: Pax): number {
   return p.adults + p.children + p.infants;
+}
+
+/** "3 (2 adults, 1 child)": the total, then each traveller type with its own singular, zero counts left out
+ *  (AA-1129 P3; was "3 (2 adults, 1 children, 0 infants)"). */
+export function paxSplitText(lang: Lang, p: Pax): string {
+  const parts = (["adults", "children", "infants"] as const)
+    .filter((kind) => p[kind] > 0)
+    .map((kind) => plural(lang, `travel.pax.${kind}` as MessageKey, p[kind]));
+  return fmt(t(lang, "travel.paxSplit"), { total: paxTotal(p), parts: parts.join(", ") });
 }
 
 /** Badge tone of a passport status (the kit Badge tones). */

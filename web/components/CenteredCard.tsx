@@ -8,7 +8,8 @@ import { K, PageFrame, alpha } from "@/app/_kit";
  *  links to it stay plain <a> (a full page load, never a client-side navigation). */
 export const SIGN_IN_PATH = "/auth/sign-in";
 
-/** `brand`: the mark above the card (AA-1105: the academy host shows "AA Academy", never the partner app's name). */
+/** `brand`: the mark above the card (AA-1105: the academy host shows "AA Academy", never the partner app's name).
+ *  AA-1129 (P5): `null` shows no mark (the client host is white-label: the agency's name or nothing). */
 export function CenteredCard({
   children,
   testId,
@@ -18,7 +19,7 @@ export function CenteredCard({
   children: React.ReactNode;
   testId?: string;
   wide?: boolean;
-  brand?: string;
+  brand?: string | null;
 }) {
   return (
     <PageFrame
@@ -26,16 +27,20 @@ export function CenteredCard({
       style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: "32px 16px", background: K.bg, overflowY: "visible" }}
     >
       <div style={{ width: "100%", maxWidth: wide ? 640 : 440, display: "grid", gap: 16 }}>
-        <div
-          style={{
-            fontFamily: "'Fahkwang', 'Poppins', Georgia, serif",
-            fontSize: 20,
-            color: K.accent,
-            textAlign: "center",
-          }}
-        >
-          {brand}
-        </div>
+        {brand && (
+          <div
+            data-testid="centered-card-brand"
+            style={{
+              fontFamily: "'Fahkwang', 'Poppins', Georgia, serif",
+              fontSize: 20,
+              color: K.accent,
+              textAlign: "center",
+              overflowWrap: "anywhere",
+            }}
+          >
+            {brand}
+          </div>
+        )}
         <div
           style={{
             background: K.card,

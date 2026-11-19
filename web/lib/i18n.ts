@@ -546,6 +546,13 @@ const en = {
   "intake.error": "Your inquiry could not be sent. Please try again.",
   "intake.rateLimited": "Too many tries. Please wait a minute and send again.",
   "intake.notFound": "This form is not available.",
+  // AA-1129 (P5): the client host's own 404 and default tab title (white-label: no partner app name), the privacy
+  // line a form shows when the agency set no privacy link, the form's language links.
+  "intake.privacyFallback":
+    "{agency} uses these details only to answer this inquiry and plan your trip. To see, correct or delete them, reply to any message {agency} sends you.",
+  "intake.language": "Language",
+  "client.notFound": "This page does not exist. Check the link you were sent.",
+  "client.host.title": "Your trip",
   "intake.choose": "Choose…",
   "intake.honeypot": "Leave this field empty",
   // AA-937 (CRM-09): clients, reveal reasons, profile bands, health codes, relationships, documents.
@@ -3290,6 +3297,11 @@ const vi: Record<MessageKey, string> = {
   "intake.error": "Chưa gửi được yêu cầu. Vui lòng thử lại.",
   "intake.rateLimited": "Bạn đã thử quá nhiều lần. Vui lòng chờ một phút rồi gửi lại.",
   "intake.notFound": "Biểu mẫu này không còn hoạt động.",
+  "intake.privacyFallback":
+    "{agency} chỉ dùng các thông tin này để trả lời yêu cầu và lên kế hoạch chuyến đi của bạn. Để xem, sửa hoặc xoá chúng, hãy trả lời bất kỳ tin nhắn nào {agency} gửi cho bạn.",
+  "intake.language": "Ngôn ngữ",
+  "client.notFound": "Trang này không tồn tại. Hãy kiểm tra lại đường link bạn nhận được.",
+  "client.host.title": "Chuyến đi của bạn",
   "intake.choose": "Chọn…",
   "intake.honeypot": "Để trống ô này",
   // AA-937 (CRM-09)
@@ -4127,7 +4139,7 @@ const vi: Record<MessageKey, string> = {
   "ledger.col.collect": "Thu tiền",
   "ledger.status.planning": "Đang lên kế hoạch",
   "ledger.status.confirmed": "Đã xác nhận",
-  "ledger.status.cancelled": "Đã hủy",
+  "ledger.status.cancelled": "Đã huỷ",
   "ledger.collect.agency": "Đại lý thu",
   "ledger.collect.on_arrival": "Trả khi đến",
   "ledger.level.off": "Tắt",
@@ -4142,8 +4154,8 @@ const vi: Record<MessageKey, string> = {
   "ledger.save": "Lưu",
   "ledger.close": "Đóng",
   "ledger.confirm": "Xác nhận",
-  "ledger.cancel": "Hủy dịch vụ",
-  "ledger.delete": "Xóa",
+  "ledger.cancel": "Huỷ dịch vụ",
+  "ledger.delete": "Xoá",
   "ledger.editMoney": "Tiền",
   "ledger.currency": "Tiền tệ",
   "ledger.money.cost": "Giá vốn",
@@ -4168,7 +4180,7 @@ const vi: Record<MessageKey, string> = {
   "ledger.error.fx_rate_missing": "Chưa có tỷ giá cho loại tiền này. Thêm trong Cài đặt > Thanh toán.",
   "ledger.error.line_not_editable": "Không thể thay đổi dịch vụ ở trạng thái hiện tại.",
   "ledger.error.supplier_in_use": "Vẫn còn dịch vụ đặt chỗ dùng nhà cung cấp này.",
-  "ledger.error.aa_supplier_builtin": "Adventure Asia có sẵn, không thể sửa hay xóa.",
+  "ledger.error.aa_supplier_builtin": "Adventure Asia có sẵn, không thể sửa hay xoá.",
   "ledger.error.role_forbidden": "Vai trò của bạn không được làm việc này.",
   "ledger.error.money": "Nhập số tiền như 1250 hoặc 1250.50 và mã tiền tệ 3 chữ như USD.",
   "ledger.error.other": "Đã có lỗi. Vui lòng thử lại.",

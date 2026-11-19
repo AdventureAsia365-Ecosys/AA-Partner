@@ -10,7 +10,8 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Badge, Button, DataTable, Field, Input, K, useHydrated } from "@/app/_kit";
 import { bffSend } from "@/lib/bffClient";
 import { REVEAL_REASONS } from "@/lib/clients";
-import { t, type Lang, type MessageKey } from "@/lib/i18n";
+import { plural, t, type Lang, type MessageKey } from "@/lib/i18n";
+import { percentText } from "@/lib/pipeline";
 import { errorKey, seesMargin, type Supplier } from "@/lib/ledger";
 
 const field: React.CSSProperties = {
@@ -66,11 +67,14 @@ export function SuppliersView({
   categories,
   role,
   lang,
+  locale,
 }: {
   suppliers: Supplier[];
   categories: string[];
   role: string;
   lang: Lang;
+  /** The person's date/number locale (vi-VN prints "83,35 %"); AA-1129 P3. */
+  locale?: string;
 }) {
   const router = useRouter();
   const hydrated = useHydrated();
@@ -205,13 +209,13 @@ export function SuppliersView({
         );
       },
     },
-    { id: "lines", header: tr("suppliers.col.lines"), accessorFn: (s) => s.line_count, cell: ({ row }) => `${row.original.line_count} ${tr("suppliers.lines")}` },
+    { id: "lines", header: tr("suppliers.col.lines"), accessorFn: (s) => s.line_count, cell: ({ row }) => `${row.original.line_count} ${plural(lang, "suppliers.lines", row.original.line_count)}` },
     ...(margin
       ? [{
           id: "commission",
           header: tr("suppliers.commission"),
           enableSorting: false,
-          cell: ({ row }) => (row.original.default_commission_pct ? `${row.original.default_commission_pct} %` : "—"),
+          cell: ({ row }) => (row.original.default_commission_pct ? `${percentText(row.original.default_commission_pct, locale)} %` : "—"),
         } as ColumnDef<Supplier, unknown>]
       : []),
     {

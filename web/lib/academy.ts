@@ -90,6 +90,15 @@ export interface CitedSection {
   body_md: string | null;
 }
 
+/** AA-1129 (A1): a cited section's title for its row: the first Markdown heading of its text, else its ref. */
+export function sourceTitle(section: Pick<CitedSection, "ref" | "body_md">): string {
+  for (const line of (section.body_md ?? "").split("\n")) {
+    const m = /^#{1,6}\s+(.+?)\s*#*\s*$/.exec(line.trim());
+    if (m) return m[1];
+  }
+  return section.ref;
+}
+
 export interface Lesson {
   id: string;
   module_id: string;
