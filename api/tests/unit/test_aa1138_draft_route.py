@@ -52,6 +52,7 @@ ROLE = f"arn:aws:iam::{ACCOUNT}:role/maker-invoker"
 EXTERNAL = "example-external-id"
 OWN_SQL = "FROM crm.llm_usage_daily u WHERE u.day >= $1 AND (NOT EXISTS"
 NAMED_SQL = "FROM crm.llm_usage_daily u WHERE u.day >= $1 AND EXISTS"
+SPEND_LEDGER = "FROM crm.llm_usage_daily"
 
 HAIKU_LIKE = RouteEntry(0, FAST, "maker", Decimal("0.1"), Decimal("0.5"), ACC1_CONNECTION, False)
 NOVA_LIKE = RouteEntry(2, LITE, "maker", Decimal("0.07"), Decimal("0.3"))
@@ -285,7 +286,7 @@ async def test_no_cap_on_the_own_connection_leaves_it_and_reads_nothing(caps: di
     original = draft_profile(NOVA_LIKE)
     c = ScriptedConn().on(NAMED_SQL, Decimal("600")).on(OWN_SQL, Decimal("600"))
     assert await connection_cap.check_route(c, original, router, router.for_route) == (None, None, original)
-    assert c.calls == []
+    assert c.sql(SPEND_LEDGER) == []  # AA-1143: only the CIS copy is looked up (no row there), never the spend
 
 
 @pytest.mark.parametrize("value", [{}, {"acc2": 5}])
@@ -336,7 +337,7 @@ async def test_prod_rules_only_log_a_named_connection_without_a_cap(
     original = draft_profile()
     c = ScriptedConn()
     assert await connection_cap.check_route(c, original, router, router.for_route) == (None, None, original)
-    assert c.calls == []
+    assert c.sql(SPEND_LEDGER) == []  # AA-1143: only the CIS copy is looked up (no row there), never the spend
 
 
 async def test_one_read_per_connection_of_the_route(caps: dict[str, Any]) -> None:

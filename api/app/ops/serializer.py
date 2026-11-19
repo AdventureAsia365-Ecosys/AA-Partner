@@ -142,6 +142,9 @@ OPS_ALLOWED_KEYS: frozenset[str] = frozenset(
         "provider",
         "family",
         "connection_key",
+        # AA-1143 (crm.ops.v1 1.16): the CRM's copy of its connection budget shares
+        "shares",
+        "share_usd",
         "deployment_wire_id",
         "attempt_no",
         "provider_request_id",
