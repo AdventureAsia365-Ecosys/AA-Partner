@@ -2,8 +2,8 @@
 -- the CRM's copy of its monthly share of each LLM connection's budget, sent by CIS over crm.ops.v1.
 --
 -- Owner: AA-Partner (api/migrations/079_crm_llm_connection_share.sql). AA-CIS-Infra db/migrations/crm/ holds the byte
--- copy DB Migrate applies (Migration Copy Guard). Key crm-079: crm-078 (AA-1138, the CRM draft route on acc1, same
--- migration-only PR: batch crm 078-079) comes first.
+-- copy DB Migrate applies (Migration Copy Guard). Key crm-079 follows crm-078 (the CRM draft route on acc1, already on
+-- main).
 --
 -- Why: decision G3 makes a connection's budget one set of rows in CIS (shared.llm_connection_budget, CIS 455 / 456):
 -- the connection's total and one fixed-USD share per app, CIS taking the remainder, edited on one screen (CIS AI
