@@ -727,14 +727,14 @@
     "raise": "The CRM may spend more on that connection each month before its AI drafts stop (dev) or an alert is logged (prod); check on CIS AI gateway > Budgets that the CIS and CRM shares still fit the provider budget.",
     "lower": "The CRM's AI drafts on that connection stop sooner in the month (dev) and leave more of the provider budget to CIS.",
     "when": "Set it when the CRM starts using a connection or the provider budget of a connection changes; give a connection the CRM does not use 0 so the split adds up.",
-    "example": "With the default {} the CRM has no cap on any connection. With {\"acc2\": 20}, once the CRM's AI spend of the month reaches 20 USD the drafts on acc2 stop under the dev rules."
+    "example": "With the default {} the CRM has no cap on any connection. With {\"acc2\": 20}, once the CRM's AI spend of the month on acc2 reaches 20 USD the drafts on acc2 stop under the dev rules. With {\"acc1\": 5, \"acc2\": 5}, a draft whose route starts on acc1 skips that step once the CRM's acc1 spend reaches 5 USD and goes to its acc2 fallback. A route step on a named connection (acc1) with no entry here is never used under the dev rules."
    },
    "vi": {
     "what": "Hạn mức chi tiêu AI hằng tháng của riêng CRM trên từng kết nối model, theo khoá của kết nối trong registry gateway của CIS. Đây là phần của CRM trong ngân sách nhà cung cấp của kết nối; phần của CIS là ngân sách tháng của kết nối trong AI gateway của CIS, và hai phần cộng lại phải nằm dưới ngân sách nhà cung cấp.",
     "raise": "CRM được chi nhiều hơn trên kết nối đó mỗi tháng trước khi bản nháp AI dừng (dev) hoặc ghi cảnh báo (prod); kiểm ở CIS AI gateway > Budgets rằng phần CIS và CRM vẫn nằm trong ngân sách nhà cung cấp.",
     "lower": "Bản nháp AI của CRM trên kết nối đó dừng sớm hơn trong tháng (dev) và chừa nhiều ngân sách nhà cung cấp hơn cho CIS.",
     "when": "Đặt khi CRM bắt đầu dùng một kết nối hoặc khi ngân sách nhà cung cấp của kết nối thay đổi; kết nối CRM không dùng thì đặt 0 để phép chia cộng đúng.",
-    "example": "Với mặc định {} CRM không có hạn mức trên kết nối nào. Với {\"acc2\": 20}, khi chi tiêu AI trong tháng của CRM chạm 20 USD thì bản nháp trên acc2 dừng theo quy tắc dev."
+    "example": "Với mặc định {} CRM không có hạn mức trên kết nối nào. Với {\"acc2\": 20}, khi chi tiêu AI trong tháng của CRM trên acc2 chạm 20 USD thì bản nháp trên acc2 dừng theo quy tắc dev. Với {\"acc1\": 5, \"acc2\": 5}, bản nháp có tuyến bắt đầu ở acc1 bỏ qua bước đó khi chi tiêu acc1 của CRM chạm 5 USD và chuyển sang bước dự phòng trên acc2. Bước tuyến trên kết nối có tên (acc1) mà không có mục ở đây thì không bao giờ được dùng theo quy tắc dev."
    }
   }
  }

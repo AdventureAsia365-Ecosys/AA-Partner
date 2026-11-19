@@ -38,7 +38,7 @@ CAP_KEY = "crm.ai.connection_monthly_cap_usd"
 
 pytestmark = pytest.mark.asyncio
 
-SPEND = "FROM crm.llm_usage_daily WHERE day >="
+SPEND = "FROM crm.llm_usage_daily u WHERE u.day >="
 
 
 class BedrockLike(FakeProvider):
