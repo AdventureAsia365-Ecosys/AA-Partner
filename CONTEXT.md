@@ -798,6 +798,18 @@ studio rules. Deploy Web Dev verifies the studio paths and runs the studio smoke
   `rotated`, or `cis_<reason>` / `tp_<code>` from the closed sets `app.cis.tripplanner.REASONS` /
   `app.tripplanner.planner.REASONS`, worded in the access log; never a URL, an address, a colour or the key). TripPlanner
   down: the CIS part still shows (usage and key `null`); CIS down: 503 `tripplanner_unavailable`.
+  **For an agency without the CRM add-on** (it has no CRM agency, and it is the agency whose leads go by e-mail or
+  webhook): the Content studio's **Account › Trip planner** (`web/app/(studio)/portal/account/trip-planner`, the same
+  view with its own sender; linked from the studio's Add-ons card for owner and editors) through the studio's route
+  handler `web/app/api/studio/trip-planner` (`lib/studio/tripPlanner.ts`): the site settings from CIS
+  `/v1/account/tripplanner` with the studio token (CIS enforces the studio role and audits `membership:<id>`), and
+  TripPlanner's half from `/crm/v1/studio/trip-planner[/leads|/webhook-key]` (`app/routers/studio_tripplanner.py`,
+  server-only routes of `lib/bff.ts`): the person's partner token and the studio's tenant; the API asks CIS
+  `tenant.membership.v1` `GET /memberships?iss=&sub=` (`app/cis/studio_member.py`, scope `cis.tenant/read`, no cache,
+  fail closed 503 `cis_unavailable`) for the ACTIVE studio membership in that tenant: owner and editor read, the owner
+  rotates (TripPlanner records `studio-member:<membership id>`); else 403 `not_studio_member` / `role_forbidden`
+  before TripPlanner hears of it. These routes touch no CRM table (no `tenant_tx()`: there may be no agency), so the
+  rotation is on record in TripPlanner and the API log, not in the agency audit.
 - **AI paused banner** (AA-1036 R3): `GET /crm/v1/me` answers `ai_paused` (true while `crm.llm_app_profile.ai_enabled`
   is false: AA switched the CRM's AI off for the whole app from the CIS admin's App profiles; never the staff reason);
   the CRM layout shows the amber `components/ai/AiPausedBanner.tsx` on every page while it is.

@@ -106,6 +106,7 @@ from app.routers import (
     search,
     staff,
     staff_ops,
+    studio_tripplanner,
     support_access,
     tags,
     team,
@@ -354,6 +355,7 @@ def create_app(
     app.include_router(agency.router)
     app.include_router(addons.router)  # AA-1036 (R3): the agency's add-ons, owner's request relayed to CIS
     app.include_router(tripplanner_module.router)  # AA-1139: the Trip planner module (CIS settings, TripPlanner usage)
+    app.include_router(studio_tripplanner.router)  # AA-1139: its TripPlanner half for a studio-only agency
     app.include_router(pipeline.router)
     app.include_router(travellers.router)
     app.include_router(onboarding.router)

@@ -204,7 +204,11 @@ async def key_info(config: Any, tenant_id: uuid.UUID) -> dict[str, Any]:
     return parse_key_info(await _call(config, "GET", tenant_id, "webhook-key"))
 
 
-async def rotate_key(config: Any, tenant_id: uuid.UUID, member_id: uuid.UUID) -> dict[str, Any]:
-    """A new key version and its key (shown once by the page)."""
-    body = await _call(config, "POST", tenant_id, "webhook-key/rotate", {"actor": f"crm-member:{member_id}"})
+async def rotate_key(
+    config: Any, tenant_id: uuid.UUID, member_id: uuid.UUID, *, studio: bool = False
+) -> dict[str, Any]:
+    """A new key version and its key (shown once by the page). The actor is the CRM member (``crm-member:<id>``) or,
+    for an agency without the CRM, the Content studio membership CIS confirmed (``studio-member:<id>``)."""
+    actor = f"{'studio' if studio else 'crm'}-member:{member_id}"
+    body = await _call(config, "POST", tenant_id, "webhook-key/rotate", {"actor": actor})
     return parse_rotated(body)

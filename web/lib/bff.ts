@@ -471,6 +471,11 @@ export const SERVER_ONLY_ROUTES: readonly BffRoute[] = [
   // S270: the currencies the AA prices page offers (owner / agent, API Action.AA_TARIFF_VIEW); the page reads it on the
   // server before the tariff, the browser never asks for it.
   { method: "GET", pattern: /^aa\/tariff\/currencies$/, tenant: true, card: "AA-1029/AA-1030" },
+  // AA-1139: the TripPlanner half of the Content studio's Trip planner page (an agency without the CRM), asked by the
+  // studio's own route handler (app/api/studio/trip-planner) with the studio's tenant; the API checks the person's
+  // Content studio membership with CIS, never crm.member.
+  { method: "GET", pattern: /^studio\/trip-planner(\/leads)?$/, tenant: true, card: "AA-1139" },
+  { method: "POST", pattern: /^studio\/trip-planner\/webhook-key$/, tenant: true, card: "AA-1139" },
 ];
 
 export function matchBff(method: string, subPath: string, routes: readonly BffRoute[] = BFF_ROUTES): BffRoute | null {

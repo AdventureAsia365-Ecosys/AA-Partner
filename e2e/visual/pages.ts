@@ -111,6 +111,7 @@ export const PAGES: VisualPage[] = [
   studio("portal-account-integrations", "/portal/account/integrations"),
   studio("portal-account-members", "/portal/account/members"),
   studio("portal-account-settings", "/portal/account/settings"),
+  studio("portal-account-trip-planner", "/portal/account/trip-planner"), // AA-1139 (agency without the CRM)
 ];
 
 /** The pages one run captures (visual.spec.ts; pure, so the unit guard tests it too). */

@@ -4,13 +4,14 @@
 // CIS's checks), its look (brand colours) and language, the webhook signing key (shown once at creation), this month's
 // use (AI sessions against the plan, leads) and the newest leads with their delivery status. Data: the server page
 // (GET /crm/v1/trip-planner, GET /crm/v1/trip-planner/leads); changes through the BFF (lib/bff.ts), owner only (the
-// API refuses the others; the view shows them read-only). Kit: Section, Field, Input, Select, Radio, Button, Badge,
+// API refuses the others; the view shows them read-only). AA-1139 fix pass: the Content studio page of an agency without
+// the CRM (app/(studio)/portal/account/trip-planner) shows the same view with its own sender (`send`) and refresh. Kit: Section, Field, Input, Select, Radio, Button, Badge,
 // KpiTile, DataTable.
 import type { ColumnDef } from "@tanstack/react-table";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
 import { Badge, Button, ConfirmModal, DataTable, EmptyState, Field, Input, K, KpiTile, Radio, Section, Select, useHydrated } from "@/app/_kit";
-import { bffSend } from "@/lib/bffClient";
+import { bffSend, type BffResult } from "@/lib/bffClient";
 import { type DateLocale, formatDate } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import {
@@ -34,6 +35,13 @@ import {
 } from "@/lib/tripPlannerModule";
 
 const small = { margin: 0, fontSize: 12.5, color: K.muted, lineHeight: 1.55 } as const;
+
+/** One change of the module ("trip-planner/<x>"). The CRM page sends it through its BFF; the Content studio page
+ * (an agency without the CRM, app/(studio)/portal/account/trip-planner) through its own route handler. */
+export type PlannerSend = <T>(method: "PUT" | "POST", path: string, body?: unknown) => Promise<BffResult<T>>;
+const crmSend: PlannerSend = (method, path, body) => bffSend(method, path, body, { renew: true });
+const SendContext = createContext<PlannerSend>(crmSend);
+
 type Msg = { tone: "danger" | "success"; text: string } | null;
 
 function Message({ msg, testId }: { msg: Msg; testId: string }) {
@@ -136,8 +144,8 @@ function routeNow(route: TripPlannerModule["lead_route"], lang: Lang) {
 }
 
 /** One PUT of the module through the BFF: the message to show, and whether it was saved. */
-async function putModule(path: string, body: unknown, lang: Lang, okKey: MessageKey): Promise<{ msg: Msg; detail: string | null }> {
-  const res = await bffSend("PUT", path, body, { renew: true });
+async function putModule(send: PlannerSend, path: string, body: unknown, lang: Lang, okKey: MessageKey): Promise<{ msg: Msg; detail: string | null }> {
+  const res = await send("PUT", path, body);
   if (res.ok) return { msg: { tone: "success", text: t(lang, okKey) }, detail: null };
   if (res.redirecting) return { msg: null, detail: null };
   return { msg: { tone: "danger", text: t(lang, refusalKey(res.detail)) }, detail: res.detail };
@@ -145,6 +153,7 @@ async function putModule(path: string, body: unknown, lang: Lang, okKey: Message
 
 function RouteSection({ site, owner, lang, onSaved }: { site: TripPlannerModule; owner: boolean; lang: Lang; onSaved: () => void }) {
   const route = site.lead_route;
+  const send = useContext(SendContext);
   const [channel, setChannel] = useState<LeadChannel>(route.lead_channel);
   const [targets, setTargets] = useState({ webhook: route.lead_webhook_url ?? "", email: route.lead_email ?? "" });
   const [busy, setBusy] = useState(false);
@@ -159,7 +168,7 @@ function RouteSection({ site, owner, lang, onSaved }: { site: TripPlannerModule;
       return;
     }
     setBusy(true);
-    const out = await putModule("trip-planner/lead-route", {
+    const out = await putModule(send, "trip-planner/lead-route", {
       lead_channel: channel, lead_webhook_url: targets.webhook.trim() || null, lead_email: targets.email.trim() || null,
     }, lang, "tp.saved");
     setBusy(false);
@@ -194,6 +203,7 @@ function RouteSection({ site, owner, lang, onSaved }: { site: TripPlannerModule;
 
 function LookSection({ site, owner, lang, onSaved }: { site: TripPlannerModule; owner: boolean; lang: Lang; onSaved: () => void }) {
   const hydrated = useHydrated();
+  const send = useContext(SendContext);
   const [colours, setColours] = useState<Partial<Record<ThemeToken, string>>>(
     Object.fromEntries(EDITED_TOKENS.map((k) => [k, site.theme[k] ?? ""])));
   const [locale, setLocale] = useState<PlannerLocale>(site.locale);
@@ -204,7 +214,7 @@ function LookSection({ site, owner, lang, onSaved }: { site: TripPlannerModule; 
   async function save(theme: Record<string, string>) {
     setBusy(true);
     setMsg(null);
-    const res = await bffSend("PUT", "trip-planner/appearance", { theme, locale }, { renew: true });
+    const res = await send("PUT", "trip-planner/appearance", { theme, locale });
     setBusy(false);
     if (!res.ok) {
       if (!res.redirecting) setMsg({ tone: "danger", text: tr(refusalKey(res.detail)) });
@@ -293,6 +303,7 @@ function keyState(info: PlannerPage["webhook_key"], shown: RotatedKey | null) {
 }
 
 function KeySection({ page, owner, lang, locale }: { page: PlannerPage; owner: boolean; lang: Lang; locale: DateLocale }) {
+  const send = useContext(SendContext);
   const [busy, setBusy] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [shown, setShown] = useState<RotatedKey | null>(null);
@@ -303,7 +314,7 @@ function KeySection({ page, owner, lang, locale }: { page: PlannerPage; owner: b
   async function rotate() {
     setBusy(true);
     setMsg(null);
-    const res = await bffSend<RotatedKey>("POST", "trip-planner/webhook-key", undefined, { renew: true });
+    const res = await send<RotatedKey>("POST", "trip-planner/webhook-key");
     setBusy(false);
     setConfirming(false);
     if (res.ok) setShown(res.data);
@@ -389,25 +400,29 @@ function LeadsSection({ leads, lang, locale }: { leads: PlannerLeadList | null; 
   );
 }
 
-export function TripPlannerModuleView({ page, leads, owner, lang, locale }: {
+export function TripPlannerModuleView({ page, leads, owner, lang, locale, send, onRefresh }: {
   page: PlannerPage; leads: PlannerLeadList | null; owner: boolean; lang: Lang; locale: DateLocale;
+  /** The studio page's sender and refresh; the CRM page leaves both out (its BFF, router.refresh()). */
+  send?: PlannerSend; onRefresh?: () => void;
 }) {
   const router = useRouter();
   const planner = page.module;
-  const refresh = () => router.refresh();
+  const refresh = onRefresh ?? (() => router.refresh());
   if (!planner.active) {
     return <p data-testid="tp-not-active" style={{ margin: 0, fontSize: 13 }}>{t(lang, "tp.notActive")}</p>;
   }
   return (
-    <div style={{ display: "grid", gap: 12 }} data-testid="tp-module">
-      {!planner.in_service && <p role="status" style={{ ...small, color: K.ink }}>{t(lang, "tp.notInService")}</p>}
-      {!owner && <p data-testid="tp-read-only" style={small}>{t(lang, "tp.readOnly")}</p>}
-      <SiteSection site={planner} lang={lang} />
-      <UsageSection page={page} leads={leads} lang={lang} />
-      <RouteSection site={planner} owner={owner} lang={lang} onSaved={refresh} />
-      <LookSection site={planner} owner={owner} lang={lang} onSaved={refresh} />
-      <KeySection page={page} owner={owner} lang={lang} locale={locale} />
-      <LeadsSection leads={leads} lang={lang} locale={locale} />
-    </div>
+    <SendContext.Provider value={send ?? crmSend}>
+      <div style={{ display: "grid", gap: 12 }} data-testid="tp-module">
+        {!planner.in_service && <p role="status" style={{ ...small, color: K.ink }}>{t(lang, "tp.notInService")}</p>}
+        {!owner && <p data-testid="tp-read-only" style={small}>{t(lang, "tp.readOnly")}</p>}
+        <SiteSection site={planner} lang={lang} />
+        <UsageSection page={page} leads={leads} lang={lang} />
+        <RouteSection site={planner} owner={owner} lang={lang} onSaved={refresh} />
+        <LookSection site={planner} owner={owner} lang={lang} onSaved={refresh} />
+        <KeySection page={page} owner={owner} lang={lang} locale={locale} />
+        <LeadsSection leads={leads} lang={lang} locale={locale} />
+      </div>
+    </SendContext.Provider>
   );
 }
