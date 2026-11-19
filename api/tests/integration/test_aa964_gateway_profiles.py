@@ -82,7 +82,7 @@ async def test_the_draft_stage_routes_the_stub_as_its_enabled_entry(
         "anthropic",
         1,
     )
-    assert row["model"] == "global.anthropic.claude-haiku-5-5" and row["cost_usd_est"] == Decimal(0)
+    assert row["model"] == "us.anthropic.claude-haiku-5-5" and row["cost_usd_est"] == Decimal(0)
 
 
 async def test_the_kill_switch_refuses_with_one_zero_cost_row(

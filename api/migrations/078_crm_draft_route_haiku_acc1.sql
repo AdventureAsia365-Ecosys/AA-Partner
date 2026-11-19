@@ -12,10 +12,14 @@
 -- 0001a, Note S278), and the platform route order for Claude is the Anthropic API, then acc1, then acc3 (route-control
 -- v11). The CRM is Bedrock only (root ADR 0008a §5: no vendor API client, no vendor key) and has no Anthropic API
 -- connection, so its Claude hop is acc1 (docs/implementation-notes/AA-1138.md: why not the Anthropic API). The model
--- is the CIS catalogue row 'haiku-5-5' (CIS migration 259): wire id global.anthropic.claude-haiku-5-5 (the acc1
--- invoker role grants exactly that inference profile), 0.10 / 0.50 USD per million input / output tokens (Anthropic's
--- list price, the catalogue's price until AWS confirms the Bedrock price), and it rejects a temperature (CIS 259
--- supports_temperature = false).
+-- is Claude Haiku 5.5 (CIS catalogue row 'haiku-5-5', CIS migration 259) through its US inference profile
+-- us.anthropic.claude-haiku-5-5, NOT the catalogue's global. profile (review S285): the agency terms say CRM text is
+-- processed in US regions only (root DPA Annexes 1-3) and root ADR 0009 decision 10 keeps tenant stages off global.
+-- profiles until the terms cover it; the S247 CRM readiness check (root docs/audits/2026-10-22-S247-crm-readiness)
+-- found the us. profile ACTIVE, routing to us-east-1, us-east-2, us-west-1 and us-west-2 only. The acc1 invoker role
+-- grants that profile (AA-CIS-Infra accounts/acc1-bedrock, AA-1138). Price 0.11 / 0.55 USD per million input / output
+-- tokens: the AWS Price List regional (us.) price of "Claude Haiku 5.5 (Amazon Bedrock Edition)" read on 22/10/2026
+-- (global is 0.10 / 0.50). It rejects a temperature (CIS 259 supports_temperature = false).
 --
 -- What:
 --   1. crm.llm_stage_route gets two columns, so a route entry says where it runs and what it accepts:
@@ -28,7 +32,7 @@
 --                           then leaves it out of the request).
 --      CHECK llm_stage_route_connection_chk: NULL or a lower-case key of at most 31 characters.
 --   2. crm_draft_reply position 0 (the crm-037 Claude Haiku 4.5 entry, switched off by crm-042) becomes Claude Haiku
---      5.5 on 'bedrock_acc1', priced as the CIS catalogue row, sends_temperature false, enabled. Position 1 (Claude
+--      5.5 on 'bedrock_acc1', us. profile at the regional price, sends_temperature false, enabled. Position 1 (Claude
 --      Sonnet 4.5, off) and position 2 (Nova Lite on acc2, on) are unchanged. The profile is unchanged: max_attempts
 --      2 = Haiku, then Nova Lite; route_deadline_s 30.
 --      crm_notes_options and crm_supplier_confirm (crm-069 copies) are closed-list picks checked in code: they keep
@@ -107,10 +111,10 @@ COMMENT ON COLUMN crm.llm_stage_route.sends_temperature IS 'AA-1138 (crm-078): f
 -- ── 2. crm_draft_reply position 0 = Claude Haiku 5.5 on acc1 ──────────────────────────────────────
 UPDATE crm.llm_stage_route
    SET provider = 'bedrock',
-       model = 'global.anthropic.claude-haiku-5-5',
+       model = 'us.anthropic.claude-haiku-5-5',
        family = 'anthropic',
-       price_in_per_mtok = 0.1000,
-       price_out_per_mtok = 0.5000,
+       price_in_per_mtok = 0.1100,
+       price_out_per_mtok = 0.5500,
        connection_key = 'bedrock_acc1',
        sends_temperature = false,
        is_enabled = true,
@@ -118,10 +122,10 @@ UPDATE crm.llm_stage_route
        updated_by = 'migration-crm-078'
  WHERE stage = 'crm_draft_reply'
    AND position = 0
-   AND (model <> 'global.anthropic.claude-haiku-5-5'
+   AND (model <> 'us.anthropic.claude-haiku-5-5'
         OR family IS DISTINCT FROM 'anthropic'
-        OR price_in_per_mtok IS DISTINCT FROM 0.1000
-        OR price_out_per_mtok IS DISTINCT FROM 0.5000
+        OR price_in_per_mtok IS DISTINCT FROM 0.1100
+        OR price_out_per_mtok IS DISTINCT FROM 0.5500
         OR connection_key IS DISTINCT FROM 'bedrock_acc1'
         OR sends_temperature
         OR NOT is_enabled);
@@ -139,7 +143,7 @@ BEGIN
       FROM crm.llm_stage_route
      WHERE stage = 'crm_draft_reply' AND is_enabled;
     IF v_route IS DISTINCT FROM
-       '0|bedrock|global.anthropic.claude-haiku-5-5|anthropic|bedrock_acc1|f|0.1000;'
+       '0|bedrock|us.anthropic.claude-haiku-5-5|anthropic|bedrock_acc1|f|0.1100;'
        '2|bedrock|us.amazon.nova-lite-v1:0|amazon|-|t|0.0770' THEN
         RAISE EXCEPTION 'crm-078: unexpected enabled crm_draft_reply route: %', v_route;
     END IF;
@@ -150,7 +154,7 @@ BEGIN
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('crm-078', now(), 'AA-1138 draft route: crm.llm_stage_route.connection_key + sends_temperature; crm_draft_reply = Claude Haiku 5.5 on acc1 (global.anthropic.claude-haiku-5-5, 0.10 / 0.50 USD per MTok, no temperature), then Nova Lite on acc2')
+VALUES ('crm-078', now(), 'AA-1138 draft route: crm.llm_stage_route.connection_key + sends_temperature; crm_draft_reply = Claude Haiku 5.5 on acc1 (us.anthropic.claude-haiku-5-5, 0.11 / 0.55 USD per MTok, US regions only, no temperature), then Nova Lite on acc2')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

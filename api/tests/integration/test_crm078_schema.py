@@ -20,7 +20,7 @@ import pytest
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 MIGRATION = Path(__file__).resolve().parents[2] / "migrations" / "078_crm_draft_route_haiku_acc1.sql"
-HAIKU = "global.anthropic.claude-haiku-5-5"
+HAIKU = "us.anthropic.claude-haiku-5-5"
 NOVA_LITE = "us.amazon.nova-lite-v1:0"
 ROUTE_SQL = (
     "SELECT position, provider, model, family, connection_key, sends_temperature, price_in_per_mtok AS price_in, "
@@ -55,7 +55,7 @@ async def test_the_draft_route_is_haiku_on_acc1_then_nova_lite(admin: asyncpg.Co
         (0, "bedrock", HAIKU, "anthropic", "bedrock_acc1", False),
         (2, "bedrock", NOVA_LITE, "amazon", None, True),
     ]
-    assert (rows[0]["price_in"], rows[0]["price_out"]) == (Decimal("0.1000"), Decimal("0.5000"))
+    assert (rows[0]["price_in"], rows[0]["price_out"]) == (Decimal("0.1100"), Decimal("0.5500"))
     attempts = await admin.fetchval("SELECT max_attempts FROM crm.llm_stage_profile WHERE stage = 'crm_draft_reply'")
     assert attempts >= 2
 
