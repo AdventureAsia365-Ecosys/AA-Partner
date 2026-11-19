@@ -43,8 +43,11 @@
 -- connection, the per-connection CRM cap and the temperature rule.
 --
 -- Spend. The CRM's own cap on acc1 is the setting crm.ai.connection_monthly_cap_usd (crm-077) entry "acc1" (5 USD a
--- month, tech lead 19/11, taken from the CIS share of acc1): a live step after this file, not a seed here. Until that
--- entry exists the CRM has no cap on acc1 beyond its other budgets (per agency, daily app budget, kill switch).
+-- month, tech lead 19/11, taken from the CIS share of acc1): not a seed here (maker-checker setting), and it is the
+-- FIRST live step, written and approved before the Infra apply, this file and the code deploy (the running code maps
+-- only acc2, so the extra key is inert until then). The code PR also fails closed: under the dev spend rules a route
+-- entry on a named connection without its own CRM cap is never called (connection_cap_missing, the draft goes to
+-- Nova Lite), so no order of the live steps calls acc1 uncapped.
 --
 -- Class: contract (root ADR 0017 d3: ALTER of an existing table, a new CHECK on it and an UPDATE of a configuration
 -- row), so no migrate directive. MIG-4: this migration-only PR, applied on Dev by Infra Migration Apply once every job
