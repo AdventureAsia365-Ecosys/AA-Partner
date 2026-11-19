@@ -137,6 +137,18 @@ def _walk(routes: list[Any]) -> list[Any]:
     return out
 
 
+# AA-1139: GET routes that only relay to another app's contract API (CIS tenant.addons.v1 / tenant API, TripPlanner
+# lead.submitted.v1 planner tag): no CRM money table behind them, and the test app has no CIS or TripPlanner, so they
+# answer 503 here by design. Their own tests cover them (tests/unit/test_aa1139_tripplanner_module.py and the studio
+# trip-planner tests). Each must still be a real route (checked below), so the list cannot go stale.
+UPSTREAM_RELAY = {
+    "/crm/v1/trip-planner": "TripPlanner module: CIS site settings + TripPlanner usage, no CRM money",
+    "/crm/v1/trip-planner/leads": "TripPlanner module: planner leads with delivery status, no CRM money",
+    "/crm/v1/studio/trip-planner": "studio TripPlanner module: CIS site settings + TripPlanner usage, no CRM money",
+    "/crm/v1/studio/trip-planner/leads": "studio TripPlanner module: planner leads, no CRM money",
+}
+
+
 def _get_routes(app: FastAPI) -> list[str]:
     return sorted(
         r.path
@@ -268,7 +280,8 @@ async def test_card_r_the_assistant_never_receives_margin_on_any_route_with_real
     routes = _get_routes(app)
     unfilled = {p for p in routes if _fill(p, params) is None}
     assert unfilled == set(UNSEEDED), "classify the new GET route: seed its object here or add it to UNSEEDED"
-    called = [p for p in routes if p not in unfilled]
+    assert set(UPSTREAM_RELAY) <= set(routes), "an UPSTREAM_RELAY route no longer exists: drop it"
+    called = [p for p in routes if p not in unfilled and p not in UPSTREAM_RELAY]
     assert len(called) >= 40
 
     assert set(ASSISTANT_READS) <= set(called)

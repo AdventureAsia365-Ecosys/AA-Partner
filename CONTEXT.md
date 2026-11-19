@@ -782,6 +782,34 @@ studio rules. Deploy Web Dev verifies the studio paths and runs the studio smoke
   audit has `addon_request` allowed (object = the CIS request id, reason `<product>_created` / `<product>_open`) or
   denied (reason `cis_<CIS reason>`). CIS unreachable, not serving the contract yet or the scope not granted: 503
   `addons_unavailable`; no CIS account: 404 `addons_no_account`. The CRM stores nothing of the request.
+- **Trip planner module** (AA-1139; `docs/implementation-notes/AA-1139.md`): **Settings › Add-ons › Trip planner**
+  (`web/app/(crm)/settings/add-ons/trip-planner`, `components/settings/TripPlannerModuleView.tsx`, `lib/tripPlannerModule.ts`,
+  kit Section / Field / Input / Select / Radio / Badge / KpiTile / DataTable / ConfirmModal; linked from the Add-ons
+  card when the planner is on and from Settings for owner and agent). The CRM API (`app/routers/tripplanner_module.py`)
+  relays to the owning apps and stores nothing: CIS `tenant.addons.v1` 1.1 (`app/cis/tripplanner.py`, scope
+  `cis.tenant/addons`: the planner's address and own domains with their state, the lead route stored and in force,
+  theme, locale, the `tp.ai_sessions` quota; the owner's lead route and appearance writes, CIS's checks, audited in CIS
+  as `crm-member:<id>`) and TripPlanner `lead.submitted.v1` 1.1 (`app/tripplanner/planner.py`, scope
+  `tripplanner.leads/manage`, `app.state.tp_planner` = the lead pull's origin and M2M client: the newest leads with
+  their delivery status (ids, times, states only), this month's AI sessions and leads, the webhook key version, and the
+  rotation that answers the new key once). Roles: `TRIPPLANNER_VIEW` owner + agent, `TRIPPLANNER_MANAGE` owner; the
+  assistant is refused before any remote call. No connection is held across a remote call; a write is on record in the
+  agency audit (`tripplanner_manage`, object `tripplanner_route` / `_appearance` / `_webhook_key`, reason `saved` /
+  `rotated`, or `cis_<reason>` / `tp_<code>` from the closed sets `app.cis.tripplanner.REASONS` /
+  `app.tripplanner.planner.REASONS`, worded in the access log; never a URL, an address, a colour or the key). TripPlanner
+  down: the CIS part still shows (usage and key `null`); CIS down: 503 `tripplanner_unavailable`.
+  **For an agency without the CRM add-on** (it has no CRM agency, and it is the agency whose leads go by e-mail or
+  webhook): the Content studio's **Account › Trip planner** (`web/app/(studio)/portal/account/trip-planner`, the same
+  view with its own sender; linked from the studio's Add-ons card for owner and editors) through the studio's route
+  handler `web/app/api/studio/trip-planner` (`lib/studio/tripPlanner.ts`): the site settings from CIS
+  `/v1/account/tripplanner` with the studio token (CIS enforces the studio role and audits `membership:<id>`), and
+  TripPlanner's half from `/crm/v1/studio/trip-planner[/leads|/webhook-key]` (`app/routers/studio_tripplanner.py`,
+  server-only routes of `lib/bff.ts`): the person's partner token and the studio's tenant; the API asks CIS
+  `tenant.membership.v1` `GET /memberships?iss=&sub=` (`app/cis/studio_member.py`, scope `cis.tenant/read`, no cache,
+  fail closed 503 `cis_unavailable`) for the ACTIVE studio membership in that tenant: owner and editor read, the owner
+  rotates (TripPlanner records `studio-member:<membership id>`); else 403 `not_studio_member` / `role_forbidden`
+  before TripPlanner hears of it. These routes touch no CRM table (no `tenant_tx()`: there may be no agency), so the
+  rotation is on record in TripPlanner and the API log, not in the agency audit.
 - **AI paused banner** (AA-1036 R3): `GET /crm/v1/me` answers `ai_paused` (true while `crm.llm_app_profile.ai_enabled`
   is false: AA switched the CRM's AI off for the whole app from the CIS admin's App profiles; never the staff reason);
   the CRM layout shows the amber `components/ai/AiPausedBanner.tsx` on every page while it is.

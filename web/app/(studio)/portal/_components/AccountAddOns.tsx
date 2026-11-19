@@ -13,6 +13,8 @@
 // shows the launcher snippet: a link or a button the agency pastes on its own site that opens its planner (its own
 // planner domain first, else the hosted /{slug}/plan) in a new tab. No iframe, no script (lib/plannerLauncher.ts). No
 // `planner` in the CIS answer (before CIS sends it) = no snippet.
+// AA-1139: an active Trip planner links the owner and editors to Account › Trip planner (STUDIO_TRIP_PLANNER_PATH): the
+// lead route, the webhook signing key, the look, the leads and the month's use, for an agency without the CRM too.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -24,6 +26,7 @@ import {
 import { useStudioRole } from "@/app/_kit/local/studio/useShellData";
 import { STUDIO_APPS_KEY, fetchStudioApps } from "@/app/_kit/local/studio/studioApps";
 import { CRM_HOME_PATH } from "@/lib/nav";
+import { STUDIO_TRIP_PLANNER_PATH } from "@/lib/studio/tripPlanner";
 import {
   LAUNCHER_LABEL_MAX, launcherLabel, launcherSnippet, launcherTargets, type LauncherStyle, type PlannerSite,
 } from "@/lib/plannerLauncher";
@@ -143,8 +146,23 @@ export function PlannerLauncher({ addOn }: { addOn: Pick<AddOn, "product" | "sta
   );
 }
 
-function AddOnCard({ addOn, isOwner, inService, crmMember }: {
-  addOn: AddOn; isOwner: boolean; inService: boolean; crmMember: boolean;
+/** AA-1139: the link to Account › Trip planner (owner and editors) of an active Trip planner; nothing otherwise. */
+export function PlannerManageLink({ addOn, role }: { addOn: Pick<AddOn, "product" | "state">; role: string | null }) {
+  const t = useT(ADDONS_MESSAGES);
+  if (addOn.product !== "tripplanner" || addOn.state !== "active" || (role !== "owner" && role !== "editor")) return null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <a href={STUDIO_TRIP_PLANNER_PATH} data-testid="add-on-manage-planner"
+         style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: K.accentDeep }}>
+        {t("plannerManage")}
+      </a>
+      <p style={small}>{t("plannerManageAbout")}</p>
+    </div>
+  );
+}
+
+function AddOnCard({ addOn, isOwner, role, inService, crmMember }: {
+  addOn: AddOn; isOwner: boolean; role: string | null; inService: boolean; crmMember: boolean;
 }) {
   const t = useT(ADDONS_MESSAGES);
   const { formatDate } = useFormat();
@@ -185,6 +203,7 @@ function AddOnCard({ addOn, isOwner, inService, crmMember }: {
             ))}
           </div>
         )}
+        <PlannerManageLink addOn={addOn} role={role} />
         <PlannerLauncher addOn={addOn} />
         {addOn.state === "requested" && addOn.request && (
           <>
@@ -249,7 +268,7 @@ export function AccountAddOns() {
         </div>
       )}
       {data && data.add_ons.map((a) => (
-        <AddOnCard key={a.product} addOn={a} isOwner={role === "owner"} inService={data.in_service}
+        <AddOnCard key={a.product} addOn={a} isOwner={role === "owner"} role={role} inService={data.in_service}
           crmMember={apps.data?.crmMember === true} />
       ))}
     </div>

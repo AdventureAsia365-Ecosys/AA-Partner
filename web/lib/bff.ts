@@ -97,6 +97,11 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   // AA-1036 (R3): Settings > Add-ons, the owner's add-on request relayed by the API to CIS tenant.addons.v1.
   { method: "GET", pattern: /^add-ons$/, tenant: true, card: "AA-1036" },
   { method: "POST", pattern: /^add-on-requests$/, tenant: true, card: "AA-1036" },
+  // AA-1139: Settings > Add-ons > Trip planner (CIS site settings and TripPlanner leads, usage, key; roles: the API's).
+  { method: "GET", pattern: /^trip-planner$/, tenant: true, card: "AA-1139" },
+  { method: "GET", pattern: /^trip-planner\/leads$/, tenant: true, card: "AA-1139" },
+  { method: "PUT", pattern: /^trip-planner\/(lead-route|appearance)$/, tenant: true, card: "AA-1139" },
+  { method: "POST", pattern: /^trip-planner\/webhook-key$/, tenant: true, card: "AA-1139" },
   { method: "GET", pattern: /^recovery$/, tenant: true, card: "AA-939" },
   { method: "POST", pattern: new RegExp(`^recovery/${UUID}/cancel$`), tenant: true, card: "AA-939" },
   { method: "POST", pattern: /^invitations\/accept$/, tenant: false, card: "AA-939" },
@@ -466,6 +471,11 @@ export const SERVER_ONLY_ROUTES: readonly BffRoute[] = [
   // S270: the currencies the AA prices page offers (owner / agent, API Action.AA_TARIFF_VIEW); the page reads it on the
   // server before the tariff, the browser never asks for it.
   { method: "GET", pattern: /^aa\/tariff\/currencies$/, tenant: true, card: "AA-1029/AA-1030" },
+  // AA-1139: the TripPlanner half of the Content studio's Trip planner page (an agency without the CRM), asked by the
+  // studio's own route handler (app/api/studio/trip-planner) with the studio's tenant; the API checks the person's
+  // Content studio membership with CIS, never crm.member.
+  { method: "GET", pattern: /^studio\/trip-planner(\/leads)?$/, tenant: true, card: "AA-1139" },
+  { method: "POST", pattern: /^studio\/trip-planner\/webhook-key$/, tenant: true, card: "AA-1139" },
 ];
 
 export function matchBff(method: string, subPath: string, routes: readonly BffRoute[] = BFF_ROUTES): BffRoute | null {

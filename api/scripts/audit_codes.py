@@ -42,6 +42,8 @@ AI_REF = "ai:"
 REASON_SETS: tuple[tuple[str, str, str, str], ...] = (
     ("app.booking.extra_nights", "CLOSE_REASONS", "", "members"),  # extra nights request closed
     ("app.cis.addons", "REASONS", "cis_", "members"),  # routers/addons.py: f"cis_{refused.reason}"
+    ("app.cis.tripplanner", "REASONS", "cis_", "members"),  # routers/tripplanner_module.py: f"cis_{exc.reason}"
+    ("app.tripplanner.planner", "REASONS", "tp_", "members"),  # routers/tripplanner_module.py: f"tp_{exc.code}"
     ("app.commissions.service", "WRITE_OFF_REASONS", "", "members"),
     ("app.duty.service", "BULK_REASONS", "", "members"),  # duty of care bulk reveal
     ("app.lifecycle.rules", "ARCHIVE_REASONS", "", "members"),

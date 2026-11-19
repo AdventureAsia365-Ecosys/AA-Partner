@@ -106,11 +106,13 @@ from app.routers import (
     search,
     staff,
     staff_ops,
+    studio_tripplanner,
     support_access,
     tags,
     team,
     travel_ops,
     travellers,
+    tripplanner_module,
     workflows,
 )
 from app.settings import INSECURE_ENVIRONMENTS, Settings, load_settings
@@ -296,6 +298,9 @@ def create_app(
     # AA-979 P2b: CIS activateInvitation for accepted Content studio invitations (None without CIS_API_URL /
     # M2M_CLIENT: the accept answers "accepted" and the crm_studio_activation job waits).
     app.state.studio_activation = build_studio_activation(settings, tokens)
+    # AA-1139: TripPlanner's planner routes for the module page (the lead pull's origin and M2M client; None without
+    # TRIPPLANNER_API_URL / M2M_CLIENT: the page shows usage, leads and the key as not available).
+    app.state.tp_planner = build_tp_leads(settings, tokens)
     app.state.messaging_runtime = messaging_runtime
     # AA-958: one dispatcher sender, e-mail through the AA-945 mail sender, SMS / WhatsApp through the agency's Twilio.
     app.state.dispatch_sender = ChannelSender(
@@ -349,6 +354,8 @@ def create_app(
     app.include_router(partner_pages.router)  # AA-1071: a sales partner's intake link and its view
     app.include_router(agency.router)
     app.include_router(addons.router)  # AA-1036 (R3): the agency's add-ons, owner's request relayed to CIS
+    app.include_router(tripplanner_module.router)  # AA-1139: the Trip planner module (CIS settings, TripPlanner usage)
+    app.include_router(studio_tripplanner.router)  # AA-1139: its TripPlanner half for a studio-only agency
     app.include_router(pipeline.router)
     app.include_router(travellers.router)
     app.include_router(onboarding.router)
