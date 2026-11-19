@@ -49,7 +49,8 @@ client import (CSV / .xlsx: clients, relationships, trips, notes) with a dry run
 `crm_client_import` jobs, and the duplicate-client review and merge. Since then, through **crm-035**: AA insights
 (`crm-031`), the **AI gateway v2** (AA-964, `crm-032`: the vendored `app/aa_llm/` core of AA-CIS-App, its own control
 plane and the `crm.llm_call` ledger in the root ADR 0009 ledger v2 shape; since AA-1027 F4 (`crm-042` and AA-CIS-Infra
-`crm_llm.tf`) Dev drafts call Amazon Nova Lite on acc2, the interim path while acc3 refuses every model), the AA staff console with owner-granted support access and audited break-glass (AA-971,
+`crm_llm.tf`) Dev drafts call Amazon Nova Lite on acc2, the interim path while acc3 refuses every model; since AA-1138
+(`crm-078`) the draft stage calls Claude Haiku 5.5 on acc1 first and keeps Nova Lite on acc2 as its last fallback), the AA staff console with owner-granted support access and audited break-glass (AA-971,
 `crm-033`, WORKFORCE `crm-staff` client), ops releases to AA ground operations (AA-956, `crm-034`), commissions and
 one-action cancel (AA-957, `crm-035`), and the offline traveller itinerary (AA-954, CRM-24b). The migrations table
 below lists every file.
@@ -406,6 +407,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-072` | `api/migrations/072_crm_release_preview_setting.sql` | AA-970 CRM-37b (**contract**: one config row; ships in the code PR like crm-070, the settings lint binds seed, reader and compiled defaults): `crm.release.preview` (bool, platform+tenant, off, maker-checker), the per-agency preview switch of R42 (section "CRM-37b What's new, preview, help, data pages") |
 | `crm-073` | `api/migrations/073_crm_campaigns.sql` | AA-968 CRM-36 campaigns (**expand**: three new tables; migration-only PR first, crm-071 / crm-072 are other lanes' of the S282 wave): `crm.campaign` (base template; name, locale, subject / text under the mail DEK, the agency's own sending mailbox `channel_account_id`, the d21 AA subject `aa_tour_ids` / `aa_content_id` / `brand_only`, `audience_tags`, `state` draft -> scheduled -> sending -> sent, held (`hold_code`) -> scheduled, cancelled (a `state` column: no `status_transition` rows), `gate_codes`, schedule times, the `daily_limit` used, plan counts; cascades from `tenant_settings`), `crm.campaign_recipient` (one client of one campaign: `send_on`, planned -> queued (message + dispatch ids, the SHA-256 of the one-click unsubscribe token, the sealed List-Unsubscribe URL) or skipped with a code; SELECT-only lookup `campaign_recipient_unsubscribe_lookup` on `app.campaign_unsubscribe_hash`; cascades from the campaign and the client), `crm.campaign_suppression` (the agency's do-not-mail list by e-mail blind index, reason unsubscribed / bounced / complained; names no client, so it outlives a client erase; cascades from `tenant_settings`); no `erase_subject` change |
 | `crm-074` | `api/migrations/074_crm_campaign_settings.sql` | AA-968 CRM-36 (**contract**: config rows; ships in the code PR like crm-068 / crm-070, the settings lint binds seed, readers and compiled defaults): `crm.campaign.mailbox_daily_limit` (400 a day, platform+tenant, 1..10000) and `crm.campaign.max_recipients` (2000, platform+tenant, 1..50000), area `campaigns`, maker-checker |
+| `crm-078` | `api/migrations/078_crm_draft_route_haiku_acc1.sql` | AA-1138 (**contract**: ALTER of `crm.llm_stage_route` + a CHECK + an UPDATE of a config row, MIG-4; readiness raised by the code PR): `crm.llm_stage_route.connection_key` (NULL = the process's own Bedrock connection; `bedrock_acc1` = acc1's invoker role) and `sends_temperature` (default true); `crm_draft_reply` position 0 = Claude Haiku 5.5 (`global.anthropic.claude-haiku-5-5`, 0.10 / 0.50 USD per million tokens = the CIS catalogue row `haiku-5-5`, no temperature) on `bedrock_acc1`, Nova Lite at position 2 stays the last fallback; the notes-options and supplier-confirm stages keep Nova Lite only |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -2873,7 +2875,12 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   cost 0) or `bedrock` (`app/llm/providers/bedrock.py` `BedrockConverseProvider`: Converse with our fixed system block
   and the scrubbed prompt only, no tools, one attempt per route entry, an injectable client, the CRM-only invoker role
   `CRM_LLM_ROLE_ARN` when set; the service refuses to start without `CRM_LLM_MODEL_ID` and both per-million-token
-  prices). Since S263 the provider plays the stage's route (see "Stage profiles" below). The F3 scrubber whenever
+  prices). Named connections (AA-1138, crm-078): a route entry with `connection_key = 'bedrock_acc1'` runs on acc1's
+  invoker role (`CRM_LLM_ACC1_ROLE_ARN` + the ExternalId its trust pins, `CRM_LLM_ACC1_EXTERNAL_ID`; its own client,
+  one per connection and process); without that configuration the entry is never called (a refused 0 USD attempt,
+  class `credential`, then the next entry). An entry with `sends_temperature = false` (Claude Haiku 5.5 rejects one)
+  is sent without a temperature. The CRM has no vendor API client (root ADR 0008a §5, Bedrock only), so its Claude hop
+  is acc1, not the Anthropic API the CIS gateway tries first (`docs/implementation-notes/AA-1138.md`). Since S263 the provider plays the stage's route (see "Stage profiles" below). The F3 scrubber whenever
   `SCRUB_GUARDRAIL_*` is set or the provider is real (without a guardrail it refuses every scrub); the stub scrubber
   only with the stub provider and no guardrail.
 - **Bypass guard** (AA-642 L6, `api/tests/unit/test_gateway_bypass.py`): any Bedrock method (`converse*`,
@@ -2926,16 +2933,21 @@ Design v3 §3.5 "Trash, delete block, archive" (R21, R23, Fix B7), §3.6 retenti
   Platform > Settings, CRM tab). The CRM reads no CIS view or table (root ADR 0008a): CIS keeps its own share (the
   connection's monthly budget in its gateway registry), the provider budget is a CIS setting (CIS 453), and CIS AI
   gateway > Budgets reads this setting through the CRM settings relay (crm.ops.v1 `/settings`) and flags a connection
-  whose two shares add up to more than the provider budget. Right after the app profile the gateway compares the CRM's
-  spend of the UTC month (`crm.llm_usage_daily`) with the entry of its connection: at or above it the dev spend rules
-  refuse `connection_budget_exhausted` (class `budget`, one 0 USD row, the draft falls back to "write it by hand"),
-  the prod rules only log. No entry = no CRM cap. The task role's Bedrock (`bedrock`) is CIS connection `acc2`; a
-  role-assumed connection has no mapping yet (no cap). An unreadable setting or spend refuses `spend_unreadable` in
-  dev only.
+  whose two shares add up to more than the provider budget. Right after the app profile the gateway checks each
+  connection of the stage's route once (`connection_cap.check_route`, AA-1138): the CRM's spend of the UTC month on
+  that connection (`crm.llm_usage_daily`: the rows of a (stage, model) pair a route entry runs on a named connection
+  count for it, every other row, guardrail rows included, for the process's own connection) against the setting's
+  entry for it. Under the dev spend rules an entry on a connection at or above its cap is left out and the route goes
+  on (acc1 capped: the draft goes to Nova Lite on acc2); every entry capped refuses `connection_budget_exhausted`
+  (class `budget`, one 0 USD row, the draft falls back to "write it by hand"); the prod rules only log. No entry = no
+  CRM cap. The task role's Bedrock (`bedrock`) is CIS connection `acc2`, `bedrock_acc1` is `acc1`; the
+  `CRM_LLM_ROLE_ARN` connection has no mapping yet (no cap). An unreadable setting or spend refuses
+  `spend_unreadable` in dev only (for that connection).
 - **Stage profiles and the shared core** (S263 gateway plan F1 + F2, crm-037, `app/llm/profiles.py`): each CRM stage
   has a profile in `crm` (`crm.llm_stage_profile`: role, kill switch `is_active`, `max_attempts` <= 6,
   `route_deadline_s`, degrade mode `manual_reply_needed`) and a route (`crm.llm_stage_route`: Bedrock model ids in
-  order, family = maker, catalog prices per million tokens). The gateway reads it first in the call's transaction: no
+  order, family = maker, catalog prices per million tokens; since crm-078 the entry's connection `connection_key`
+  and `sends_temperature`). The gateway reads it first in the call's transaction: no
   profile `stage_unrouted`, unreadable `profile_unavailable`, another role `profile_mismatch`, switched off
   `stage_disabled`: one refused row at 0 USD, nothing scrubbed or sent. Then the route runs entry by entry, one row per
   attempt (`attempt_no`), until one answers; no new attempt after the deadline (`deadline`) or once a billed failure
@@ -3202,12 +3214,14 @@ secret `MAIL_OAUTH` (`crm/<env>/mail-oauth`, mapped only once it has a value), a
 `PORTAL_OTP_DEV_ECHO` (default false; refused outside dev / test / local; on, the portal code answer carries the code
 for the synthetic Dev agencies that have no mailbox), and the AI gateway (AA-964) `CRM_LLM_PROVIDER` (default `stub`),
 `CRM_LLM_MODEL_ID`, `CRM_LLM_USD_PER_MTOK_IN` / `CRM_LLM_USD_PER_MTOK_OUT`, `CRM_LLM_REGION`, `CRM_LLM_ROLE_ARN`,
+`CRM_LLM_ACC1_ROLE_ARN` / `CRM_LLM_ACC1_EXTERNAL_ID` (AA-1138: the acc1 connection of a `bedrock_acc1` route entry),
 while the draft output cap, the AI calls per agency per minute, the AI budget ceiling and the public / intake / form /
 member rate limits are admin-editable settings (AA-1096 L4; their env vars were retired by crm-068, AA-1096 l5;
 section "Admin-editable platform settings"); on Dev, AA-CIS-Infra
 `crm_llm.tf` (AA-1027 F4) sets the provider `bedrock`, the model Amazon Nova Lite on acc2 with its catalogue prices, the
 region and the output cap, and grants the task role `bedrock:InvokeModel` on that inference profile only (no
-`CRM_LLM_ROLE_ARN`: acc3 is not used while it refuses every model). Meanings and defaults:
+`CRM_LLM_ROLE_ARN`: acc3 is not used while it refuses every model); since AA-1138 it also sets the acc1 invoker role
+and its ExternalId and grants the task role `sts:AssumeRole` on that role only. Meanings and defaults:
 `api/app/settings.py`. Live check of the key provider inside the
 container: `python -m app.vault.selftest` (KMS round trip under the nil tenant context, nothing stored).
 

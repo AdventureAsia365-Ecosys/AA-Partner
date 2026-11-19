@@ -139,6 +139,9 @@ CRM AI gateway (AA-964, card CRM-33a; ``app.llm``):
 - ``CRM_LLM_REGION``: the Bedrock region (default ``us-west-1``).
 - ``CRM_LLM_ROLE_ARN``: optional; the CRM-only invoker role to assume for the call (the acc3 path of root ADR 0008a
   §5). Empty = the task role.
+- ``CRM_LLM_ACC1_ROLE_ARN`` / ``CRM_LLM_ACC1_EXTERNAL_ID`` (AA-1138): optional; the acc1 Bedrock invoker role and the
+  ExternalId its trust pins, for route entries with ``connection_key = 'bedrock_acc1'`` (crm-078). The ARN needs the
+  ExternalId. Empty = such an entry is never called (a 0 USD error row, the route moves on).
 - The draft output cap, the per-agency AI calls per minute and the highest monthly AI budget an owner may set are
   settings (``crm.ai.draft_reply_max_tokens``, ``crm.rate.ai_per_minute``, ``crm.ai.budget_max_usd``).
 
@@ -251,6 +254,7 @@ DEFAULT_SCRUB_TIMEOUT_MS = 3000
 LLM_PROVIDERS = frozenset({"stub", "bedrock"})
 _MODEL_ID = re.compile(r"^[A-Za-z0-9._:/-]{1,120}$")
 _ROLE_ARN = re.compile(r"^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,128}$")
+_EXTERNAL_ID = re.compile(r"^[A-Za-z0-9+=,.@:/_-]{2,1224}$")  # the STS ExternalId alphabet and length
 _GUARDRAIL_ID = re.compile(r"^[a-z0-9]{1,64}$")
 _GUARDRAIL_VERSION = re.compile(r"^(DRAFT|[1-9][0-9]{0,7})$")
 _REGION = re.compile(r"^[a-z]{2}(-[a-z]+)+-[0-9]$")
@@ -311,6 +315,10 @@ class Settings:
     crm_llm_usd_per_mtok_out: Decimal = Decimal(0)
     crm_llm_region: str = "us-west-1"
     crm_llm_role_arn: str = field(default="", repr=False)
+    # AA-1138: the acc1 Bedrock connection of a route entry with connection_key 'bedrock_acc1' (crm-078): the acc1
+    # invoker role and the ExternalId its trust pins (Terraform crm_llm.tf). Unset = that entry is never called.
+    crm_llm_acc1_role_arn: str = field(default="", repr=False)
+    crm_llm_acc1_external_id: str = field(default="", repr=False)
     lifecycle_dry_run: bool = True
     # AA-1093 stage 2: the Terraform kill switch of the CRM erase apply of the CIS tenant erasure saga (default off).
     tenant_erase_apply_enabled: bool = False
@@ -353,6 +361,10 @@ class Settings:
             raise SettingsError(f"CRM_LLM_REGION must be an AWS region, got {self.crm_llm_region!r}")
         if self.crm_llm_role_arn and not _ROLE_ARN.match(self.crm_llm_role_arn):
             raise SettingsError("CRM_LLM_ROLE_ARN must be an IAM role ARN")
+        if self.crm_llm_acc1_role_arn and not (
+            _ROLE_ARN.match(self.crm_llm_acc1_role_arn) and _EXTERNAL_ID.match(self.crm_llm_acc1_external_id)
+        ):
+            raise SettingsError("CRM_LLM_ACC1_ROLE_ARN must be an IAM role ARN with CRM_LLM_ACC1_EXTERNAL_ID set")
         if self.crm_llm_usd_per_mtok_in < 0 or self.crm_llm_usd_per_mtok_out < 0:
             raise SettingsError("CRM_LLM_USD_PER_MTOK_IN / _OUT must be >= 0")
         if self.crm_llm_provider == "bedrock" and not (
@@ -693,6 +705,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         crm_llm_usd_per_mtok_out=_decimal(env.get("CRM_LLM_USD_PER_MTOK_OUT"), Decimal(0), "CRM_LLM_USD_PER_MTOK_OUT"),
         crm_llm_region=_text(env, "CRM_LLM_REGION") or "us-west-1",
         crm_llm_role_arn=_text(env, "CRM_LLM_ROLE_ARN"),
+        crm_llm_acc1_role_arn=_text(env, "CRM_LLM_ACC1_ROLE_ARN"),
+        crm_llm_acc1_external_id=_text(env, "CRM_LLM_ACC1_EXTERNAL_ID"),
         lifecycle_dry_run=_flag(env.get("LIFECYCLE_DRY_RUN"), True, "LIFECYCLE_DRY_RUN"),
         tenant_erase_apply_enabled=_flag(env.get("TENANT_ERASE_APPLY_ENABLED"), False, "TENANT_ERASE_APPLY_ENABLED"),
         partner_account_cleanup_dry_run=_flag(
