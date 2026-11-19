@@ -9,12 +9,16 @@ Tech lead decisions: admin MFA = TOTP (S283); drop the WAF geo rule of the staff
   groups (scoped, read-only), agency members (PARTNER pool already requires MFA), the Dev-only E2E identities.
 - **Claim**: `amr` holds `otp` (TOTP). Read from the verified token string with PyJWT (no second signature check):
   adding `amr` to `Principal` would change the byte-copied verifier and chain three repos.
-- **Switch**: `crm.platform.admin_mfa_required` (crm-081), bool, default off, maker-checker, impact high, no env
+- **Switch**: `crm.platform.admin_mfa_required` (crm-082), bool, default off, maker-checker, impact high, no env
   override. Off = log mode (`staff_admin_mfa_check outcome=would_refuse`), so the claim can be proved on a real TOTP
   sign-in before it goes on.
 - **One PR with the migration**, like crm-075 (#331): the reader serves the compiled default (off) until Migration Apply
-  registers crm-081, there is no readiness raise, and the settings lint requires every compiled key to have a reader and
-  every constant a compiled key, which a split code PR from `origin/main` could not satisfy.
+  registers crm-082, there is no readiness raise, and the settings lint requires every compiled key to have a reader and
+  every constant a compiled key, which a split code PR from `origin/main` could not satisfy. A migration-only PR
+  would fail the other way: its compiled default (seed parity) would have no reader (dead-setting lint).
+- **crm-082, not crm-081** (review fix): the agency facts lock lane of the same wave holds crm-081 (the quote item
+  display note). That PR merges first; Guard 0 here requires crm-081 registered. The two Partner migrations ship as
+  one Migration Apply batch (crm 081-082).
 
 ## Changed
 - `app/auth/route_guard.py` calls `admin_mfa.check` before building the caller; nothing is refused while the switch

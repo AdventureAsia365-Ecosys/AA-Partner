@@ -1,6 +1,6 @@
-"""AA-1111 (crm-081) on PostgreSQL with the RDS role shape: the setting crm.platform.admin_mfa_required is defined as
+"""AA-1111 (crm-082) on PostgreSQL with the RDS role shape: the setting crm.platform.admin_mfa_required is defined as
 compiled (bool, off, platform, maker-checker, high impact, no env override), accepts true / false and refuses anything
-else; crm-081 is registered. Rolled back; invented actor values only."""
+else; crm-082 is registered. Rolled back; invented actor values only."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ async def test_the_switch_is_the_compiled_definition(admin: asyncpg.Connection) 
         "maker_checker",
     )
     assert row["evidence_required"] is False and row["env_override"] is None and row["enforced"] is True
-    assert await admin.fetchval("SELECT 1 AS ok FROM shared.schema_versions WHERE version = 'crm-081'") == 1
+    assert await admin.fetchval("SELECT 1 AS ok FROM shared.schema_versions WHERE version = 'crm-082'") == 1
 
 
 async def test_a_value_is_true_or_false(app_pool: asyncpg.Pool) -> None:

@@ -1,4 +1,4 @@
-"""AA-1111 slice S2 (root ADR 0006c, crm-081) — app/auth/admin_mfa.py through the real route guard.
+"""AA-1111 slice S2 (root ADR 0006c, crm-082) — app/auth/admin_mfa.py through the real route guard.
 
 A WORKFORCE session holding an operations group (crm-platform-admin, crm-ops, cis-admin) whose access token's amr lacks
 "otp" is refused 403 mfa_required only while crm.platform.admin_mfa_required is on; off it is served and logged once

@@ -1,10 +1,12 @@
--- Migration crm-081: AA-1111 (S285, slice S2; tech lead decisions S283 "admin MFA = TOTP" and S285 "drop the WAF geo
+-- Migration crm-082: AA-1111 (S285, slice S2; tech lead decisions S283 "admin MFA = TOTP" and S285 "drop the WAF geo
 -- rule of the staff hosts once admin MFA is enforced") — the switch that makes the AA-Partner API refuse an AA operations
 -- staff session signed in without an authenticator code, as a CRM setting.
 --
--- Owner: AA-Partner (api/migrations/081_crm_admin_mfa_setting.sql). AA-CIS-Infra db/migrations/crm/ holds the byte copy
--- Migration Apply runs. Key crm-081, right after crm-080; if the numbers move, renumber: file name, this header, Guard 0
--- and the registration below, and the tests that name it (git grep '081_' and 'crm-081').
+-- Owner: AA-Partner (api/migrations/082_crm_admin_mfa_setting.sql). AA-CIS-Infra db/migrations/crm/ holds the byte copy
+-- Migration Apply runs. Key crm-082, right after crm-081 (the agency facts lock's quote item display note, a separate
+-- PR of the same wave that merges first; this file was crm-081 before the two met); if the numbers move, renumber:
+-- file name, this header, Guard 0 and the registration below, and the tests that name it (git grep '082_' and
+-- 'crm-082').
 --
 -- Why. WORKFORCE staff sign in with an e-mail one-time code; anyone who controls their mailbox can open every agency's
 -- data on /crm/ops/v1 and /crm/staff/v1. The pool allows TOTP as optional MFA; a staff member with TOTP enrolled signs in
@@ -18,7 +20,7 @@
 --      app/auth/admin_mfa.py ships in this PR, the settings lint):
 --        crm.platform.admin_mfa_required  bool, default false (today's behaviour), area platform, platform scope,
 --          impact high, maker-checker, enforced, no env override (an env var must never turn MFA off).
---   2. Register crm-081.
+--   2. Register crm-082.
 --
 -- Behaviour on apply: none for running code (the reader serves the compiled default, off, until a value is approved).
 --
@@ -38,18 +40,18 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '1min';
 
--- ── Guard 0: runs as the owner, after crm-080 ────────────────────────────────────────────────────
+-- ── Guard 0: runs as the owner, after crm-081 ────────────────────────────────────────────────────
 DO $$
 BEGIN
     IF current_user <> 'crm_owner' THEN
-        RAISE EXCEPTION 'crm-081: must run as crm_owner (Migration Apply live-owner switch), runs as %', current_user;
+        RAISE EXCEPTION 'crm-082: must run as crm_owner (Migration Apply live-owner switch), runs as %', current_user;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM shared.schema_versions WHERE version = 'crm-080') THEN
-        RAISE EXCEPTION 'crm-081: crm-080 lands first';
+    IF NOT EXISTS (SELECT 1 FROM shared.schema_versions WHERE version = 'crm-081') THEN
+        RAISE EXCEPTION 'crm-082: crm-081 lands first';
     END IF;
     IF EXISTS (SELECT 1 FROM shared.schema_versions
-                WHERE version = 'crm-081' AND description NOT LIKE 'AA-1111 admin MFA:%') THEN
-        RAISE EXCEPTION 'crm-081: the key crm-081 is already held by another migration (not AA-1111): renumber one';
+                WHERE version = 'crm-082' AND description NOT LIKE 'AA-1111 admin MFA:%') THEN
+        RAISE EXCEPTION 'crm-082: the key crm-082 is already held by another migration (not AA-1111): renumber one';
     END IF;
 END $$;
 
@@ -73,12 +75,12 @@ ON CONFLICT (key) DO NOTHING;
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM crm.setting_definition WHERE key = 'crm.platform.admin_mfa_required') THEN
-        RAISE EXCEPTION 'crm-081: crm.platform.admin_mfa_required is not defined';
+        RAISE EXCEPTION 'crm-082: crm.platform.admin_mfa_required is not defined';
     END IF;
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('crm-081', now(), 'AA-1111 admin MFA: the setting crm.platform.admin_mfa_required (refuse an AA operations staff session without an authenticator code)')
+VALUES ('crm-082', now(), 'AA-1111 admin MFA: the setting crm.platform.admin_mfa_required (refuse an AA operations staff session without an authenticator code)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

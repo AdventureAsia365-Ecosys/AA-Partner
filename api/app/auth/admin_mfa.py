@@ -1,4 +1,4 @@
-"""Administrator MFA check of the AA staff route classes (AA-1111 slice S2; root ADR 0006c; crm-081).
+"""Administrator MFA check of the AA staff route classes (AA-1111 slice S2; root ADR 0006c; crm-082).
 
 Tech lead decisions: S283 "admin MFA = TOTP" (an authenticator app code, never SMS), S285 "the WAF geo rule of the
 staff hosts goes once admin MFA is enforced". The WORKFORCE pool allows TOTP as optional MFA; a staff member with TOTP
