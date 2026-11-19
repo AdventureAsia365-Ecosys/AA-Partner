@@ -14,7 +14,6 @@ import {
   exportPath,
   memberDirectory,
   objectHref,
-  shortId,
   whenText,
 } from "@/lib/accessLog";
 import { matchBff } from "@/lib/bff";
@@ -69,22 +68,22 @@ describe("access log filters", () => {
 });
 
 describe("access log lines", () => {
-  it("say who did what, in English and Vietnamese, with ids and codes only", () => {
+  it("say who did what, in English and Vietnamese, without ids", () => {
     const e = event();
     expect(actorText(e, "en")).toBe("Agent"); // AA-1129: no directory -> the role alone, never an id
-    expect(eventText(e, "en")).toBe("revealed client 0f8fad5b · Passport number · reason: Prepare a booking");
+    expect(eventText(e, "en")).toBe("revealed a client · Passport number · reason: Prepare a booking");
     expect(eventText(e, "vi")).toContain("Số hộ chiếu");
     expect(actorText(event({ member_role: null }), "en")).toBe("Former member");
-    const ai = event({ actor_kind: "ai_agent", actor_group: "ai", actor_ref: "ai:crm_draft", member_id: null, member_role: null });
-    expect(actorText(ai, "en")).toBe("AI (crm_draft)");
+    const ai = event({ actor_kind: "ai_agent", actor_group: "ai", actor_ref: "ai:crm_draft_reply", member_id: null, member_role: null });
+    expect(actorText(ai, "en")).toBe("AI (reply drafts)"); // AA-1129 fix pass: the stage in words, never its code
+    expect(actorText({ ...ai, actor_ref: "ai:crm_brand_new_stage" }, "en")).toBe("AI");
     expect(actorText(event({ actor_group: "system", member_id: null }), "vi")).toBe("Hệ thống");
     const list = event({ action: "list_view", object_kind: "pipeline", object_id: null, fields: ["display_name"], reason: "board", object_ids: [ID, MEMBER] });
     expect(eventText(list, "en")).toBe("viewed the pipeline board · Name shown in lists · reason: board · 2 items shown");
     const key = event({ action: "key_create", object_kind: "tenant_key", object_id: "vault:v1", fields: [], reason: "purpose_vault" });
-    expect(eventText(key, "en")).toBe("created encryption key version vault:v1 · reason: purpose vault");
+    expect(eventText(key, "en")).toBe("created encryption key version vault:v1 · reason: client details");
     expect(codeLabel("en", "log.act", "brand_new_code")).toBe("brand new code");
     expect(codeLabel("en", "log.act", null)).toBe("");
-    expect(shortId(null)).toBe("");
   });
 
   it("link clients and trips, and write the date with the month spelled", () => {

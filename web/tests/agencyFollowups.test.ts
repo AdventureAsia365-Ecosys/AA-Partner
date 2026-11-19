@@ -102,12 +102,12 @@ describe("access log (row 10)", () => {
 
   it("words a list view in full (was 'viewed the list the agency')", () => {
     const line = eventText(event(), "en", DIRECTORY);
-    expect(line).toBe("viewed the team members · E-mail · reason: members · 2 items shown");
+    expect(line).toBe("viewed the team members · E-mail · reason: team members · 2 items shown");
     expect(line).not.toContain("the list the agency");
     expect(eventText(event(), "vi", DIRECTORY)).toContain("đã xem danh sách thành viên");
-    // A kind without its own sentence keeps a readable fallback.
+    // A kind without its own sentence keeps a readable fallback (S285: was "viewed a list: supplier bill").
     expect(eventText(event({ object_kind: "supplier_bill", fields: [], reason: null, object_ids: [] }), "en")).toBe(
-      "viewed a list: supplier bill",
+      "viewed the supplier bill list",
     );
     // A list sentence never ends with a dangling "of" / "for" (lesson S262).
     for (const lang of ["en", "vi"] as const) {
@@ -121,7 +121,7 @@ describe("access log (row 10)", () => {
     );
     expect(
       eventText(event({ action: "member_remove", object_id: AGENT, fields: ["status"], reason: null, object_ids: [] }), "en", DIRECTORY),
-    ).toBe("member remove team member Agent 2 · status");
+    ).toBe("removed team member Agent 2 · status");
   });
 
   it("prints the time in the agency's timezone, so the server render and the browser agree (hydration #418)", () => {

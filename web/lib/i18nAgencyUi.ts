@@ -22,7 +22,6 @@ export const agencyUiEn = {
   // AA-1129 (S285 live check): access log lines name members by the member rule and word list views in full.
   "log.obj.members": "team members",
   "log.obj.ownAgency": "the agency",
-  "log.list.other": "viewed a list: {obj}",
   "log.list.member": "viewed the team members",
   "log.list.pipeline": "viewed the pipeline board",
   "log.list.traveler": "viewed the client list",
@@ -69,7 +68,6 @@ export const agencyUiVi: Record<keyof typeof agencyUiEn, string> = {
   "inbox.noSubject": "(không có tiêu đề)",
   "log.obj.members": "các thành viên",
   "log.obj.ownAgency": "đại lý",
-  "log.list.other": "đã xem danh sách: {obj}",
   "log.list.member": "đã xem danh sách thành viên",
   "log.list.pipeline": "đã xem bảng quy trình",
   "log.list.traveler": "đã xem danh sách khách",
