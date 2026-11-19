@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/AdventureAsia365-Ecosys/AA-Ecosys/docs/templates/frontmatter.schema.json",
   "title": "AA-Ecosys doc front-matter",
-  "description": "YAML front-matter for every page listed in the doc catalog (docs/README.md). Journals (sessions, audits, implementation notes, backlog, research) and ADRs do not use it. Source: S243 docs-standard proposal section 2.1 as corrected by the S243 reconciliation (K-29a to K-29c). Lint: AA-888.",
+  "description": "YAML front-matter for every page listed in the doc catalog (docs/README.md). Journals (sessions, audits, implementation notes, backlog, research) and ADRs do not use it. Source: S243 docs-standard proposal section 2.1 as corrected by the S243 reconciliation (K-29a to K-29c). Lint: AA-888. Translations (lang, translation_of): S255.",
   "type": "object",
   "required": ["id", "title", "type", "status", "owner", "last_reviewed"],
   "additionalProperties": false,
@@ -28,7 +28,7 @@
       "enum": ["tutorial", "how-to", "reference", "explanation", "adr", "report", "template"]
     },
     "status": {
-      "description": "draft = not yet read by Nghiep or (runbook) not yet run on Dev; active = current truth; deprecated = still true but being replaced; superseded = replaced, see superseded_by; archived = kept for history only.",
+      "description": "draft = not yet read by the tech lead or (runbook) not yet run on Dev; active = current truth; deprecated = still true but being replaced; superseded = replaced, see superseded_by; archived = kept for history only.",
       "enum": ["draft", "active", "deprecated", "superseded", "archived"]
     },
     "superseded_by": {
@@ -36,18 +36,28 @@
       "type": ["string", "null"]
     },
     "owner": {
-      "description": "Person accountable for the page. Default nghiep.",
+      "description": "Slug of whoever is accountable for the page. Company docs name roles, not people; the default slug nghiep stands for the tech lead role.",
       "type": "string",
       "pattern": "^[a-z][a-z0-9-]*$"
     },
     "audience": {
-      "description": "Navigation filter, not an access control. owner = Ms. Thu (CEO).",
+      "description": "Navigation filter, not an access control. owner = the business owner (CEO).",
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
       "items": {
         "enum": ["owner", "staff", "engineer", "devops", "cto", "cio", "pm", "agent"]
       }
+    },
+    "nav": {
+      "description": "Sidebar group of the /admin/docs reader (AA-1133). Without it the reader derives the group from the folder (tools/docs/build_docs_reader.py NAV_DEFAULTS).",
+      "enum": ["start", "guides", "operations", "architecture", "reference", "legal-security"]
+    },
+    "nav_order": {
+      "description": "Position inside the sidebar group, lower first; pages without it follow, by folder and title (AA-1133).",
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 999
     },
     "applies_to": {
       "description": "Services, apps or versions the page is true for, e.g. aa-cis-api, aa-booking, tripplanner-lambda, ecosystem.",
@@ -66,6 +76,15 @@
       "type": "integer",
       "minimum": 7,
       "maximum": 730
+    },
+    "lang": {
+      "description": "Language of the page body. Omit it (or en) on the English page, which is the source. A translation is a sibling file <same name>.<lang>.md that sets its language here (docs/STYLE.md, Language).",
+      "enum": ["en", "vi"]
+    },
+    "translation_of": {
+      "description": "Translations only: repo-relative path of the English page this file translates (docs/guides/ceo.md for docs/guides/ceo.vi.md). The translation keeps the English page's id; check_frontmatter.py checks the pair.",
+      "type": "string",
+      "pattern": "^docs/(?:[A-Za-z0-9._-]+/)*[A-Za-z0-9._-]+\\.md$"
     },
     "last_tested": {
       "description": "Runbooks only: ISO date the steps were last executed (Dev, drill, incident or dry run).",
@@ -93,6 +112,42 @@
       "type": "array",
       "uniqueItems": true,
       "items": {"type": "string"}
+    },
+    "known_issue": {
+      "description": "Short note the /admin/docs reader shows as a banner: the page has known errors and is being fixed. The PR that fixes the page removes the field (AA-1133).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    },
+    "linear": {
+      "description": "PRDs (docs/product/, AA-894): Linear issue keys that deliver this page. tools/docs/check_prd_refs.py requires it on a PRD.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^AA-[0-9]+$"}
+    },
+    "adrs": {
+      "description": "PRDs: repo-relative paths of the ADRs the page depends on. Every path must exist (check_prd_refs.py).",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "contracts": {
+      "description": "PRDs: repo-relative paths of the cross-app contracts (docs/contracts/) the feature produces or consumes. Every path must exist.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "erd": {
+      "description": "PRDs: repo-relative paths of the design or generated ERD pages (docs/architecture/erd/). Every path must exist.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "migrations": {
+      "description": "PRDs: paths of the migrations that implement the data model; a path in another repo of the workspace starts with its folder (infra/AA-CIS-Infra/db/migrations/...). Empty until the first migration.",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
     }
   },
   "allOf": [
@@ -103,6 +158,14 @@
     {
       "if": {"properties": {"generated": {"const": true}}, "required": ["generated"]},
       "then": {"required": ["generator"], "properties": {"generator": {"type": "string"}}}
+    },
+    {
+      "if": {"properties": {"lang": {"const": "vi"}}, "required": ["lang"]},
+      "then": {"required": ["translation_of"]}
+    },
+    {
+      "if": {"required": ["translation_of"]},
+      "then": {"required": ["lang"], "properties": {"lang": {"const": "vi"}}}
     }
   ]
 }
