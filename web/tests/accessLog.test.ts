@@ -74,8 +74,9 @@ describe("access log lines", () => {
     expect(eventText(e, "en")).toBe("revealed a client · Passport number · reason: Prepare a booking");
     expect(eventText(e, "vi")).toContain("Số hộ chiếu");
     expect(actorText(event({ member_role: null }), "en")).toBe("Former member");
-    const ai = event({ actor_kind: "ai_agent", actor_group: "ai", actor_ref: "ai:crm_draft", member_id: null, member_role: null });
-    expect(actorText(ai, "en")).toBe("AI (crm_draft)");
+    const ai = event({ actor_kind: "ai_agent", actor_group: "ai", actor_ref: "ai:crm_draft_reply", member_id: null, member_role: null });
+    expect(actorText(ai, "en")).toBe("AI (reply drafts)"); // AA-1129 fix pass: the stage in words, never its code
+    expect(actorText({ ...ai, actor_ref: "ai:crm_brand_new_stage" }, "en")).toBe("AI");
     expect(actorText(event({ actor_group: "system", member_id: null }), "vi")).toBe("Hệ thống");
     const list = event({ action: "list_view", object_kind: "pipeline", object_id: null, fields: ["display_name"], reason: "board", object_ids: [ID, MEMBER] });
     expect(eventText(list, "en")).toBe("viewed the pipeline board · Name shown in lists · reason: board · 2 items shown");

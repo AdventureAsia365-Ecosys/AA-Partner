@@ -3,7 +3,7 @@
 // unit test test_aa1129_audit_codes_catalogue.py): each one has words, and no line shows an id, a raw code or a raw
 // field list ("ops read the agency bab16039", "1 items shown", "viewed a list: message · from, subject, body").
 import { describe, expect, it } from "vitest";
-import { type AuditEventView, article, eventText } from "@/lib/accessLog";
+import { ACTOR_GROUPS, type AuditEventView, actorText, article, eventText } from "@/lib/accessLog";
 import CODES from "@/lib/auditCodes.json";
 import { type Lang, MESSAGES } from "@/lib/i18n";
 
@@ -52,8 +52,9 @@ describe("every audit code the API writes has words (both languages)", () => {
       for (const a of CODES.actions) expect(has(lang, `log.say.${a}`) || has(lang, `log.act.${a}`), `${lang} ${a}`).toBe(true);
   });
 
-  it("objects, details and reasons", () => {
+  it("objects, details, reasons and AI stages", () => {
     for (const lang of LANGS) {
+      for (const s of CODES.ai_stages) expect(has(lang, `log.actor.ai.${s}`), `${lang} AI stage ${s}`).toBe(true);
       for (const k of CODES.object_kinds) expect(has(lang, `log.obj.${k}`), `${lang} object ${k}`).toBe(true);
       for (const f of CODES.fields) expect(has(lang, `field.${f.replace(/_enc$/, "")}`), `${lang} field ${f}`).toBe(true);
       for (const r of CODES.reasons) expect(has(lang, `why.${r}`), `${lang} reason ${r}`).toBe(true);
@@ -88,6 +89,16 @@ describe("every event renders a sentence without ids or raw codes", () => {
     }
   });
 
+  it("who did it: every actor group and AI stage, and an unknown one, in words", () => {
+    const actor = (over: Partial<AuditEventView>) => event({ member_id: null, member_role: null, ...over });
+    for (const lang of LANGS) {
+      for (const g of [...ACTOR_GROUPS, "brand_new_group"]) expectPlain(actorText(actor({ actor_group: g as AuditEventView["actor_group"] }), lang), `${lang} ${g}`);
+      for (const s of [...CODES.ai_stages, "crm_brand_new_stage"])
+        expectPlain(actorText(actor({ actor_kind: "ai_agent", actor_group: "ai", actor_ref: `ai:${s}` }), lang), `${lang} ai ${s}`);
+    }
+    expect(actorText(actor({ actor_group: "brand_new_group" as AuditEventView["actor_group"] }), "en")).toBe("Someone");
+  });
+
   it("codes the web has no words for (a newer API) are worded generically, never printed", () => {
     const line = eventText(
       event({ action: "brand_new_action", object_kind: "brand_new_kind", fields: ["brand_new_field", "email_enc"], reason: "brand_new_reason" }),
@@ -108,6 +119,22 @@ describe("the lines of the S285 live check", () => {
     expect(eventText({ ...ops, action: "ops_read", object_kind: "tenant", object_id: OTHER, reason: "settings" }, "vi")).toBe(
       "đã xem đại lý · lý do: cài đặt",
     );
+  });
+
+  it("AA operations' lines about the agency keep their reason (closed lists the API checks first)", () => {
+    const ops = event({ actor_kind: "aa_ops", actor_group: "aa_ops", actor_ref: "ops:staff", member_id: null, member_role: null });
+    const lock = { ...ops, action: "tenant_lock", object_kind: "tenant", object_id: OTHER, fields: ["status"], reason: "abuse" };
+    expect(eventText(lock, "en")).toContain("reason: misuse of the service");
+    expect(eventText(lock, "vi")).toContain("lạm dụng dịch vụ");
+    const raise = { ...ops, action: "data_request_raise", object_kind: "erasure_request", object_id: OTHER, reason: "agency_deletion" };
+    expect(eventText(raise, "en")).toContain("reason: deletion of the agency's data");
+    expect(eventText({ ...raise, reason: "agency_export" }, "en")).toContain("reason: export of the agency's data");
+    const hold = event({ action: "create", object_kind: "legal_hold", reason: "regulator_request" });
+    expect(eventText(hold, "en")).toContain("reason: regulator request");
+    const glass = { ...ops, actor_group: "aa_emergency" as const, action: "breakglass_open", object_kind: "support_session", reason: "service_outage" };
+    expect(eventText(glass, "vi")).toContain("gián đoạn dịch vụ");
+    for (const [action, reason] of [["recovery_open", "owner_left"], ["commission_write_off", "too_small"], ["stage_change", "lost_went_elsewhere"], ["stage_change", "override_repeat_client"]])
+      expect(eventText(event({ action, reason }), "en"), reason).toMatch(/· reason: [a-z]/);
   });
 
   it("an opened trip is 'a trip' (the line links to it)", () => {

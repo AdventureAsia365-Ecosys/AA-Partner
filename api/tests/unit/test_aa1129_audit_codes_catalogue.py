@@ -87,4 +87,62 @@ def test_write_merges_and_sorts(tmp_path: Path) -> None:
         "object_kinds": ["trip"],
         "fields": [],
         "reasons": ["manual"],
+        "ai_stages": [],
     }
+
+
+def test_every_reason_set_is_classified() -> None:
+    """A module constant named REASONS / *_REASONS is an audit reason set (its codes get words) or says why not; a
+    reason checked against a closed list before ``ctx.audit(..., reason=reason_code)`` is otherwise invisible to the
+    reader, and the access log would drop it (AA-1129 fix pass: AA's tenant lock / data request reasons)."""
+    assert ac.reason_set_problems() == []
+
+
+def test_the_closed_reason_sets_aa_writes_about_the_agency_are_catalogued() -> None:
+    reasons = set(ac.load_catalogue()["reasons"])
+    for code in (
+        "abuse",  # tenant_lock (LOCK_REASONS)
+        "agency_deletion",  # data_request_raise (DATA_REQUEST_PURPOSE)
+        "litigation",  # legal hold (HOLD_REASONS)
+        "owner_left",  # owner recovery
+        "service_outage",  # break-glass
+        "too_small",  # commission write-off
+        "lost_went_elsewhere",  # stage_change f"lost_{code}"
+        "override_repeat_client",  # stage_change f"override_{code}"
+        "cis_unknown_product",  # add-on refusal f"cis_{code}"
+    ):
+        assert code in reasons, code
+
+
+def test_the_ai_stages_are_catalogued() -> None:
+    codes, _ = ac.collect()
+    assert {"budget", "crm_draft_reply"} <= codes["ai_stages"]
+    assert codes["ai_stages"] <= set(ac.load_catalogue()["ai_stages"])
+
+
+def test_the_reader_resolves_reason_sets_and_literal_fields() -> None:
+    src = """
+REASONS = ("a", "b")
+BY_KEY = {"k1": ("x", "y"), "k2": ("z",)}
+FROZEN = frozenset({"f"})
+Why = Literal["w1", "w2"]
+class Body(BaseModel):
+    reason: Literal["r1", "r2"]
+    reason_code: Why | None = None
+    other: Literal["not_a_reason"]
+gateway.call(ctx, stage=STAGE, role="writer")
+AuditEvent(actor_ref="ai:budget", action="x")
+STAGE = "crm_x"
+"""
+    tree = ast.parse(src)
+    assigned = ac._module_assigns(tree)
+    assert ac._set_members(assigned["REASONS"], "members") == ["a", "b"]
+    assert ac._set_members(assigned["BY_KEY"], "members") == ["k1", "k2"]
+    assert ac._set_members(assigned["BY_KEY"], "values") == ["x", "y", "z"]
+    assert ac._set_members(assigned["FROZEN"], "members") == ["f"]
+    res = ac._Resolver(ac._module_constants(tree), {})
+    assert ac._literal_reasons(tree, res) == {"r1", "r2", "w1", "w2"}
+    assert ac._ai_stages(tree, res, Path("t.py")) == {"crm_x", "budget"}
+    codes, problems = ac._reason_set_codes({"app.x": assigned})
+    assert codes - set(ac._reason_set_codes({})[0]) == set()  # listed sets only: app.x is not in REASON_SETS
+    assert "app.x.REASONS: list it in REASON_SETS (an audit reason) or NOT_AUDIT_REASON_SETS (why not)" in problems

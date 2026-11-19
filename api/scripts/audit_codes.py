@@ -6,10 +6,17 @@ string constant, a ``StrEnum`` member (``Action.X`` / ``Action.X.value``), an ``
 f-string whose holes are such expressions, or a tuple of those (``fields``). A refusal through
 ``app.permissions.Action`` can name any member, so every ``Action`` value is an action code too.
 
+A ``reason`` is often a variable checked against a closed set first (``if reason_code not in LOCK_REASONS``), which the
+reader cannot follow. Those sets are read too: every request body field named ``reason`` / ``reason_code`` typed
+``Literal[...]`` (found by itself), and the module constants listed in :data:`REASON_SETS`. Every module constant named
+``REASONS`` / ``*_REASONS`` must be listed there or in :data:`NOT_AUDIT_REASON_SETS` (the unit test checks it), so a new
+closed set of reasons is never silently left without words. The AI actor's stage (``actor_ref`` "ai:<stage>": the
+gateway's ``stage=`` of each ``*.call(...)`` and the literal ``ai:*`` refs) is catalogued as ``ai_stages``.
+
 The web keeps the wording of these codes (``web/lib/auditCodes.json`` + the ``log.act.*`` / ``log.obj.*`` / ``field.*``
-/ ``why.*`` messages). ``tests/unit/test_aa1129_audit_codes_catalogue.py`` fails when the code writes a code that the
-catalogue does not list; ``python scripts/audit_codes.py --write`` rewrites the catalogue (then word the new codes in
-the web messages, the web unit test checks that).
+/ ``why.*`` / ``log.actor.ai.*`` messages). ``tests/unit/test_aa1129_audit_codes_catalogue.py`` fails when the code
+writes a code that the catalogue does not list; ``python scripts/audit_codes.py --write`` rewrites the catalogue (then
+word the new codes in the web messages, the web unit test checks that).
 
 Usage (from ``api/``): ``python scripts/audit_codes.py`` prints the codes as JSON; ``--write`` updates the catalogue.
 """
@@ -27,7 +34,40 @@ API = Path(__file__).resolve().parents[1]
 APP = API / "app"
 CATALOGUE = API.parent / "web" / "lib" / "auditCodes.json"
 OUTCOMES = {"allowed", "denied"}
-KINDS = ("actions", "object_kinds", "fields", "reasons")
+KINDS = ("actions", "object_kinds", "fields", "reasons", "ai_stages")
+REASON_FIELDS = frozenset({"reason", "reason_code"})
+AI_REF = "ai:"
+# Closed sets a ``reason=`` is checked against before it is written: (module, constant, prefix the audit adds, part).
+# ``part``: "members" (a tuple / set, or a dict's keys) or "values" (a dict of tuples, flattened).
+REASON_SETS: tuple[tuple[str, str, str, str], ...] = (
+    ("app.booking.extra_nights", "CLOSE_REASONS", "", "members"),  # extra nights request closed
+    ("app.cis.addons", "REASONS", "cis_", "members"),  # routers/addons.py: f"cis_{refused.reason}"
+    ("app.commissions.service", "WRITE_OFF_REASONS", "", "members"),
+    ("app.duty.service", "BULK_REASONS", "", "members"),  # duty of care bulk reveal
+    ("app.lifecycle.rules", "ARCHIVE_REASONS", "", "members"),
+    ("app.lifecycle.rules", "HOLD_REASONS", "", "members"),  # legal hold placed
+    ("app.members.mail", "BREAKGLASS_REASONS", "", "members"),  # AA emergency access opened
+    ("app.members.recovery", "REASONS", "", "members"),  # owner recovery opened by AA
+    ("app.ops.console", "DATA_REQUEST_PURPOSE", "", "members"),  # AA raised an export / deletion request
+    ("app.ops.console", "LOCK_REASONS", "", "members"),  # AA locked the agency
+    ("app.ops_release.service", "MEMBER_WITHDRAW_REASONS", "", "members"),
+    ("app.pipeline", "LOST_REASONS", "lost_", "members"),  # stages.py: f"lost_{lost_reason}"
+    ("app.proposals.public", "CHANGE_REASONS", "", "members"),  # the client asked for changes
+    ("app.stages", "CANCEL_REASONS", "", "members"),  # trip_cancel
+    ("app.stages", "OVERRIDE_REASONS", "override_", "values"),  # stages.py: f"override_{override}"
+    ("app.task_kinds", "STAGE_REASONS", "", "members"),  # stage_change
+    ("app.travellers.fields", "REVEAL_REASONS", "", "members"),
+)
+# Module constants named like a reason set that never reach an audit ``reason`` (why, for the reviewer).
+NOT_AUDIT_REASON_SETS: dict[tuple[str, str], str] = {
+    ("app.aa_llm.errors", "TRUNCATED_STOP_REASONS"): "model stop reasons of a gateway reply",
+    ("app.booking.contract", "CANCEL_REASONS"): "the Booking API's cancel reasons (the audit writes the CRM's)",
+    ("app.cis.activation", "REASONS"): "CIS activation refusals answered to the caller, not audited",
+    ("app.cis.membership_feed", "REASONS"): "the membership inbox's reason_code column (audits write LOCK_EVENTS)",
+    ("app.esign.events", "REFUSAL_REASONS"): "signature event detail, not an audit reason",
+    ("app.portability.restore_drill", "INCOMPLETE_DOCUMENT_REASONS"): "restore drill result rows, not audited",
+    ("app.support.sessions", "END_REASONS"): "the support console's end_reason view field; the end event has none",
+}
 
 
 def _module_constants(tree: ast.Module) -> dict[str, list[str]]:
@@ -183,21 +223,133 @@ def _module_codes(tree: ast.Module, res: _Resolver, rel: Path, out: dict[str, se
                 out[kind].update(v for v in res.codes(args[arg], f"{rel}:{node.lineno}:{arg}") if v)
 
 
+def _module_assigns(tree: ast.Module) -> dict[str, ast.AST]:
+    """Module-level ``NAME = <expr>`` (plain or annotated) by name."""
+    out: dict[str, ast.AST] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+            out[node.targets[0].id] = node.value
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value is not None:
+            out[node.target.id] = node.value
+    return out
+
+
+def _set_members(node: ast.AST, part: str) -> list[str]:
+    """The strings of a closed set: a tuple / list / set, ``frozenset({...})``, a dict's keys or its tuple values."""
+    if isinstance(node, ast.Call) and node.args:
+        return _set_members(node.args[0], part)
+    if isinstance(node, ast.Dict) and part == "values":
+        return [v for item in node.values for v in _literal_strings(item)]
+    if isinstance(node, ast.Dict):
+        return [k.value for k in node.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)]
+    return _literal_strings(node)
+
+
+def _is_reason_set(name: str) -> bool:
+    return name == "REASONS" or name.endswith("_REASONS")
+
+
+def _reason_set_codes(assigned: dict[str, dict[str, ast.AST]]) -> tuple[set[str], list[str]]:
+    """The codes of :data:`REASON_SETS`, and the problems: a listed set that is gone or not strings, a constant named
+    like a reason set in neither list, a :data:`NOT_AUDIT_REASON_SETS` entry that is gone."""
+    codes: set[str] = set()
+    problems: list[str] = []
+    for mod, name, prefix, part in REASON_SETS:
+        node = assigned.get(mod, {}).get(name)
+        values = _set_members(node, part) if node is not None else []
+        if not values:
+            problems.append(f"{mod}.{name}: in REASON_SETS but not a set of string codes")
+        codes.update(prefix + v for v in values)
+    listed = {(m, n) for m, n, _, _ in REASON_SETS} | set(NOT_AUDIT_REASON_SETS)
+    problems += [
+        f"{mod}.{name}: list it in REASON_SETS (an audit reason) or NOT_AUDIT_REASON_SETS (why not)"
+        for mod, names in assigned.items()
+        for name in names
+        if _is_reason_set(name) and (mod, name) not in listed
+    ]
+    gone = [(m, n) for m, n in NOT_AUDIT_REASON_SETS if n not in assigned.get(m, {})]
+    problems += [f"{m}.{n}: in NOT_AUDIT_REASON_SETS but gone" for m, n in gone]
+    return codes, sorted(problems)
+
+
+def _literal_values(node: ast.AST | None, aliases: dict[str, ast.AST], res: _Resolver) -> list[str]:
+    """The values of a ``Literal[...]`` annotation (``| None``, ``Optional[...]``, an alias, ``Literal[CONSTANT]``)."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _literal_values(node.left, aliases, res) + _literal_values(node.right, aliases, res)
+    if isinstance(node, ast.Name) and isinstance(aliases.get(node.id), ast.Subscript):
+        return _literal_values(aliases[node.id], aliases, res)
+    if not (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)):
+        return []
+    if node.value.id == "Optional":
+        return _literal_values(node.slice, aliases, res)
+    if node.value.id != "Literal":
+        return []
+    items = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+    return [c for item in items for c in res.codes(item, "literal")]
+
+
+def _literal_reasons(tree: ast.Module, res: _Resolver) -> set[str]:
+    """Request body fields ``reason`` / ``reason_code`` typed ``Literal[...]`` (the value the route audits)."""
+    aliases = _module_assigns(tree)
+    return {
+        v
+        for cls in ast.walk(tree)
+        if isinstance(cls, ast.ClassDef)
+        for item in cls.body
+        if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name) and item.target.id in REASON_FIELDS
+        for v in _literal_values(item.annotation, aliases, res)
+    }
+
+
+def _ai_stages(tree: ast.Module, res: _Resolver, rel: Path) -> set[str]:
+    """The AI actor's stages: the gateway's ``stage=`` of every ``*.call(...)`` and the literal ``actor_ref="ai:x"``."""
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, (ast.Attribute, ast.Name))):
+            continue
+        kw = {k.arg: k.value for k in node.keywords if k.arg}
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "call" and "stage" in kw:
+            out.update(res.codes(kw["stage"], f"{rel}:{node.lineno}:stage"))
+        ref = kw.get("actor_ref")
+        if isinstance(ref, ast.Constant) and isinstance(ref.value, str) and ref.value.startswith(AI_REF):
+            out.add(ref.value[len(AI_REF) :])
+    return out
+
+
+def _parse(root: Path) -> dict[Path, ast.Module]:
+    return {p: ast.parse(p.read_text(encoding="utf-8"), filename=str(p)) for p in _files(root)}
+
+
+def _module_name(path: Path, root: Path) -> str:
+    return ".".join(path.relative_to(root.parent).with_suffix("").parts)
+
+
 def collect(root: Path = APP) -> tuple[dict[str, set[str]], list[str]]:
     """The codes per kind and the call sites whose code could not be read (``path:line:arg``)."""
-    trees = {p: ast.parse(p.read_text(encoding="utf-8"), filename=str(p)) for p in _files(root)}
+    trees = _parse(root)
     consts = {p: _module_constants(t) for p, t in trees.items()}
-    by_module = {".".join(p.relative_to(root.parent).with_suffix("").parts): c for p, c in consts.items()}
+    by_module = {_module_name(p, root): c for p, c in consts.items()}
     out: dict[str, set[str]] = {k: set() for k in KINDS}
     unresolved: list[str] = []
     for path, tree in trees.items():
         res = _Resolver(consts[path], _imported(tree, by_module))
-        _module_codes(tree, res, path.relative_to(root.parent), out)
+        rel = path.relative_to(root.parent)
+        _module_codes(tree, res, rel, out)
+        out["ai_stages"] |= _ai_stages(tree, res, rel)
         unresolved.extend(res.unresolved)
+        # A Literal of something the reader cannot resolve is simply not a closed set: not reported.
+        out["reasons"] |= _literal_reasons(tree, _Resolver(consts[path], _imported(tree, by_module)))
+    out["reasons"] |= _reason_set_codes({_module_name(p, root): _module_assigns(t) for p, t in trees.items()})[0]
     # A refusal through app.permissions names any Action member.
     perms = consts.get(root / "permissions.py", {})
     out["actions"].update(v[0] for k, v in perms.items() if k.startswith("Action."))
     return out, sorted(set(unresolved))
+
+
+def reason_set_problems(root: Path = APP) -> list[str]:
+    """What keeps :data:`REASON_SETS` / :data:`NOT_AUDIT_REASON_SETS` from matching the code (the unit test)."""
+    trees = _parse(root)
+    return _reason_set_codes({_module_name(p, root): _module_assigns(t) for p, t in trees.items()})[1]
 
 
 def load_catalogue(path: Path = CATALOGUE) -> dict[str, list[str]]:
@@ -206,7 +358,7 @@ def load_catalogue(path: Path = CATALOGUE) -> dict[str, list[str]]:
 
 def write_catalogue(codes: dict[str, set[str]], path: Path = CATALOGUE) -> None:
     old = load_catalogue(path) if path.exists() else {}
-    merged = {k: sorted(set(old.get(k, [])) | codes[k]) for k in KINDS}
+    merged = {k: sorted(set(old.get(k, [])) | codes.get(k, set())) for k in KINDS}
     path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
 
 

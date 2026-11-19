@@ -164,11 +164,16 @@ export function codeLabel(lang: Lang, prefix: string, code: string | null): stri
 
 /** Who did it, by the member label rule of lib/people.ts (AA-1129, S285): "lan.nguyen · Owner", "Agent 2", "Former
  *  member" (a member the agency no longer has), never an id; without the directory (the members API did not answer)
- *  the role alone. Else "AI (crm_draft)", "System", "AA operations", … */
+ *  the role alone. Else words, never a code: "AI (reply drafts)" (the AI stage, `log.actor.ai.<stage>`; an unknown
+ *  stage reads "AI"), "System", "AA operations", and "Someone" for a group a newer API added. */
 export function actorText(e: AuditEventView, lang: Lang, members?: MemberDirectory | null): string {
   if (e.member_id) return memberName(e.member_id, e.member_role, lang, members);
-  if (e.actor_group === "ai") return fmt(t(lang, "log.actor.aiStage"), { stage: e.actor_ref.replace(/^ai:/, "") });
-  return codeLabel(lang, "log.actor", e.actor_group);
+  if (e.actor_group === "ai") {
+    const stage = `log.actor.ai.${e.actor_ref.replace(/^ai:/, "")}`;
+    return t(lang, has(stage) ? stage : "log.actor.ai");
+  }
+  const group = `log.actor.${e.actor_group}`;
+  return t(lang, has(group) ? group : "log.actor.other");
 }
 
 function memberName(id: string, role: AuditEventView["member_role"], lang: Lang, members?: MemberDirectory | null): string {
