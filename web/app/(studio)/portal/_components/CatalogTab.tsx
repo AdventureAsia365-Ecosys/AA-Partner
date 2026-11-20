@@ -20,7 +20,7 @@ import { Download } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { CtaLink } from "@/app/_kit/local/studio/StudioCard";
-import { catalogExportRows, catalogTsv, catalogWorkbook } from "@/lib/studio/catalogExport";
+import { catalogExportRows, catalogTsv, catalogWorkbook, exportDisclosure } from "@/lib/studio/catalogExport";
 import { dispositionFileName } from "@/lib/studio/downloadHeaders";
 import { AiNotice, Button, type ColumnDef, DataTable, Drawer, ToastProvider, useToast, K, sans, useLang, useT } from "@/app/_kit";
 import { CATALOG_MESSAGES } from "./tours.messages";
@@ -35,6 +35,7 @@ import { showMasterNotice } from "@/lib/studio/masterNotice";
 import { useWriteWatcher } from "./WriterPanel";
 import { forgetLiveSnapshot } from "./LiveWriter";
 import {
+  fetchAiDisclosure,
   fetchMyVersions,
   fetchVersionDetail,
   isAiWriting,
@@ -188,13 +189,16 @@ function CatalogInner() {
     if (selectedVersions.length === 0) return;
     setIsExporting(true);
     try {
-      const fullData = await Promise.all(
-        selectedVersions.map((v) => fetchVersionDetail(v.id).catch(() => null)),
-      );
-      // AA-1168 — the rows carry the four AI columns and the file ends with the AI disclosure (lib/studio/catalogExport.ts).
+      const [fullData, wording] = await Promise.all([
+        Promise.all(selectedVersions.map((v) => fetchVersionDetail(v.id).catch(() => null))),
+        fetchAiDisclosure(),
+      ]);
+      // AA-1168 — the rows carry the four AI columns and the file ends with the AI disclosure in force (the CIS
+      // setting, in the versions' language; lib/studio/catalogExport.ts).
       const rows = catalogExportRows(fullData, selectedVersions);
+      const disclosure = exportDisclosure(wording, selectedVersions);
       if (fmt === "csv") {
-        const blob = new Blob(["\ufeff" + catalogTsv(rows)], { type: "text/csv;charset=utf-8" });
+        const blob = new Blob(["\ufeff" + catalogTsv(rows, disclosure)], { type: "text/csv;charset=utf-8" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -202,7 +206,7 @@ function CatalogInner() {
         a.click();
         URL.revokeObjectURL(url);
       } else {
-        XLSX.writeFile(catalogWorkbook(rows), "my-catalog.xlsx");
+        XLSX.writeFile(catalogWorkbook(rows, disclosure), "my-catalog.xlsx");
       }
     } finally {
       setIsExporting(false);

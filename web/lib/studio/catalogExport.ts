@@ -8,16 +8,49 @@
 // adds to every tenant version read (`/v1/tours/my-versions`, `/v1/tours/versions/{id}`; CIS
 // api/routers/_tenant_projection.py project_version -> ai_marking.version_mark): `AI generated`, `AI generator`,
 // `AI generated at`, `AI human edited` ("true" / "false", empty when not known). The file also ends with the
-// disclosure line, the same wording as CIS `ai_marking.DISCLOSURE_TEXT` (WordPress, Facebook and the text export),
-// and the XLSX workbook carries the keyword `ai-generated` in its document properties, like the T2 DOCX download.
+// disclosure line, the wording in force of the CIS setting `cis.content.ai_disclosure` (Platform > Settings; the same
+// line WordPress, Facebook and the text export show), read from CIS `GET /v1/content-writing/ai-disclosure` at export
+// time and picked by the versions' language (`exportDisclosure`); `AI_DISCLOSURE_TEXT` is only the fallback when that
+// read fails. The XLSX workbook carries the keyword `ai-generated` in its document properties, like the T2 DOCX.
 // Pure (no React); xlsx is the same SheetJS build CatalogTab already loads.
 
 import * as XLSX from "xlsx";
 
 import { parseContent } from "./format";
 
-/** The visible AI disclosure, word for word the CIS `ai_marking.DISCLOSURE_TEXT` (one wording on every channel). */
+/** The fallback disclosure line (the English seed of the CIS setting `cis.content.ai_disclosure`), used only when the
+ *  wording in force cannot be read from CIS. Never edit it to change the wording: change the setting in CIS admin. */
 export const AI_DISCLOSURE_TEXT = "This content was created with the help of AI.";
+
+/** CIS `GET /v1/content-writing/ai-disclosure`: one disclosure line per two-letter language (`en` always present) and
+ *  the hashtag of a social post. */
+export interface AiDisclosure {
+  text: Record<string, string>;
+  social_tag?: string;
+}
+
+function langCode(lang: string | null | undefined): string {
+  const code = (lang ?? "").trim().toLowerCase().replace("_", "-").split("-")[0];
+  return /^[a-z]{2}$/.test(code) ? code : "en";
+}
+
+function usableLine(line: unknown): string | null {
+  if (typeof line !== "string") return null;
+  const one = line.replace(/[\t\n\r]+/g, " ").trim();
+  return one ? one : null;
+}
+
+/** The disclosure line of an export: the line of the versions' language when they all share one (else English), from
+ *  the wording in force; the English line when the setting has none for it; `AI_DISCLOSURE_TEXT` when the wording
+ *  could not be read (null) or has no usable English line. Never empty: the disclosure cannot be switched off. */
+export function exportDisclosure(cfg: AiDisclosure | null | undefined, versions: ExportVersion[] = []): string {
+  const langs = new Set(versions.map((v) => langCode(v.rewrite_language)));
+  const lang = langs.size === 1 ? [...langs][0] : "en";
+  const text = cfg && typeof cfg.text === "object" && cfg.text ? cfg.text : null;
+  const en = usableLine(text?.en);
+  if (!text || !en) return AI_DISCLOSURE_TEXT;
+  return usableLine(text[lang]) ?? en;
+}
 
 /** The XLSX document property keyword of AI-generated content (the T2 DOCX download uses the same keyword). */
 export const AI_KEYWORD = "ai-generated";
@@ -177,12 +210,13 @@ export function catalogExportRows(details: (ExportVersion | null)[], versions: E
   return versions.map((v, i) => catalogExportRow(details[i] ?? null, v));
 }
 
-/** The my-catalog.csv body (tab separated, as before): the header, one line per row, then the disclosure line. */
-export function catalogTsv(rows: ExportRow[]): string {
+/** The my-catalog.csv body (tab separated, as before): the header, one line per row, then the disclosure line
+ *  (`exportDisclosure`; the fallback line when none is given). */
+export function catalogTsv(rows: ExportRow[], disclosure: string = AI_DISCLOSURE_TEXT): string {
   const lines = [
     CATALOG_EXPORT_HEADERS.join("\t"),
     ...rows.map((r) => CATALOG_EXPORT_HEADERS.map((h) => oneLineCell(r[h])).join("\t")),
-    AI_DISCLOSURE_TEXT,
+    oneLineCell(disclosure).trim() || AI_DISCLOSURE_TEXT,
   ];
   return lines.join("\n");
 }
@@ -193,12 +227,13 @@ function oneLineCell(s: string | undefined): string {
 
 /** The my-catalog.xlsx workbook: sheet "My Tours" (the rows, then the disclosure in the last row) and the document
  *  properties keyword `ai-generated` with the disclosure as the comment. */
-export function catalogWorkbook(rows: ExportRow[]): XLSX.WorkBook {
+export function catalogWorkbook(rows: ExportRow[], disclosure: string = AI_DISCLOSURE_TEXT): XLSX.WorkBook {
+  const line = oneLineCell(disclosure).trim() || AI_DISCLOSURE_TEXT;
   const ws = XLSX.utils.json_to_sheet(rows, { header: [...CATALOG_EXPORT_HEADERS] });
-  XLSX.utils.sheet_add_aoa(ws, [[AI_DISCLOSURE_TEXT]], { origin: -1 });
+  XLSX.utils.sheet_add_aoa(ws, [[line]], { origin: -1 });
   ws["!cols"] = CATALOG_EXPORT_WIDTHS.map((w) => ({ wch: w }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "My Tours");
-  wb.Props = { Title: "My Tours", Keywords: AI_KEYWORD, Comments: AI_DISCLOSURE_TEXT };
+  wb.Props = { Title: "My Tours", Keywords: AI_KEYWORD, Comments: line };
   return wb;
 }
