@@ -149,7 +149,7 @@ async def test_receipt_has_counts_and_versions_only() -> None:
     r = await run("Nguyen Van An, an.nguyen@example.invalid, 0912 345 678", an())
     assert set(r.receipt) == RECEIPT_KEYS
     assert (
-        r.receipt["scrubber"] == scrubber_module.VERSION == "f3-3"
+        r.receipt["scrubber"] == scrubber_module.VERSION == "f3-4"
         and r.receipt["detector"] == "fake"
         and r.receipt["entities"] == 3
     )
@@ -258,7 +258,22 @@ async def test_western_and_family_first_name_rules() -> None:
     assert (await run("Madonna called; madonna lily", no_parts)).text == "<PERSON_1> called; madonna lily"
 
 
-@pytest.mark.parametrize("shape", ["1 ", "0912 345 678 ", "Prices: 10 11 12 13 ", "Nguyen Van An chị an Ninh Bình "])
+@pytest.mark.parametrize(
+    "shape",
+    [
+        "1 ",
+        "0912 345 678 ",
+        "Prices: 10 11 12 13 ",
+        "Nguyen Van An chị an Ninh Bình ",
+        "Room 1: Hà Nam + Kim Liên, Đỗ Thị Hằng và Lâm Quốc Vinh; ",  # S286: the local name check
+        # S286 review: every list item is a cue again; a walk per cue took 20-30 s on 20,000 characters.
+        "Con, ",
+        "Mr Hà Nam, ",
+        "Guest Long An and ",
+        "Mr Mr ",
+        "Khách Lê ",
+    ],
+)
 async def test_scrub_of_a_large_prompt_is_fast_and_off_the_event_loop(shape: str) -> None:
     # Review AA-938: a 2,400-char digit list took 1.6 s and 24,000 chars would have taken hours, on the event loop.
     text = (shape * (20_000 // len(shape) + 1))[:20_000]
@@ -427,7 +442,7 @@ async def test_option_b_a_trip_destination_tagged_name_or_address_stays_in_clear
     assert r.text == "Đi Hạ Long rồi Hoi An, Sa Pa và Đà Lạt; lại Hạ Long."
     assert r.placeholders == {}
     assert r.receipt["counts"] == {"PLACE_KEPT": 5} and r.receipt["entities"] == 0
-    assert r.receipt["passes"]["detector"] == 0 and r.receipt["scrubber"] == "f3-3"
+    assert r.receipt["passes"]["detector"] == 0 and r.receipt["scrubber"] == "f3-4"
     assert set(r.receipt) == RECEIPT_KEYS  # crm-009 CHECK: PLACE_KEPT is a counts key with a number value
     # A person in the same text is still masked; the kept count stays out of "entities".
     r = await scrub_for("Peter Lawson muốn đi Sa Pa.", VN, ("NAME", "Peter Lawson"), ("NAME", "Sa Pa"))

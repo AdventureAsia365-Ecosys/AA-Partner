@@ -79,6 +79,7 @@ def mark(word: str) -> str:
 
 
 VN_FAMILY_NAMES = frozenset(fold(n) for n in _VN_FAMILY)  # folded; pass 1 reads names family-first on these
+VN_FAMILY_MARKED = frozenset(mark(n) for n in _VN_FAMILY)  # marked; pass 3's local check starts a full name on these
 FAMILY_FOLDED = VN_FAMILY_NAMES | {fold(n) for n in _VN_FAMILY_EXTRA}
 FAMILY_MARKED = frozenset(mark(n) for n in (*_VN_FAMILY, *_VN_FAMILY_EXTRA))
 GIVEN_FOLDED = frozenset(fold(n) for n in _VN_GIVEN)
@@ -106,7 +107,79 @@ def name_like(phrase: str) -> bool:
     return all(_is(w, GIVEN_FOLDED, GIVEN_MARKED) for w in words)
 
 
+def common_family_name(word: str) -> bool:
+    """``word`` is one of the common Vietnamese family names (not the rarer :data:`_VN_FAMILY_EXTRA`), compared marked
+    when written with marks ("Lê" yes, "Lệ" no) and folded otherwise."""
+    return _is(word, VN_FAMILY_NAMES, VN_FAMILY_MARKED)
+
+
 def name_part(word: str, *, middle: bool) -> bool:
     """``word`` can stand inside a Vietnamese full name next to a given name: a family name ("Lê" in "Lê Hội An",
     "Nguyễn" in "Hội An Nguyễn") or, with ``middle``, a common middle name ("Thị" in "Nguyễn Thị Nha Trang")."""
     return _is(word, FAMILY_FOLDED, FAMILY_MARKED) or (middle and _is(word, MIDDLE_FOLDED, MIDDLE_MARKED))
+
+
+# Words for a person ("khách", "guest", "wife", "tên", ...), with the honorifics written with their marks. Option B
+# (app.privacy.scrubber) reads them before a destination; pass 3's local name check (app.privacy.local_names) reads a
+# place after one as a person's name. Unmarked kin words that are everyday English ("me", "be", "ma", "bo") are out.
+PERSON_CUES = (
+    *HONORIFIC_WORDS_MARKED,
+    # people on the booking
+    "khach",
+    "guest",
+    "guests",
+    "traveller",
+    "travellers",
+    "traveler",
+    "travelers",
+    "passenger",
+    "passengers",
+    "contact",
+    "driver",
+    "guide",
+    # naming and greeting
+    "name",
+    "named",
+    "called",
+    "dear",
+    "hi",
+    "hello",
+    "tên",
+    "ten",
+    "gửi",
+    "chào",
+    "liên hệ",
+    # family and friends
+    "wife",
+    "husband",
+    "son",
+    "daughter",
+    "child",
+    "kid",
+    "baby",
+    "friend",
+    "partner",
+    "mother",
+    "father",
+    "mom",
+    "mum",
+    "dad",
+    "sister",
+    "brother",
+    "vợ",
+    "vo",
+    "chồng",
+    "chong",
+    "con",
+    "cháu",
+    "mẹ",
+    "bố",
+    "má",
+    "bé",
+    "cậu",
+    "mợ",
+    "thím",
+    "dượng",
+    "trai",
+    "gái",
+)

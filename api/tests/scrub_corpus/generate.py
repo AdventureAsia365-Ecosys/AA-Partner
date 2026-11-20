@@ -12,8 +12,11 @@ One JSON object per line:
 - ``known``: the persons the agency stored for the trip (pass 1 input, :class:`app.privacy.scrubber.KnownPerson`);
 - ``pii``: strings that must not survive in the scrubbed text (a leak fails the corpus);
 - ``keep``: strings that must survive (places, prices, trip dates, catalog ids: over-scrubbing them breaks drafts);
-- ``needs_detector``: true when only pass 3 (Bedrock Guardrails) can find a value (a name nobody stored). The offline
-  run (every CI) skips these; the Guardrails run (nightly and on scrubber change) includes them;
+- ``needs_detector``: true when only the guardrail can find a value (a name nobody stored). The offline run (every CI)
+  skips these; the Guardrails run (nightly and on scrubber change) includes them. Since S286 (scrubber f3-4) pass 3's
+  local name check finds a Vietnamese full name written with its marks and a place-like name after a word for a person
+  without the guardrail, so those samples are checked offline too (``needs_detector`` false): every PR guards them
+  for free, and a guardrail that stops tagging them (the nightly run of 20/11/2026) no longer leaks them;
 - ``destinations``: the trip's destination codes (``crm.trip.destinations``, option B: pass 3 leaves the trip's own
   non-name-like destinations in clear). ``vietnam``, plus ``cambodia`` when the text names Siem Reap;
 - ``outside`` (a few samples only): destinations outside the trip's countries; never a ``keep`` string, because pass 3
@@ -73,28 +76,38 @@ PLACE_LIKE = [
     ("en", ("Sydney", "Paris")),
     ("en", ("Austin", "Brooklyn")),
 ]
-# Third parties nobody stored: only Guardrails (pass 3) can find them.
+# Third parties nobody stored. The Vietnamese ones (a common family name, written with marks) are pass 3's local name
+# check's since S286 and are checked offline; the English ones only the guardrail can find.
 STRANGERS_VI = ["Trần Minh Khoa", "Nguyễn Thị Hồng Nhung", "Phạm Gia Bảo", "Lê Hoài Phương"]
 STRANGERS_EN = ["Peter Lawson", "Margaret Ellis", "David Okafor", "Hannah Schmidt"]
 PLACES_VI = ["Hạ Long", "Sa Pa", "Hội An", "Ninh Bình", "Phú Quốc", "Huế", "Mai Châu", "Hà Giang", "Đà Lạt", "Côn Đảo"]
 PLACES_EN = ["Ha Long Bay", "Sapa", "Hoi An", "Ninh Binh", "Phu Quoc", "Hue", "Mekong Delta", "Da Lat", "Siem Reap"]
 # Option B adversarial samples (S250): people nobody stored, named like places that read as names, in the texts of
 # the S249 live probe (the guardrail tagged every one NAME or ADDRESS). On a Vietnam trip they must stay masked: an
-# allow-list widened to a name-like place turns the corpus red with a leak. (text, pii, keep)
+# allow-list widened to a name-like place turns the corpus red with a leak. Since S286 pass 3's local name check masks
+# a place after a word for a person, so every row but the first (a given name alone, "anh Tuấn") is checked offline.
+# (text, pii, keep, needs_detector)
 NAME_LIKE_STRANGERS = [
-    ("vi", "Khách Kim Liên (vợ anh Tuấn) muốn đổi phòng.", ["Kim Liên", "Tuấn"], ["muốn đổi phòng"]),
-    ("vi", "Liên hệ chị Hải Dương để nhận vé.", ["Hải Dương"], ["để nhận vé"]),
-    ("en", "Our driver Long An will meet you.", ["Long An"], ["will meet you"]),
-    ("en", "Travellers: Mai Châu and Thái Bình.", ["Mai Châu", "Thái Bình"], []),
-    ("vi", "Danh sách khách: Hà Giang, Kim Liên, Hòa Bình.", ["Hà Giang", "Kim Liên", "Hòa Bình"], []),
-    ("en", "Passengers: Mrs Hà Giang, Mr Long An.", ["Hà Giang", "Long An"], []),
-    ("en", "Room 1: Ninh Bình + Hải Dương. Room 2: Thanh Hóa.", ["Ninh Bình", "Hải Dương", "Thanh Hóa"], ["Room 2"]),
-    ("vi", "Khách Mai Châu và chồng là Thái Bình đi tour Sa Pa.", ["Mai Châu", "Thái Bình"], ["Sa Pa"]),
-    ("en", "Traveller Hà Giang wants to visit Hạ Long.", ["Hà Giang"], ["Hạ Long"]),
+    ("vi", "Khách Kim Liên (vợ anh Tuấn) muốn đổi phòng.", ["Kim Liên", "Tuấn"], ["muốn đổi phòng"], True),
+    ("vi", "Liên hệ chị Hải Dương để nhận vé.", ["Hải Dương"], ["để nhận vé"], False),
+    ("en", "Our driver Long An will meet you.", ["Long An"], ["will meet you"], False),
+    ("en", "Travellers: Mai Châu and Thái Bình.", ["Mai Châu", "Thái Bình"], [], False),
+    ("vi", "Danh sách khách: Hà Giang, Kim Liên, Hòa Bình.", ["Hà Giang", "Kim Liên", "Hòa Bình"], [], False),
+    ("en", "Passengers: Mrs Hà Giang, Mr Long An.", ["Hà Giang", "Long An"], [], False),
+    (
+        "en",
+        "Room 1: Ninh Bình + Hải Dương. Room 2: Thanh Hóa.",
+        ["Ninh Bình", "Hải Dương", "Thanh Hóa"],
+        ["Room 2"],
+        False,
+    ),
+    ("vi", "Khách Mai Châu và chồng là Thái Bình đi tour Sa Pa.", ["Mai Châu", "Thái Bình"], ["Sa Pa"], False),
+    ("en", "Traveller Hà Giang wants to visit Hạ Long.", ["Hà Giang"], ["Hạ Long"], False),
 ]
 # Option B review (S250, live on acc2 ApplyGuardrail): people named exactly like a keepable destination, after a person
 # cue or next to a family name. The guardrail tagged each one, and before the review fix each was left in clear. They
-# must stay masked: a cue dropped from scrubber.PERSON_CUES turns the corpus red with a leak. (text, pii, keep)
+# must stay masked: a cue dropped from scrubber.PERSON_CUES turns the corpus red with a leak. Pass 3's local name check
+# (S286) finds every one of them without the guardrail, so they are checked offline. (text, pii, keep)
 PERSON_CUE_STRANGERS = [
     ("en", "Mr.Hội An confirmed the booking.", ["Hội An"], ["confirmed the booking"]),
     ("en", "(Mrs) Hội An will join the trip.", ["Hội An"], ["will join the trip"]),
@@ -312,7 +325,7 @@ def build() -> list[dict]:
         else:
             stranger = STRANGERS_VI[i % len(STRANGERS_VI)]
             text = f"Khách {full} được {stranger} giới thiệu, muốn đi {place} tháng 5/2027."
-            add("vi", text, [person], [full, stranger], [place, "5/2027"], needs=True)
+            add("vi", text, [person], [full, stranger], [place, "5/2027"])
 
     # ── English ────────────────────────────────────────────────────────────────────────────────────
     for i in range(110):
@@ -401,12 +414,12 @@ def build() -> list[dict]:
         add("vi", f"khach {flat} muon doi ngay khoi hanh sang 20/04/2027, so dt cu", [person], [flat], ["20/04/2027"])
         add("vi", f"{flat.upper()} - đã cọc 30%", [person], [flat.upper()], ["30%"])
     # ── Option B (S250): name-like strangers on a Vietnam trip, and places outside the trip's countries ──
-    for lang, text, pii, keep in NAME_LIKE_STRANGERS:
-        add(lang, text, [], pii, keep, needs=True)
+    for lang, text, pii, keep, needs in NAME_LIKE_STRANGERS:
+        add(lang, text, [], pii, keep, needs=needs)
     for lang, countries, text, keep, outside in OUTSIDE_TRIP:
         add(lang, text, [], [], keep, destinations=countries, outside=outside)
     for lang, text, pii, keep in PERSON_CUE_STRANGERS:
-        add(lang, text, [], pii, keep, needs=True)
+        add(lang, text, [], pii, keep)
     return samples
 
 

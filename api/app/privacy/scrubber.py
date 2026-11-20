@@ -24,6 +24,14 @@
    could be read as a person's name ("Mai Châu", "Hà Giang", "Long An": :func:`app.privacy.names.name_like`) or it
    follows an honorific or a word for a person ("chị Sa Pa", "guest Hội An"). Accepted residual risk: a person nobody
    stored whose whole name is exactly such a place is left visible when the guardrail tags them.
+   **Local names** (S286, ``f3-4``): the guardrail's findings are joined by a local, deterministic person-name check
+   (:func:`local_person_findings`), because the guardrail is not stable on Vietnamese names (the nightly corpus run of
+   20/11/2026 lost every place-like name and one full name with the same guardrail version): (a) a capitalised run of
+   2-4 words that starts with a common Vietnamese family name written with its marks ("Phạm Gia Bảo") and is not a
+   place, and (b) a known place right after a word for a person ("Traveller Hà Giang", "chồng là Thái Bình", "Room 1:
+   Ninh Bình + Hải Dương", "Danh sách khách: Hà Giang, Kim Liên"). Both become ``<PERSON_n>`` findings that option B
+   never keeps; one already covered by a guardrail finding that option B would not keep is dropped, so where the
+   guardrail sees a value nothing changes.
 
 Rules:
 
@@ -49,14 +57,15 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from app.privacy import names, patterns
+from app.privacy import local_names, names, patterns
 from app.privacy.places import is_keepable_place, is_place, place_spans
 from app.privacy.text import digits, extend_over_marks, fold, fold_with_map, original_span
 
 # Bumped whenever the same input can scrub to a different output (a new kind, a new rule): the receipt and the stored
 # map say which rules produced them. f3-2: detector ADDRESS findings that are exactly one destination -> <PLACE_n>.
 # f3-3: detector NAME / ADDRESS findings that are exactly one of the trip's own non-name-like destinations: clear.
-VERSION = "f3-3"
+# f3-4: a local person-name check joins the detector's findings (S286).
+VERSION = "f3-4"
 MAX_TEXT_CHARS = 24_000
 DEFAULT_TIMEOUT_S = 3.0
 PASSES = ("known", "regex", "detector")
@@ -102,7 +111,9 @@ DETECTOR_KINDS = {
     "CA_HEALTH_NUMBER": "NATIONAL_ID",
     "AWS_ACCESS_KEY": "SECRET",
     "AWS_SECRET_KEY": "SECRET",
+    "LOCAL_NAME": "PERSON",  # pass 3's local name check (S286): a person, never a keepable destination (option B)
 }
+LOCAL_NAME = "LOCAL_NAME"
 
 
 class ScrubError(Exception):
@@ -403,7 +414,7 @@ class PiiScrubber:
             raise
         except Exception as exc:  # noqa: BLE001 — a bug in a pass must not let text through
             raise ScrubError(type(exc).__name__) from None
-        text = await self._detector_pass(text, reg, deadline - loop.time(), known.destinations)
+        text = await self._detector_pass(text, reg, deadline, known.destinations)
         counts = dict(reg.counts)
         if reg.kept_places:
             counts[PLACE_KEPT] = reg.kept_places  # a count of what was not replaced: not in "entities"
@@ -429,20 +440,30 @@ class PiiScrubber:
         return _apply(text, spans)
 
     async def _detector_pass(
-        self, text: str, reg: _Registry, timeout_s: float, destinations: tuple[str, ...] = ()
+        self, text: str, reg: _Registry, deadline: float, destinations: tuple[str, ...] = ()
     ) -> str:
-        if timeout_s <= 0:
+        loop = asyncio.get_running_loop()
+        if deadline - loop.time() <= 0:
             raise ScrubTimeout("scrub timeout")
         try:
-            detections = await asyncio.wait_for(self.detector.detect(text), timeout=timeout_s)
+            detections = await asyncio.wait_for(self.detector.detect(text), timeout=deadline - loop.time())
         except TimeoutError:
             raise ScrubTimeout("detector timeout") from None
         except ScrubError:
             raise
         except Exception as exc:  # noqa: BLE001 — recorded by class only, never the message (it may echo text)
             raise ScrubError(type(exc).__name__) from None
+        # The local name check and the placing are CPU work too (review S286): a worker thread under what is left of
+        # the same deadline, so a crafted message never blocks the event loop and a slow pass fails closed.
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise ScrubTimeout("scrub timeout")
         try:
-            return _apply_detections(text, detections, reg, destinations)
+            return await asyncio.wait_for(
+                asyncio.to_thread(_place_findings, text, detections, reg, destinations), timeout=remaining
+            )
+        except TimeoutError:
+            raise ScrubTimeout("scrub timeout") from None
         except ScrubError:
             raise
         except Exception as exc:  # noqa: BLE001 — a bug here must not let text through
@@ -460,67 +481,7 @@ KEEPABLE_TYPES = frozenset({"NAME", "ADDRESS"})  # option B: only these detector
 # named like it: masked as before. The cue may be followed by any punctuation and spacing, none at all included
 # ("Mr.Hội An", "Ms:Đà Lạt"). Matched on the text before the finding with its marks (names.mark), so "đi Sa Pa" (go
 # to) is not "dì Sa Pa" (aunt); the unmarked honorifics (and a few unmarked kin words) match unmarked writing.
-PERSON_CUES = (
-    *names.HONORIFIC_WORDS_MARKED,
-    # people on the booking
-    "khach",
-    "guest",
-    "guests",
-    "traveller",
-    "travellers",
-    "traveler",
-    "travelers",
-    "passenger",
-    "passengers",
-    "contact",
-    "driver",
-    "guide",
-    # naming and greeting
-    "name",
-    "named",
-    "called",
-    "dear",
-    "hi",
-    "hello",
-    "tên",
-    "ten",
-    "gửi",
-    "chào",
-    "liên hệ",
-    # family and friends
-    "wife",
-    "husband",
-    "son",
-    "daughter",
-    "child",
-    "kid",
-    "baby",
-    "friend",
-    "partner",
-    "mother",
-    "father",
-    "mom",
-    "mum",
-    "dad",
-    "sister",
-    "brother",
-    "vợ",
-    "vo",
-    "chồng",
-    "chong",
-    "con",
-    "cháu",
-    "mẹ",
-    "bố",
-    "má",
-    "bé",
-    "cậu",
-    "mợ",
-    "thím",
-    "dượng",
-    "trai",
-    "gái",
-)
+PERSON_CUES = names.PERSON_CUES
 _PERSON_BEFORE = re.compile(
     r"(?<!\w)(?:" + "|".join(re.escape(c).replace(r"\ ", r"\s+") for c in HONORIFICS + PERSON_CUES) + r")(?!\w)\W*$"
 )
@@ -659,6 +620,58 @@ def _next_to_a_name_part(text: str, start: int, end: int) -> bool:
         if (loose or word[0].isupper()) and not english and names.name_part(word, middle=middle):
             return True
     return False
+
+
+# ── Pass 3, local half: person names the detector may miss (S286, :mod:`app.privacy.local_names`) ────────────────
+
+
+def _place_findings(
+    text: str, detections: Sequence[Detection], reg: _Registry, destinations: Sequence[str] = ()
+) -> str:
+    """The detector's findings plus the local names it did not cover, placed (runs in a worker thread)."""
+    local = _uncovered(text, detections, local_person_findings(text), destinations)
+    return _apply_detections(text, [*detections, *local], reg, destinations)
+
+
+def local_person_findings(text: str) -> list[Detection]:
+    """:func:`app.privacy.local_names.person_names` as findings of pass 3, typed :data:`LOCAL_NAME`: replaced as
+    ``<PERSON_n>`` like a guardrail ``NAME``, but never a keepable piece (option B), so a merged span holding one is
+    always masked ("Room 1: Hội An" stays masked on a Vietnam trip whatever the guardrail said)."""
+    return [Detection(LOCAL_NAME, v) for v in local_names.person_names(text)]
+
+
+def _uncovered(
+    text: str, detections: Sequence[Detection], local: list[Detection], destinations: Sequence[str] = ()
+) -> list[Detection]:
+    """The local findings the detector did not already cover: a local value whose every occurrence lies inside a
+    detector finding of a mapped kind adds nothing and is dropped, so the detector's own kind (a typed place, an
+    address) stands where it saw the value. A detector finding that option B could leave in clear (a keepable
+    destination of the trip) covers nothing: the local finding stays and keeps that span masked."""
+    if not local:
+        return []
+    covered = patterns.Ranges(
+        [
+            span
+            for d in detections
+            if DETECTOR_KINDS.get(d.type)
+            and (d.match or "").strip()
+            and not (destinations and d.type in KEEPABLE_TYPES and is_keepable_place(d.match, destinations))
+            for span in _locate(text, d.match)
+        ]
+    )
+    out = []
+    for d in local:
+        spans = _locate(text, d.match)
+        if not spans:
+            raise ScrubError("local finding not located")
+        if any(not _within(covered, s, e) for s, e in spans):
+            out.append(d)
+    return out
+
+
+def _within(ranges: patterns.Ranges, start: int, end: int) -> bool:
+    i = bisect_right(ranges.ends, start)
+    return i < len(ranges.starts) and ranges.starts[i] <= start and end <= ranges.ends[i]
 
 
 def _locate(text: str, value: str) -> list[tuple[int, int]]:

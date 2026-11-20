@@ -108,6 +108,9 @@ async def test_receipt_takes_counts_and_versions_only(app_pool: asyncpg.Pool) ->
     # Option B (AA-938, S250): version f3-3 and the PLACE_KEPT count fit it too.
     async with in_tenant(app_pool, tenant_id) as conn:
         assert await _call(conn, '{"scrubber": "f3-3", "entities": 1, "counts": {"PERSON": 1, "PLACE_KEPT": 2}}')
+    # Local names (S286): version f3-4 fits it too.
+    async with in_tenant(app_pool, tenant_id) as conn:
+        assert await _call(conn, '{"scrubber": "f3-4", "entities": 2, "counts": {"PERSON": 2}}')
     # Review AA-938: closed at every level, so neither a nested key nor a value can carry a name.
     for bad in (
         '{"scrubber": "f3-1", "name": "Hoa"}',

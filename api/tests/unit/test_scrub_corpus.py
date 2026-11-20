@@ -200,8 +200,9 @@ def test_option_b_the_live_run_replayed_fits_the_overscrub_budget() -> None:
 
 def test_option_b_name_like_strangers_and_places_outside_the_trip_stay_masked() -> None:
     samples = run.load()
-    cue_texts = {text for _, text, _, _ in generate.PERSON_CUE_STRANGERS}
-    strangers = [s for s in samples if s["needs_detector"] and not s["known"] and s["text"] not in cue_texts]
+    # Selected by text: since S286 most of them are checked offline (needs_detector false), see the test below.
+    name_like_texts = {row[1] for row in generate.NAME_LIKE_STRANGERS}
+    strangers = [s for s in samples if s["text"] in name_like_texts and not s["known"]]
     outside = [s for s in samples if s.get("outside")]
     assert len(strangers) >= 9 and len(outside) >= 3
     assert all(name_like(p) for s in strangers for p in s["pii"] if " " in p)
@@ -240,3 +241,31 @@ def test_option_b_people_named_like_a_keepable_destination_stay_masked() -> None
         r = asyncio.run(run.PiiScrubber(PiiTagger(s), today=run.TODAY).scrub(s["text"], run.known_of(s)))
         assert not any(run._readable(p, r.text) for p in s["pii"]), (s["id"], r.text)
         assert all(k in r.text for k in s["keep"]) and "PLACE_KEPT" not in r.receipt["counts"], s["id"]
+
+
+# ── Local names (S286, scrubber f3-4): the red nightly run of 20/11/2026, guarded offline ─────────────────────────────
+
+# The 12 leaks of that run (ids only): the guardrail, same version, no longer tagged these people.
+RED_NIGHTLY_LEAKS = (
+    "vi-099:1 en-246:0 en-246:1 vi-247:0 vi-247:1 vi-247:2 en-249:0 en-249:1 en-249:2 vi-250:0 vi-250:1 en-251:0"
+).split()
+
+
+def test_s286_the_red_nightly_leaks_are_checked_offline_and_masked() -> None:
+    samples = {s["id"]: s for s in run.load()}
+    ids = sorted({ref.split(":")[0] for ref in RED_NIGHTLY_LEAKS})
+    assert all(not samples[i]["needs_detector"] for i in ids)  # every PR guards them, no guardrail needed
+    report = asyncio.run(
+        run.evaluate(run.PiiScrubber(run.NoDetector(), today=run.TODAY), [samples[i] for i in ids], offline=True)
+    )
+    assert report.samples == len(ids) and report.leaks == [] and report.overscrubbed == [], report.summary()
+
+
+def test_s286_a_detector_that_misses_every_name_leaks_only_what_needs_it() -> None:
+    """The guardrail tags only the destinations (as ADDRESS) and no person at all: what still leaks is only in samples
+    marked needs_detector (English names nobody stored, a given name alone)."""
+    samples = run.load()
+    report = asyncio.run(run.evaluate(run.PiiScrubber(PlaceTagger(), today=run.TODAY), samples, offline=False))
+    needs = {s["id"] for s in samples if s["needs_detector"]}
+    assert report.leaks and all(ref.split(":")[0] in needs for ref in report.leaks), report.summary()
+    assert report.overscrub_rate <= run.MAX_OVERSCRUB_RATE, report.summary()
