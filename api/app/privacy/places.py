@@ -46,11 +46,12 @@ def place_spans(folded: str) -> list[tuple[int, int]]:
 # Option C (AA-938, S249): a detector ADDRESS finding that is exactly one destination becomes ``<PLACE_n>``. Typing
 # never unmasks anything, so this list may be wider than PLACE_PHRASES: it adds English spellings and destinations
 # whose single word is also a common given name ("Huế"). Those must NOT join PLACE_PHRASES, where they would make
-# pass 1 skip a traveller called Huế.
+# pass 1 skip a traveller called Huế. The countries, continents and lakes that start with a common family name ("Thái
+# Lan", "Châu Á", "Hồ Tây") are here so pass 3's local name check (scrubber, S286) does not read them as a full name.
 _TYPED_ONLY = """
 Huế|Sapa|Halong|Ha Long Bay|Halong Bay|Hạ Long Bay|Lan Ha Bay|Bai Tu Long Bay|Hanoi|Saigon|Ho Chi Minh City|Danang|
 Dalat|Phu Quoc Island|Mekong|Mekong Delta|Cu Chi|Ninh Binh Province|Vietnam|Việt Nam|Laos|Cambodia|Thailand|Myanmar|
-Bangkok|Angkor|Angkor Wat
+Bangkok|Angkor|Angkor Wat|Thái Lan|Hà Lan|Hàn Quốc|Châu Á|Châu Âu|Châu Mỹ|Châu Phi|Châu Úc|Hồ Tây|Hồ Gươm
 """
 TYPED_PLACE_PHRASES = tuple(
     sorted(

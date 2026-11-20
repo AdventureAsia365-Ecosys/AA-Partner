@@ -149,7 +149,7 @@ async def test_receipt_has_counts_and_versions_only() -> None:
     r = await run("Nguyen Van An, an.nguyen@example.invalid, 0912 345 678", an())
     assert set(r.receipt) == RECEIPT_KEYS
     assert (
-        r.receipt["scrubber"] == scrubber_module.VERSION == "f3-3"
+        r.receipt["scrubber"] == scrubber_module.VERSION == "f3-4"
         and r.receipt["detector"] == "fake"
         and r.receipt["entities"] == 3
     )
@@ -258,7 +258,16 @@ async def test_western_and_family_first_name_rules() -> None:
     assert (await run("Madonna called; madonna lily", no_parts)).text == "<PERSON_1> called; madonna lily"
 
 
-@pytest.mark.parametrize("shape", ["1 ", "0912 345 678 ", "Prices: 10 11 12 13 ", "Nguyen Van An chị an Ninh Bình "])
+@pytest.mark.parametrize(
+    "shape",
+    [
+        "1 ",
+        "0912 345 678 ",
+        "Prices: 10 11 12 13 ",
+        "Nguyen Van An chị an Ninh Bình ",
+        "Room 1: Hà Nam + Kim Liên, Đỗ Thị Hằng và Lâm Quốc Vinh; ",  # S286: the local name check
+    ],
+)
 async def test_scrub_of_a_large_prompt_is_fast_and_off_the_event_loop(shape: str) -> None:
     # Review AA-938: a 2,400-char digit list took 1.6 s and 24,000 chars would have taken hours, on the event loop.
     text = (shape * (20_000 // len(shape) + 1))[:20_000]
@@ -427,7 +436,7 @@ async def test_option_b_a_trip_destination_tagged_name_or_address_stays_in_clear
     assert r.text == "Đi Hạ Long rồi Hoi An, Sa Pa và Đà Lạt; lại Hạ Long."
     assert r.placeholders == {}
     assert r.receipt["counts"] == {"PLACE_KEPT": 5} and r.receipt["entities"] == 0
-    assert r.receipt["passes"]["detector"] == 0 and r.receipt["scrubber"] == "f3-3"
+    assert r.receipt["passes"]["detector"] == 0 and r.receipt["scrubber"] == "f3-4"
     assert set(r.receipt) == RECEIPT_KEYS  # crm-009 CHECK: PLACE_KEPT is a counts key with a number value
     # A person in the same text is still masked; the kept count stays out of "entities".
     r = await scrub_for("Peter Lawson muốn đi Sa Pa.", VN, ("NAME", "Peter Lawson"), ("NAME", "Sa Pa"))
@@ -633,3 +642,88 @@ async def test_keepable_places_guard() -> None:
         assert is_keepable_place(yes, VN), yes
     for no in ("Hà Long", "Ha Long", "Sa Pa 2", "đi Sa Pa", "", "Bangkok"):
         assert not is_keepable_place(no, VN), no
+
+
+# ── Local names (S286, f3-4): person names found without the detector ─────────────────────────────────────────────
+# The nightly corpus run of 20/11/2026 went red with the same guardrail version: it stopped tagging people named like
+# places in lists and after person words, and one Vietnamese full name. The local check masks those shapes with no
+# detector finding at all. Every name below is invented.
+
+LOCAL_PERSON_SHAPES = [
+    ("Khách Đoàn Gia Khiêm giới thiệu tour này.", ["Đoàn Gia Khiêm"]),
+    ("Người đặt: VƯƠNG THỊ NGỌC TRÂM, đã cọc.", ["VƯƠNG THỊ NGỌC TRÂM"]),
+    ("Guests: Hòa Bình and Kim Liên, both vegetarian.", ["Hòa Bình", "Kim Liên"]),
+    ("Danh sách khách: Long An, Hà Nam, Thái Bình.", ["Long An", "Hà Nam", "Thái Bình"]),
+    ("Phòng 3: Hải Dương & Mai Châu. Phòng 4: Lâm Đồng.", ["Hải Dương", "Mai Châu", "Lâm Đồng"]),
+    ("Room 2: Cao Bằng + Thanh Hóa, twin beds.", ["Cao Bằng", "Thanh Hóa"]),
+    ("Chị Kim Liên đi cùng chồng là Phú Thọ.", ["Kim Liên", "Phú Thọ"]),
+    ("Her husband is Ninh Bình, arriving late.", ["Ninh Bình"]),
+    ("Passenger Hà Giang asked about the bus.", ["Hà Giang"]),
+    ("Passengers: Mrs Hà Nam, Mr Hòa Bình.", ["Hà Nam", "Hòa Bình"]),
+    ("Mr.Hội An called; (Ms) Nha Trang will pay.", ["Hội An", "Nha Trang"]),
+    ("Khách Lê Hội An đổi ngày.", ["Lê Hội An"]),
+]
+
+
+@pytest.mark.parametrize(("text", "people"), LOCAL_PERSON_SHAPES)
+async def test_local_names_mask_people_the_detector_did_not_tag(text: str, people: list[str]) -> None:
+    for destinations in ((), VN):  # option B never keeps a person found this way
+        r = await scrub_for(text, destinations)
+        for person in people:
+            assert person not in r.text, (person, r.text)
+            assert person in r.placeholders.values(), person
+        assert all(ph.startswith("<PERSON_") for ph in r.placeholders), r.placeholders
+        assert r.receipt["passes"]["detector"] == r.receipt["counts"]["PERSON"] > 0
+        assert restore(r.text, r.placeholders) == text
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Từ Hà Nội đi Sa Pa, rồi về Hồ Hoàn Kiếm và Hà Nội Old Quarter.",
+        "Đi Thái Lan hay Hàn Quốc? Châu Á mùa này đẹp; Hồ Tây buổi tối.",
+        "Khách sạn Hà Nội gần Hồ Gươm; khách hàng Đà Nẵng hỏi giá.",
+        "Don't miss Hội An; Hoi An Ancient Town at night; Ha Long Bay cruise.",
+        "To Hoi An by train, Le Mans style rally, Pham noodles, Do Son beach.",
+        "Hồ Chí Minh City, then Hà Giang Loop, then Mai Châu.",
+        "Tour Lâm Đồng 3 ngày; Ninh Bình + Hải Dương by car.",
+        "Our top ten Hội An cafés; the son et lumière show.",
+    ],
+)
+async def test_local_names_leave_places_and_everyday_words(text: str) -> None:
+    r = await scrub_for(text, VN)
+    assert r.text == text and r.placeholders == {}, r.text
+
+
+async def test_local_names_only_fill_what_the_detector_missed() -> None:
+    # The detector covers Hà Giang (typed place, as before): unchanged. It misses Kim Liên: the local check masks it.
+    r = await scrub_for("Danh sách khách: Hà Giang, Kim Liên.", (), ("ADDRESS", "Hà Giang"))
+    assert r.text == "Danh sách khách: <PLACE_1>, <PERSON_1>."
+    # A detector finding wider than the local one ("Mrs Hà Nam") covers it: one placeholder, the detector's.
+    r = await scrub_for("Passengers: Mrs Hà Nam.", (), ("NAME", "Mrs Hà Nam"))
+    assert r.text == "Passengers: <PERSON_1>." and r.placeholders == {"<PERSON_1>": "Mrs Hà Nam"}
+    # Stored people are pass 1's: the local check only ever sees their placeholder.
+    known = KnownPerson("traveller", display_name="Đoàn Gia Khiêm")
+    r = await scrub_for("Khách Đoàn Gia Khiêm và Long An.", (), persons=(known,))
+    assert r.text == "Khách <PERSON_1> và <PERSON_2>."
+    assert r.receipt["passes"] == {"known": 1, "regex": 0, "detector": 1}
+
+
+async def test_local_names_read_decomposed_text_and_keep_trip_destinations() -> None:
+    import unicodedata
+
+    text = unicodedata.normalize("NFD", "Khách Đoàn Gia Khiêm đi Hội An, guide Hà Giang.")
+    r = await scrub_for(text, VN, ("NAME", unicodedata.normalize("NFD", "Hội An")))
+    assert "Đoàn" not in unicodedata.normalize("NFC", r.text) and "Giang" not in r.text
+    assert unicodedata.normalize("NFC", r.text) == "Khách <PERSON_1> đi Hội An, guide <PERSON_2>."
+    assert r.receipt["counts"]["PLACE_KEPT"] == 1  # option B still keeps the trip's own destination
+
+
+async def test_a_bug_in_the_local_name_check_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken(text: str) -> list:
+        raise RuntimeError("Đoàn Gia Khiêm")
+
+    monkeypatch.setattr(scrubber_module, "local_person_findings", broken)
+    with pytest.raises(ScrubError) as caught:
+        await run("Khách Đoàn Gia Khiêm")
+    assert "Khiêm" not in str(caught.value)  # recorded by class only

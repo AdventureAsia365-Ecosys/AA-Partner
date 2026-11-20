@@ -79,6 +79,7 @@ def mark(word: str) -> str:
 
 
 VN_FAMILY_NAMES = frozenset(fold(n) for n in _VN_FAMILY)  # folded; pass 1 reads names family-first on these
+VN_FAMILY_MARKED = frozenset(mark(n) for n in _VN_FAMILY)  # marked; pass 3's local check starts a full name on these
 FAMILY_FOLDED = VN_FAMILY_NAMES | {fold(n) for n in _VN_FAMILY_EXTRA}
 FAMILY_MARKED = frozenset(mark(n) for n in (*_VN_FAMILY, *_VN_FAMILY_EXTRA))
 GIVEN_FOLDED = frozenset(fold(n) for n in _VN_GIVEN)
@@ -104,6 +105,12 @@ def name_like(phrase: str) -> bool:
     if _is(first, FAMILY_FOLDED, FAMILY_MARKED) or fold(first) in HONORIFIC_WORDS:
         return True
     return all(_is(w, GIVEN_FOLDED, GIVEN_MARKED) for w in words)
+
+
+def common_family_name(word: str) -> bool:
+    """``word`` is one of the common Vietnamese family names (not the rarer :data:`_VN_FAMILY_EXTRA`), compared marked
+    when written with marks ("Lê" yes, "Lệ" no) and folded otherwise."""
+    return _is(word, VN_FAMILY_NAMES, VN_FAMILY_MARKED)
 
 
 def name_part(word: str, *, middle: bool) -> bool:
