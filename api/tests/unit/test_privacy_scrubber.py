@@ -266,6 +266,12 @@ async def test_western_and_family_first_name_rules() -> None:
         "Prices: 10 11 12 13 ",
         "Nguyen Van An chị an Ninh Bình ",
         "Room 1: Hà Nam + Kim Liên, Đỗ Thị Hằng và Lâm Quốc Vinh; ",  # S286: the local name check
+        # S286 review: every list item is a cue again; a walk per cue took 20-30 s on 20,000 characters.
+        "Con, ",
+        "Mr Hà Nam, ",
+        "Guest Long An and ",
+        "Mr Mr ",
+        "Khách Lê ",
     ],
 )
 async def test_scrub_of_a_large_prompt_is_fast_and_off_the_event_loop(shape: str) -> None:
@@ -662,6 +668,9 @@ LOCAL_PERSON_SHAPES = [
     ("Passengers: Mrs Hà Nam, Mr Hòa Bình.", ["Hà Nam", "Hòa Bình"]),
     ("Mr.Hội An called; (Ms) Nha Trang will pay.", ["Hội An", "Nha Trang"]),
     ("Khách Lê Hội An đổi ngày.", ["Lê Hội An"]),
+    # S286 review: a list is walked once; a cue inside a list already walked still cues the item after it.
+    ("Travellers: Mai Châu, Guest Hội An and Mrs Ninh Bình.", ["Mai Châu", "Hội An", "Ninh Bình"]),
+    ("Khách Long An, khách Hội An, Mr Mr Sa Pa.", ["Long An", "Hội An", "Sa Pa"]),
 ]
 
 
@@ -731,6 +740,32 @@ async def test_a_bug_in_the_local_name_check_fails_closed(monkeypatch: pytest.Mo
     monkeypatch.setattr(scrubber_module, "local_person_findings", lambda text: [Detection("NAME", "Lâm Quốc Vinh")])
     with pytest.raises(ScrubError, match="not located"):
         await run("Khách Đoàn Gia Khiêm")
+
+
+async def test_a_slow_local_name_check_fails_closed_off_the_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    # S286 review: the local check ran on the event loop, outside the deadline. Now a worker thread under the deadline.
+    def slow(text: str) -> list:
+        time.sleep(0.5)
+        return []
+
+    monkeypatch.setattr(scrubber_module, "local_person_findings", slow)
+    ticks = 0
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while True:
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    task = asyncio.create_task(ticker())
+    started = time.perf_counter()
+    try:
+        with pytest.raises(ScrubTimeout):
+            await PiiScrubber(Finds(), timeout_s=0.2, today=TODAY).scrub("Khách Đoàn Gia Khiêm")
+    finally:
+        task.cancel()
+    assert time.perf_counter() - started < 0.45  # the deadline, not the slow check, ends the scrub
+    assert ticks >= 5  # the event loop kept running meanwhile
 
 
 async def test_local_names_values_come_once_in_order() -> None:

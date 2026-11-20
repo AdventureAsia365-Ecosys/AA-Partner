@@ -414,7 +414,7 @@ class PiiScrubber:
             raise
         except Exception as exc:  # noqa: BLE001 — a bug in a pass must not let text through
             raise ScrubError(type(exc).__name__) from None
-        text = await self._detector_pass(text, reg, deadline - loop.time(), known.destinations)
+        text = await self._detector_pass(text, reg, deadline, known.destinations)
         counts = dict(reg.counts)
         if reg.kept_places:
             counts[PLACE_KEPT] = reg.kept_places  # a count of what was not replaced: not in "entities"
@@ -440,22 +440,30 @@ class PiiScrubber:
         return _apply(text, spans)
 
     async def _detector_pass(
-        self, text: str, reg: _Registry, timeout_s: float, destinations: tuple[str, ...] = ()
+        self, text: str, reg: _Registry, deadline: float, destinations: tuple[str, ...] = ()
     ) -> str:
-        if timeout_s <= 0:
+        loop = asyncio.get_running_loop()
+        if deadline - loop.time() <= 0:
             raise ScrubTimeout("scrub timeout")
         try:
-            detections = await asyncio.wait_for(self.detector.detect(text), timeout=timeout_s)
+            detections = await asyncio.wait_for(self.detector.detect(text), timeout=deadline - loop.time())
         except TimeoutError:
             raise ScrubTimeout("detector timeout") from None
         except ScrubError:
             raise
         except Exception as exc:  # noqa: BLE001 — recorded by class only, never the message (it may echo text)
             raise ScrubError(type(exc).__name__) from None
+        # The local name check and the placing are CPU work too (review S286): a worker thread under what is left of
+        # the same deadline, so a crafted message never blocks the event loop and a slow pass fails closed.
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise ScrubTimeout("scrub timeout")
         try:
-            local = _uncovered(text, detections, local_person_findings(text), destinations)
-            findings = [*detections, *local]
-            return _apply_detections(text, findings, reg, destinations)
+            return await asyncio.wait_for(
+                asyncio.to_thread(_place_findings, text, detections, reg, destinations), timeout=remaining
+            )
+        except TimeoutError:
+            raise ScrubTimeout("scrub timeout") from None
         except ScrubError:
             raise
         except Exception as exc:  # noqa: BLE001 — a bug here must not let text through
@@ -615,6 +623,14 @@ def _next_to_a_name_part(text: str, start: int, end: int) -> bool:
 
 
 # ── Pass 3, local half: person names the detector may miss (S286, :mod:`app.privacy.local_names`) ────────────────
+
+
+def _place_findings(
+    text: str, detections: Sequence[Detection], reg: _Registry, destinations: Sequence[str] = ()
+) -> str:
+    """The detector's findings plus the local names it did not cover, placed (runs in a worker thread)."""
+    local = _uncovered(text, detections, local_person_findings(text), destinations)
+    return _apply_detections(text, [*detections, *local], reg, destinations)
 
 
 def local_person_findings(text: str) -> list[Detection]:

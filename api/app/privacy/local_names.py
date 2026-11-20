@@ -13,7 +13,7 @@ import re
 import unicodedata
 
 from app.privacy import names, patterns
-from app.privacy.places import is_place
+from app.privacy.places import TYPED_PLACE_PHRASES, is_place
 
 _LETTERS = re.compile(r"[^\W\d_]+")
 _FULL_NAME_WORDS = (2, 4)  # a Vietnamese full name: the family name and one to three more words
@@ -37,6 +37,9 @@ _CUE_BEFORE_WINDOW = 32
 # Items of one list of people: "A, B", "A + B", "A & B", "A and B", "A và B".
 _BLANKS = re.compile(r"[ \t]+")
 _LIST_SEP = re.compile(r"\s*(?:,|\+|&|(?<!\w)and(?!\w)|(?<!\w)và(?!\w))\s*")
+# A list item longer than any known place is not one, and is never compared with the list (that keeps the walk linear).
+# Twice the longest place, so a spelling split into more words (a stray combining mark) is still compared.
+_MAX_PLACE_WORDS = 2 * max(len(_LETTERS.findall(p)) for p in TYPED_PLACE_PHRASES)
 
 
 def person_names(text: str) -> list[str]:
@@ -96,41 +99,92 @@ def _place_run(words: list[str]) -> bool:
 
 
 def _cued_places(text: str) -> list[str]:
+    """Linear in the text (review S286: a walk per cue was quadratic on "Con, Con, ..." and stalled the event loop).
+
+    Every capitalised run is measured once (:class:`_Runs`); a list position reached after a separator is walked only
+    once, because what follows it does not depend on where the walk started (only a list's first item is cued by the
+    word before it); and a run longer than any known place is never compared with the place list."""
     out = []
+    runs = _Runs(text)
+    walked: set[int] = set()  # positions after a list separator: the rest of that list is already read
+    after: dict[int, int | None] = {}  # item end -> position after its separator (None: the list ends there)
     for m in _CUE.finditer(text):
-        pos, first = m.end(), True
+        pos, cued = m.end(), True
         while True:
             held = patterns.PLACEHOLDER.match(text, pos)  # a person of the earlier passes: the list goes on
-            item = (held.start(), held.end()) if held else _capitalised_run(text, pos)
-            if item is None:
+            if held:
+                end = held.end()
+            else:
+                item = runs.item(pos)
+                if item is None:
+                    break
+                start, end, titled = item
+                # Right after a cue any place is a person; later in the list only a name-like one ("Khách Lê, Hội An
+                # là điểm đầu" keeps the trip's own Hội An, "Travellers: Mai Châu and Thái Bình" masks both). A title
+                # opening the item ("Mrs Hà Giang") is a cue of its own.
+                value = text[start:end]
+                if start < end and is_place(value) and (cued or titled or names.name_like(value)):
+                    out.append(value)
+            if end not in after:
+                sep = _LIST_SEP.match(text, end)
+                after[end] = sep.end() if sep else None
+            nxt = after[end]
+            if nxt is None or nxt in walked:
                 break
-            start, end = item
-            words = _LETTERS.findall(text[start:end])
-            cued = first
-            while words and words[0] in _TITLES:  # "Mrs Hà Giang": the title is a cue of its own
-                words, cued = words[1:], True
-                start = text.index(words[0], start) if words else end
-            # Right after a cue any place is a person; later in the list only a name-like one ("Khách Lê, Hội An là
-            # điểm đầu" keeps the trip's own Hội An, "Travellers: Mai Châu and Thái Bình" masks both).
-            if words and is_place(text[start:end]) and (cued or names.name_like(text[start:end])):
-                out.append(text[start:end])
-            first = False
-            sep = _LIST_SEP.match(text, end)
-            if not sep:
-                break
-            pos = sep.end()
+            walked.add(nxt)
+            pos, cued = nxt, False
     return out
 
 
-def _capitalised_run(text: str, pos: int) -> tuple[int, int] | None:
-    """``[start, end)`` of the capitalised words starting at ``pos`` (whitespace only between them), or None."""
-    m = _LETTERS.match(text, pos)
-    if not m or not m.group(0)[0].isupper():
-        return None
-    start, end = m.start(), m.end()
-    while True:
-        gap = _BLANKS.match(text, end)
-        nxt = _LETTERS.match(text, gap.end()) if gap else None
-        if not nxt or not nxt.group(0)[0].isupper():
-            return start, end
-        end = nxt.end()
+class _Runs:
+    """The capitalised runs of ``text`` (letter words, spaces or tabs only between them), measured once."""
+
+    def __init__(self, text: str):
+        self.text = text
+        self.tokens = list(_LETTERS.finditer(text))
+        self.index = {t.start(): i for i, t in enumerate(self.tokens)}
+        n = len(self.tokens)
+        self.last = list(range(n))  # i -> the last word of the capitalised run that word i opens
+        self.untitled = list(range(n))  # i -> the first word from i on that is not a title (last + 1: none)
+        for i in range(n - 1, -1, -1):
+            if i + 1 < n and self._joined(i):
+                self.last[i] = self.last[i + 1]
+            if self.tokens[i].group(0) in _TITLES:
+                self.untitled[i] = self.untitled[i + 1] if self.last[i] > i else i + 1
+
+    def _joined(self, i: int) -> bool:
+        a, b = self.tokens[i], self.tokens[i + 1]
+        return b.group(0)[0].isupper() and _BLANKS.fullmatch(self.text, a.end(), b.start()) is not None
+
+    def item(self, pos: int) -> tuple[int, int, bool] | None:
+        """The capitalised run at ``pos`` without the titles opening it: ``(start, end, titled)``, an empty span when
+        it is titles only or longer than any known place, None when no capitalised word starts at ``pos``."""
+        i = self.index.get(pos)
+        if i is None:
+            return self._item_inside(pos)
+        if not self.tokens[i].group(0)[0].isupper():
+            return None
+        last, k = self.last[i], self.untitled[i]
+        end = self.tokens[last].end()
+        if k > last or last - k + 1 > _MAX_PLACE_WORDS:
+            return end, end, k > i
+        return self.tokens[k].start(), end, k > i
+
+    def _item_inside(self, pos: int) -> tuple[int, int, bool] | None:
+        """``pos`` inside a word ("Mr isÀ": the cue took "is"): that word's rest, joined to the run after it."""
+        m = _LETTERS.match(self.text, pos)
+        if not m or not m.group(0)[0].isupper():
+            return None
+        gap = _BLANKS.match(self.text, m.end())
+        j = self.index.get(gap.end()) if gap else None
+        if j is None or not self.tokens[j].group(0)[0].isupper():
+            if m.group(0) in _TITLES:
+                return m.end(), m.end(), True
+            return pos, m.end(), False
+        last, end = self.last[j], self.tokens[self.last[j]].end()
+        if m.group(0) not in _TITLES:
+            return (end, end, False) if last - j + 2 > _MAX_PLACE_WORDS else (pos, end, False)
+        k = self.untitled[j]
+        if k > last or last - k + 1 > _MAX_PLACE_WORDS:
+            return end, end, True
+        return self.tokens[k].start(), end, True
