@@ -140,7 +140,6 @@
   "web/app/(studio)/portal/_components/BrandTab.tsx::BrandForm.handleUpload": 36,
   "web/app/(studio)/portal/_components/CatalogDrawer.tsx::CatalogDrawer": 36,
   "web/app/(studio)/portal/_components/CatalogTab.tsx::CatalogInner": 13,
-  "web/app/(studio)/portal/_components/CatalogTab.tsx::CatalogInner.exportSelected.map()#2": 39,
   "web/app/(studio)/portal/_components/DashboardTab.tsx::DashboardTab": 47,
   "web/app/(studio)/portal/_components/DashboardTab.tsx::DashboardTab.map()#2": 21,
   "web/app/(studio)/portal/_components/FacebookConnect.tsx::FacebookConnectForm.handleConnect": 11,

@@ -5,6 +5,7 @@
 // refetchInterval that runs only while a tour is still being AI-written (isAiWriting) and stops on
 // its own — no setState-in-effect (React Compiler rule, frontend/AGENTS.md). The drawer body lives
 // in CatalogDrawer.tsx. Export (CSV/XLSX/DOCX) and the one-row-per-tour grouping are unchanged.
+// AA-1168: the CSV / XLSX rows and the AI disclosure are built in lib/studio/catalogExport.ts.
 // AA-668 (S239): "Request Rewrite" (and opening a tour that is being written or failed) opens the
 // Writer panel (TourRewritePanel.tsx) — live progress, Retry, the result; closing it mid-write keeps
 // the job and the page toasts when it settles (useWriteWatcher). The version drawer opens on
@@ -19,7 +20,7 @@ import { Download } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import * as XLSX from "xlsx";
 import { CtaLink } from "@/app/_kit/local/studio/StudioCard";
-import { parseContent } from "@/lib/studio/format";
+import { catalogExportRows, catalogTsv, catalogWorkbook } from "@/lib/studio/catalogExport";
 import { dispositionFileName } from "@/lib/studio/downloadHeaders";
 import { AiNotice, Button, type ColumnDef, DataTable, Drawer, ToastProvider, useToast, K, sans, useLang, useT } from "@/app/_kit";
 import { CATALOG_MESSAGES } from "./tours.messages";
@@ -44,39 +45,6 @@ import {
   saveVersionEdit,
   type Version,
 } from "./catalogApi";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function flattenVal(v: any): string {
-  if (v == null || v === "") return "";
-  if (typeof v === "string") {
-    try {
-      return flattenVal(JSON.parse(v));
-    } catch {
-      /* plain string */
-    }
-    return v.replace(/[\t\n\r]+/g, " ").trim();
-  }
-  if (Array.isArray(v)) {
-    return v
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .map((x: any) => {
-        if (x == null) return "";
-        if (typeof x === "string") return x.replace(/[\t\n\r]+/g, " ").trim();
-        if (typeof x === "object")
-          return String(x.keyword ?? x.text ?? x.description ?? x.title ?? x.value ?? JSON.stringify(x));
-        return String(x);
-      })
-      .filter(Boolean)
-      .join(" | ");
-  }
-  if (typeof v === "object") {
-    return Object.values(v)
-      .filter((x) => x != null && x !== "")
-      .map((x) => String(x))
-      .join(" | ");
-  }
-  return String(v);
-}
 
 function CatalogInner() {
   const t = useT(CATALOG_MESSAGES);
@@ -215,7 +183,7 @@ function CatalogInner() {
     }
   }
 
-  // ── CSV/XLSX multi-export (unchanged logic) ──
+  // ── CSV/XLSX multi-export (AA-662 columns, plus the AA-1168 AI columns and disclosure) ──
   async function exportSelected(fmt: "csv" | "xls", selectedVersions: Version[]) {
     if (selectedVersions.length === 0) return;
     setIsExporting(true);
@@ -223,40 +191,10 @@ function CatalogInner() {
       const fullData = await Promise.all(
         selectedVersions.map((v) => fetchVersionDetail(v.id).catch(() => null)),
       );
-      const headers = [
-        "Name",
-        "Subtitle",
-        "Country",
-        "Duration",
-        "SEO Title",
-        "SEO Meta",
-        "Summary",
-        "Highlights",
-        "Itineraries",
-        "Created At",
-        "Language",
-      ];
-      const rows: Record<string, string>[] = fullData.map((d, i) => {
-        const v = selectedVersions[i];
-        const rc = parseContent(d?.rewritten_content ?? v.rewritten_content) as Record<string, unknown> | null;
-        return {
-          Name: String(rc?.name ?? d?.aa_name ?? v.aa_name ?? ""),
-          Subtitle: String(rc?.subtitle ?? d?.aa_subtitle ?? ""),
-          Country: String(d?.country ?? v.country ?? ""),
-          Duration: String(d?.duration ?? v.duration ?? ""),
-          "SEO Title": String(rc?.seo_title ?? d?.aa_seo_title ?? ""),
-          "SEO Meta": String(rc?.seo_meta ?? d?.aa_seo_meta ?? ""),
-          Summary: String(rc?.summary ?? d?.aa_summary ?? ""),
-          Highlights: flattenVal(rc?.highlights ?? d?.aa_highlights ?? ""),
-          Itineraries: flattenVal(rc?.itineraries ?? d?.aa_itineraries ?? ""),
-          "Created At": v.created_at ? new Date(v.created_at).toLocaleDateString("en-GB") : "",
-          Language: v.rewrite_language,
-        };
-      });
+      // AA-1168 — the rows carry the four AI columns and the file ends with the AI disclosure (lib/studio/catalogExport.ts).
+      const rows = catalogExportRows(fullData, selectedVersions);
       if (fmt === "csv") {
-        const san = (s: string) => s.replace(/[\t\n\r]+/g, " ");
-        const tsv = [headers.join("\t"), ...rows.map((r) => headers.map((h) => san(r[h] ?? "")).join("\t"))].join("\n");
-        const blob = new Blob(["\ufeff" + tsv], { type: "text/csv;charset=utf-8" });
+        const blob = new Blob(["\ufeff" + catalogTsv(rows)], { type: "text/csv;charset=utf-8" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
@@ -264,11 +202,7 @@ function CatalogInner() {
         a.click();
         URL.revokeObjectURL(url);
       } else {
-        const ws = XLSX.utils.json_to_sheet(rows, { header: headers });
-        ws["!cols"] = [30, 30, 15, 12, 40, 50, 60, 60, 80, 15, 15].map((w) => ({ wch: w }));
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "My Tours");
-        XLSX.writeFile(wb, "my-catalog.xlsx");
+        XLSX.writeFile(catalogWorkbook(rows), "my-catalog.xlsx");
       }
     } finally {
       setIsExporting(false);
