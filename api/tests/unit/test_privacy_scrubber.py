@@ -727,3 +727,11 @@ async def test_a_bug_in_the_local_name_check_fails_closed(monkeypatch: pytest.Mo
     with pytest.raises(ScrubError) as caught:
         await run("Khách Đoàn Gia Khiêm")
     assert "Khiêm" not in str(caught.value)  # recorded by class only
+
+
+async def test_local_names_values_come_once_in_order() -> None:
+    from app.privacy.local_names import person_names
+
+    text = "Khách Đoàn Gia Khiêm, Long An và <PERSON_1>; Đoàn Gia Khiêm gọi lại. Room 5: Hà Nam."
+    assert person_names(text) == ["Đoàn Gia Khiêm", "Long An", "Hà Nam"]
+    assert person_names("") == [] and person_names("Khách: ") == [] and person_names("Mrs ") == []
