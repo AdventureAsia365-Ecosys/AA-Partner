@@ -12,6 +12,7 @@ import {
   catalogExportRows,
   catalogTsv,
   catalogWorkbook,
+  exportDisclosure,
   flattenVal,
   type ExportVersion,
 } from "@/lib/studio/catalogExport";
@@ -49,8 +50,42 @@ test("the headers end with the four AI columns and every header has a width", ()
   assert.equal(CATALOG_EXPORT_WIDTHS.length, CATALOG_EXPORT_HEADERS.length);
 });
 
-test("the disclosure is word for word the CIS DISCLOSURE_TEXT", () => {
+test("the fallback disclosure is the English seed of the CIS setting", () => {
   assert.equal(AI_DISCLOSURE_TEXT, "This content was created with the help of AI.");
+});
+
+const WORDING = {
+  text: { en: "Drafted with a writing model.", vi: "Soạn bằng mô hình viết." },
+  social_tag: "#ModelDrafted",
+};
+
+test("the export uses the wording read from CIS, in the versions' language", () => {
+  assert.equal(exportDisclosure(WORDING, [listRow()]), "Drafted with a writing model.");
+  assert.equal(exportDisclosure(WORDING, [listRow({ rewrite_language: "vi" }), listRow({ rewrite_language: "VI-vn" })]),
+    "Soạn bằng mô hình viết.");
+  // mixed languages, or a language without a line: English
+  assert.equal(exportDisclosure(WORDING, [listRow({ rewrite_language: "vi" }), listRow()]), "Drafted with a writing model.");
+  assert.equal(exportDisclosure(WORDING, [listRow({ rewrite_language: "th" })]), "Drafted with a writing model.");
+  assert.equal(exportDisclosure({ text: { en: "Line\nbreak" } }, []), "Line break");
+});
+
+test("the fallback line is used only when the wording cannot be read or has no English line", () => {
+  assert.equal(exportDisclosure(null, [listRow()]), AI_DISCLOSURE_TEXT);
+  assert.equal(exportDisclosure(undefined), AI_DISCLOSURE_TEXT);
+  assert.equal(exportDisclosure({ text: { vi: "Chỉ tiếng Việt." } }, [listRow({ rewrite_language: "vi" })]),
+    AI_DISCLOSURE_TEXT);
+  assert.equal(exportDisclosure({ text: { en: "  " } }, []), AI_DISCLOSURE_TEXT);
+});
+
+test("the CSV and the XLSX end with the wording read from CIS", () => {
+  const rows = catalogExportRows([null], [listRow()]);
+  const line = exportDisclosure(WORDING, [listRow()]);
+  assert.equal(catalogTsv(rows, line).split("\n").at(-1), "Drafted with a writing model.");
+  assert.equal(catalogTsv(rows, "  ").split("\n").at(-1), AI_DISCLOSURE_TEXT);   // never an empty last line
+  const back = XLSX.read(XLSX.write(catalogWorkbook(rows, line), { type: "buffer", bookType: "xlsx" }), { type: "buffer" });
+  const aoa = XLSX.utils.sheet_to_json<string[]>(back.Sheets["My Tours"], { header: 1, defval: "" });
+  assert.equal(aoa[aoa.length - 1][0], "Drafted with a writing model.");
+  assert.equal(back.Props?.Comments, "Drafted with a writing model.");
 });
 
 test("a row takes the rewrite text first and the AI columns from the version mark", () => {

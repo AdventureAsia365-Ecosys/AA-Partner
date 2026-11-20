@@ -5,7 +5,7 @@
 
 import { apiGet } from "@/app/_kit";
 
-import type { VersionAiMark } from "@/lib/studio/catalogExport";
+import type { AiDisclosure, VersionAiMark } from "@/lib/studio/catalogExport";
 
 import type { ServedFields } from "./ServedBadge";
 import { AI_QUOTA_EXHAUSTED, StudioError, allowanceError, factLockedError } from "./studioError";
@@ -79,6 +79,12 @@ export async function fetchMyVersions(): Promise<Version[]> {
 
 export function fetchVersionDetail(id: string): Promise<Version> {
   return apiGet<Version>(`/api/tenant/v1/tours/versions/${id}`);
+}
+
+/** AA-1168 — the AI disclosure wording in force (CIS setting `cis.content.ai_disclosure`), or null when it cannot be
+ *  read (the export then ends with its fallback line; a read failure never blocks an export). */
+export function fetchAiDisclosure(): Promise<AiDisclosure | null> {
+  return apiGet<AiDisclosure>("/api/tenant/v1/content-writing/ai-disclosure").catch(() => null);
 }
 
 export { AI_QUOTA_EXHAUSTED };
