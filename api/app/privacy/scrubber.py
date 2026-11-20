@@ -29,8 +29,9 @@
    20/11/2026 lost every place-like name and one full name with the same guardrail version): (a) a capitalised run of
    2-4 words that starts with a common Vietnamese family name written with its marks ("Phạm Gia Bảo") and is not a
    place, and (b) a known place right after a word for a person ("Traveller Hà Giang", "chồng là Thái Bình", "Room 1:
-   Ninh Bình + Hải Dương", "Danh sách khách: Hà Giang, Kim Liên"). Both become ``NAME`` findings; one already covered
-   by a guardrail finding is dropped, so where the guardrail sees a value nothing changes.
+   Ninh Bình + Hải Dương", "Danh sách khách: Hà Giang, Kim Liên"). Both become ``<PERSON_n>`` findings that option B
+   never keeps; one already covered by a guardrail finding that option B would not keep is dropped, so where the
+   guardrail sees a value nothing changes.
 
 Rules:
 
@@ -110,7 +111,9 @@ DETECTOR_KINDS = {
     "CA_HEALTH_NUMBER": "NATIONAL_ID",
     "AWS_ACCESS_KEY": "SECRET",
     "AWS_SECRET_KEY": "SECRET",
+    "LOCAL_NAME": "PERSON",  # pass 3's local name check (S286): a person, never a keepable destination (option B)
 }
+LOCAL_NAME = "LOCAL_NAME"
 
 
 class ScrubError(Exception):
@@ -450,7 +453,8 @@ class PiiScrubber:
         except Exception as exc:  # noqa: BLE001 — recorded by class only, never the message (it may echo text)
             raise ScrubError(type(exc).__name__) from None
         try:
-            findings = [*detections, *_uncovered(text, detections, local_person_findings(text))]
+            local = _uncovered(text, detections, local_person_findings(text), destinations)
+            findings = [*detections, *local]
             return _apply_detections(text, findings, reg, destinations)
         except ScrubError:
             raise
@@ -614,21 +618,28 @@ def _next_to_a_name_part(text: str, start: int, end: int) -> bool:
 
 
 def local_person_findings(text: str) -> list[Detection]:
-    """:func:`app.privacy.local_names.person_names` as ``NAME`` findings of pass 3."""
-    return [Detection("NAME", v) for v in local_names.person_names(text)]
+    """:func:`app.privacy.local_names.person_names` as findings of pass 3, typed :data:`LOCAL_NAME`: replaced as
+    ``<PERSON_n>`` like a guardrail ``NAME``, but never a keepable piece (option B), so a merged span holding one is
+    always masked ("Room 1: Hội An" stays masked on a Vietnam trip whatever the guardrail said)."""
+    return [Detection(LOCAL_NAME, v) for v in local_names.person_names(text)]
 
 
-def _uncovered(text: str, detections: Sequence[Detection], local: list[Detection]) -> list[Detection]:
+def _uncovered(
+    text: str, detections: Sequence[Detection], local: list[Detection], destinations: Sequence[str] = ()
+) -> list[Detection]:
     """The local findings the detector did not already cover: a local value whose every occurrence lies inside a
     detector finding of a mapped kind adds nothing and is dropped, so the detector's own kind (a typed place, an
-    address) stands where it saw the value."""
+    address) stands where it saw the value. A detector finding that option B could leave in clear (a keepable
+    destination of the trip) covers nothing: the local finding stays and keeps that span masked."""
     if not local:
         return []
     covered = patterns.Ranges(
         [
             span
             for d in detections
-            if DETECTOR_KINDS.get(d.type) and (d.match or "").strip()
+            if DETECTOR_KINDS.get(d.type)
+            and (d.match or "").strip()
+            and not (destinations and d.type in KEEPABLE_TYPES and is_keepable_place(d.match, destinations))
             for span in _locate(text, d.match)
         ]
     )

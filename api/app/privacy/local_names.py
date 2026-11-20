@@ -48,10 +48,10 @@ def person_names(text: str) -> list[str]:
       (:func:`app.privacy.places.is_place`). After a word for a person it is a name even then ("Khách Lê Hội An").
       An unmarked first word ("Pham", "Le", "To") is left to the detector: it is also everyday English.
     - (b) a known place right after a word for a person (:data:`app.privacy.names.PERSON_CUES`, a capitalised
-      title, "room 1", "danh sách khách"), and every later place of the same list joined by ",", "+", "&", "and",
-      "và": "Traveller Hà Giang", "chồng là Thái Bình", "Room 1: Ninh Bình + Hải Dương", "Mrs Hà Giang, Mr Long An". A
-      title opening a list item is skipped ("Mrs Hà Giang"); a placeholder of the earlier passes is an item too
-      ("Khách <PERSON_1> và Long An").
+      title, "room 1", "danh sách khách"), and every later name-like place (:func:`app.privacy.names.name_like`) of
+      the same list joined by ",", "+", "&", "and", "và": "Traveller Hà Giang", "chồng là Thái Bình", "Room 1: Ninh
+      Bình + Hải Dương", "Mrs Hà Giang, Mr Long An". A title opening a list item is skipped and counts as a cue ("Mrs
+      Hà Giang"); a placeholder of the earlier passes is an item too ("Khách <PERSON_1> và Long An").
 
     The text is read in NFC; pass 3 locates every value in the original spelling."""
     text = unicodedata.normalize("NFC", text)
@@ -98,7 +98,7 @@ def _place_run(words: list[str]) -> bool:
 def _cued_places(text: str) -> list[str]:
     out = []
     for m in _CUE.finditer(text):
-        pos = m.end()
+        pos, first = m.end(), True
         while True:
             held = patterns.PLACEHOLDER.match(text, pos)  # a person of the earlier passes: the list goes on
             item = (held.start(), held.end()) if held else _capitalised_run(text, pos)
@@ -106,11 +106,15 @@ def _cued_places(text: str) -> list[str]:
                 break
             start, end = item
             words = _LETTERS.findall(text[start:end])
-            while words and words[0] in _TITLES:  # "Mrs Hà Giang"
-                words = words[1:]
+            cued = first
+            while words and words[0] in _TITLES:  # "Mrs Hà Giang": the title is a cue of its own
+                words, cued = words[1:], True
                 start = text.index(words[0], start) if words else end
-            if words and is_place(text[start:end]):
+            # Right after a cue any place is a person; later in the list only a name-like one ("Khách Lê, Hội An là
+            # điểm đầu" keeps the trip's own Hội An, "Travellers: Mai Châu and Thái Bình" masks both).
+            if words and is_place(text[start:end]) and (cued or names.name_like(text[start:end])):
                 out.append(text[start:end])
+            first = False
             sep = _LIST_SEP.match(text, end)
             if not sep:
                 break

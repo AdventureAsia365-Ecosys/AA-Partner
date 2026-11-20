@@ -739,3 +739,21 @@ async def test_local_names_values_come_once_in_order() -> None:
     text = "Khách Đoàn Gia Khiêm, Long An và <PERSON_1>; Đoàn Gia Khiêm gọi lại. Room 5: Hà Nam."
     assert person_names(text) == ["Đoàn Gia Khiêm", "Long An", "Hà Nam"]
     assert person_names("") == [] and person_names("Khách: ") == [] and person_names("Mrs ") == []
+
+
+@pytest.mark.parametrize(
+    ("text", "hits", "expected"),
+    [
+        # A person named like a keepable destination right after a room line (a cue option B's guard does not know):
+        # the guardrail's NAME alone would be kept; the local finding keeps it masked.
+        ("Room 1: Hội An.", [("NAME", "Hội An")], "Room 1: <PERSON_1>."),
+        ("Room 1: Hội An + Thái Bình.", [("NAME", "Hội An")], "Room 1: <PERSON_1> + <PERSON_2>."),
+        ("Room 1: Hội An.", [], "Room 1: <PERSON_1>."),
+        # The trip's own destination with no person cue: still clear.
+        ("Đi Hội An rồi Sa Pa.", [("NAME", "Hội An"), ("ADDRESS", "Sa Pa")], "Đi Hội An rồi Sa Pa."),
+    ],
+)
+async def test_local_names_are_never_kept_as_a_trip_destination(text: str, hits: list, expected: str) -> None:
+    r = await scrub_for(text, VN, *hits)
+    assert r.text == expected
+    assert restore(r.text, r.placeholders) == text
