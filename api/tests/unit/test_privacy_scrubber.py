@@ -727,6 +727,10 @@ async def test_a_bug_in_the_local_name_check_fails_closed(monkeypatch: pytest.Mo
     with pytest.raises(ScrubError) as caught:
         await run("Khách Đoàn Gia Khiêm")
     assert "Khiêm" not in str(caught.value)  # recorded by class only
+    # A local value that cannot be placed in the text refuses the scrub, like a detector finding.
+    monkeypatch.setattr(scrubber_module, "local_person_findings", lambda text: [Detection("NAME", "Lâm Quốc Vinh")])
+    with pytest.raises(ScrubError, match="not located"):
+        await run("Khách Đoàn Gia Khiêm")
 
 
 async def test_local_names_values_come_once_in_order() -> None:
