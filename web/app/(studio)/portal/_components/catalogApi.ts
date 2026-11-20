@@ -5,6 +5,8 @@
 
 import { apiGet } from "@/app/_kit";
 
+import type { VersionAiMark } from "@/lib/studio/catalogExport";
+
 import type { ServedFields } from "./ServedBadge";
 import { AI_QUOTA_EXHAUSTED, StudioError, allowanceError, factLockedError } from "./studioError";
 
@@ -40,6 +42,9 @@ export interface Version extends ServedFields {
    *  Read-only, informational (lib/masterNotice.ts); absent before the CIS change is deployed. */
   master_updated_at?: string | null;
   master_newer?: boolean | null;
+  /** AA-1040: the machine-readable AI mark CIS adds to every tenant version read (ai_marking.version_mark); the
+   *  CSV / XLSX export writes it into its AI columns (AA-1168, lib/studio/catalogExport.ts). */
+  ai?: VersionAiMark | null;
 }
 
 // AA-760 — every version, not the first page: My Tours groups versions by tour (latest per tour), the
