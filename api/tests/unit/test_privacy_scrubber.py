@@ -768,6 +768,25 @@ async def test_a_slow_local_name_check_fails_closed_off_the_event_loop(monkeypat
     assert ticks >= 5  # the event loop kept running meanwhile
 
 
+@pytest.mark.parametrize(
+    ("text", "people"),
+    [
+        # The cue's "là" / "is" can end inside a word: the rest of that word opens the item.
+        ("Khách laHà Giang đến.", ["Hà Giang"]),
+        ("Khách laHuế đến.", ["Huế"]),
+        ("Khách laMrs Huế", ["Huế"]),
+        ("Mr isMr Sa Pa, Mr isMr.", ["Sa Pa"]),
+        ("Mr isMr Mr Mr Mr Mr Mr Mr Mr Mr Mr Sa Pa.", ["Sa Pa"]),
+        # A run longer than any known place is not one (only rule (a) reads its full names).
+        ("Khách laHuế Bình Lâm Kim Đồng Hải Mai Châu Vân Na.", ["Lâm Kim Đồng Hải", "Châu Vân Na"]),
+    ],
+)
+async def test_local_names_item_opening_inside_a_word(text: str, people: list[str]) -> None:
+    from app.privacy.local_names import person_names
+
+    assert person_names(text) == people
+
+
 async def test_local_names_values_come_once_in_order() -> None:
     from app.privacy.local_names import person_names
 
