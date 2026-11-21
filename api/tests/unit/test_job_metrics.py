@@ -28,8 +28,8 @@ def test_expected_seconds_and_default() -> None:
     assert expected_seconds("crm_heartbeat") == 30
     assert expected_seconds("crm_job_retention") == 900
     assert expected_seconds("crm_unknown") == DEFAULT_EXPECTED_SECONDS == 300
-    assert overdue_after_seconds("crm_heartbeat") == 60
-    assert overdue_after_seconds("crm_unknown") == 600
+    assert overdue_after_seconds("crm_heartbeat", 2) == 60
+    assert overdue_after_seconds("crm_unknown", 2) == 600
     assert all(kind.startswith("crm_") for kind in EXPECTED_SECONDS)
 
 

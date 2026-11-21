@@ -6,11 +6,15 @@ itself, at $0, and e-mails AA ops through the platform alerts SNS topic (env ``A
 alarms used, so the recipients are the same):
 
 - **state checks** from the job sampler's 5-minute read (:mod:`app.jobs.metrics`): ``jobs_stuck`` (due queued row
-  > 900 s while no healthy job runs), ``jobs_overdue`` (a running row past 2 x its expected time), ``audit_export_lag``
-  (>= 180 min), ``audit_partitions`` (< 1 month ahead), ``audit_verify_lag`` (>= 50 h), and the CRM's daily AI
+  > ``crm.ops.jobs_stuck_after_s`` while no healthy job runs), ``jobs_overdue`` (a running row past
+  ``crm.ops.jobs_overdue_factor`` x its expected time), ``audit_export_lag`` (>= ``crm.ops.audit_export_lag_min``),
+  ``audit_partitions`` (< ``crm.ops.audit_partition_months_ahead`` months ahead), ``audit_verify_lag``
+  (>= ``crm.ops.audit_verify_lag_h``) — AA-1171 (crm-085): the thresholds are CRM settings, read at every evaluation,
+  defaults 900 s, 2 x, 180 min, 1 month, 50 h —, and the CRM's daily AI
   budget (AA-1025 H1c, the app profile of :mod:`app.llm.app_profile`): ``llm_app_spend_near`` when today's (UTC) AI
-  spend of every agency together passes 80 % of ``default_daily_budget_usd`` and ``llm_app_spend_cap`` at 100 % (the
-  gateway then refuses every call ``app_budget_exhausted``), the thresholds of the shared core's ``budget.threshold``;
+  spend of every agency together passes ``crm.ops.app_spend_near_pct`` (80 % by default, AA-1171) of
+  ``default_daily_budget_usd`` and ``llm_app_spend_cap`` at 100 % (the gateway then refuses every call
+  ``app_budget_exhausted``), through the shared core's ``budget.threshold`` with that share as ``near_ratio``;
   two checks so a cap reached after the near e-mail still mails. No daily budget = no check. One e-mail per check per
   UTC day while it lasts.
 - **events** raised where the code already writes the alarm line, with :func:`emit` (sync, never raises): the
@@ -44,6 +48,7 @@ from typing import Any, Protocol
 
 import asyncpg
 
+from app import platform_settings as ps
 from app.aa_llm import budget as llm_budget
 from app.jobs import queue
 
@@ -51,11 +56,7 @@ log = logging.getLogger(__name__)
 
 OPS_ALERT_KIND = "crm_ops_alert"
 SNS_REGION = "us-west-1"  # acc2, where the alerts topic lives
-MAX_PENDING = 500
-
-STUCK_AFTER_S = 900
-AUDIT_EXPORT_LAG_MIN = 180
-AUDIT_VERIFY_LAG_H = 50
+MAX_PENDING = 500  # technical-constant: memory bound of the per-process event buffer
 
 
 @dataclass(frozen=True)
@@ -67,7 +68,8 @@ class Check:
 CHECKS: dict[str, Check] = {
     "jobs_stuck": Check(
         "Job queue stuck",
-        "A due crm.job row has waited more than 15 minutes and no healthy job runs. Check the worker (WORKER_ENABLED, "
+        "A due crm.job row has waited past the threshold (crm.ops.jobs_stuck_after_s) and no healthy job runs. Check "
+        "the worker (WORKER_ENABLED, "
         "the crm_heartbeat row) on the platform console Jobs view and in the CRM log.",
     ),
     "jobs_overdue": Check(
@@ -76,7 +78,8 @@ CHECKS: dict[str, Check] = {
     ),
     "audit_export_lag": Check(
         "Agency audit export behind",
-        "The hourly audit export is 3 hours or more behind (design v3 4.9). Check the crm_audit_export job rows and "
+        "The hourly audit export is behind its threshold (crm.ops.audit_export_lag_min; design v3 4.9). Check the "
+        "crm_audit_export job rows and "
         "the audit_export_failed log lines; no partition can be dropped while an agency is behind.",
     ),
     "audit_partitions": Check(
@@ -86,12 +89,14 @@ CHECKS: dict[str, Check] = {
     ),
     "audit_verify_lag": Check(
         "Agency audit not verified",
-        "An agency's exported audit has not been verified for 50 hours or more: no partition can be dropped for any "
+        "An agency's exported audit has not been verified within its threshold (crm.ops.audit_verify_lag_h): no "
+        "partition can be dropped for any "
         "agency. Read the crm_audit_retention rows and the audit_verify_failed lines.",
     ),
     "llm_app_spend_near": Check(
         "CRM AI spend near its daily budget",
-        "The CRM's AI spend today (every agency together) passed 80 % of the daily budget of its app profile. At 100 % "
+        "The CRM's AI spend today (every agency together) passed the warning share (crm.ops.app_spend_near_pct, "
+        "80 % by default) of the daily budget of its app profile. At 100 % "
         "the CRM gateway refuses every AI call (app_budget_exhausted) until the UTC day ends and agencies reply by "
         "hand. Check the CRM's AI calls on the platform console, then raise the budget on AI providers > App profiles "
         "(row crm) if the traffic is real.",
@@ -130,7 +135,8 @@ CHECKS: dict[str, Check] = {
     ),
     "membership_feed_stuck": Check(
         "CIS membership feed stuck",
-        "The CRM has failed to pull the CIS membership feed 10 times in a row: CIS removals and agency locks no longer "
+        "The CRM has failed to pull the CIS membership feed the set number of times in a row "
+        "(crm.ops.membership_feed_stuck_failures): CIS removals and agency locks no longer "
         "reach the CRM. Read error on the log line and /crm/health/ready membership_feed.",
     ),
     "membership_apply_refused": Check(
@@ -169,6 +175,41 @@ CHECKS: dict[str, Check] = {
         "vectors docs/contracts/rules/), so this is a producer / consumer drift: compare both sides, fix, and tell "
         "the agency a request was lost (lead_id, no traveller data here).",
     ),
+}
+
+
+# AA-1171 (crm.ops.v1 1.17 GET /ops-checks, the CIS alerts catalogue): the setting keys of each check's threshold.
+# A state check without a key here compares against a fixed rule; an event check has no threshold (every event).
+THRESHOLD_KEYS: dict[str, tuple[str, ...]] = {
+    "jobs_stuck": (ps.OPS_JOBS_STUCK_AFTER_S,),
+    "jobs_overdue": (ps.OPS_JOBS_OVERDUE_FACTOR,),
+    "audit_export_lag": (ps.OPS_AUDIT_EXPORT_LAG_MIN,),
+    "audit_verify_lag": (ps.OPS_AUDIT_VERIFY_LAG_H,),
+    "audit_partitions": (ps.OPS_AUDIT_PARTITION_MONTHS_AHEAD,),
+    "membership_feed_stuck": (ps.OPS_MEMBERSHIP_FEED_STUCK_FAILURES,),
+    "llm_app_spend_near": (ps.OPS_APP_SPEND_NEAR_PCT,),
+}
+# The component each check watches (the catalogue's Component column).
+COMPONENTS: dict[str, str] = {
+    "jobs_stuck": "jobs",
+    "jobs_overdue": "jobs",
+    "audit_export_lag": "db",
+    "audit_partitions": "db",
+    "audit_verify_lag": "db",
+    "llm_app_spend_near": "llm",
+    "llm_app_spend_cap": "llm",
+    "breakglass_opened": "security",
+    "breakglass_owner_not_mailed": "security",
+    "bulk_reveal": "security",
+    "membership_feed_stuck": "auth",
+    "membership_apply_refused": "auth",
+    "setting_value_refused": "api",
+    "setting_self_approved": "security",
+}
+# Thresholds that are still code values, named so the catalogue shows them as not editable yet.
+FIXED_THRESHOLDS: dict[str, str] = {
+    "llm_app_spend_cap": "100 % of the daily AI budget",
+    "bulk_reveal": "60 reveals by one member in an hour (also the hourly reveal limit)",
 }
 
 
@@ -248,11 +289,13 @@ def emit(check: str, scope: Any = None, **details: Any) -> None:
 def spend_findings(spend: Any) -> list[Finding]:
     """The daily budget finding of one read (:class:`app.llm.app_profile.DaySpend`, None = no budget or unreadable):
     ``llm_app_spend_cap`` at 100 % (a budget of 0 is reached at once: the CRM makes no AI call), ``llm_app_spend_near``
-    from 80 %. Pure."""
+    from the share in force (``crm.ops.app_spend_near_pct``, 80 % by default; AA-1171). Pure but for the setting
+    read."""
     if spend is None:
         return []
     spent, cap = float(spend.spent_usd), float(spend.cap_usd)
-    threshold = llm_budget.threshold(spent, cap)
+    near_ratio = float(ps.get(ps.OPS_APP_SPEND_NEAR_PCT)) / 100.0
+    threshold = llm_budget.threshold(spent, cap, near_ratio=near_ratio)
     if threshold is None:
         return []
     pct = None if cap <= 0 else round(100.0 * spent / cap, 1)
@@ -266,9 +309,9 @@ def spend_findings(spend: Any) -> list[Finding]:
 
 def state_findings(sample: Any, audit: Any = None, spend: Any = None) -> list[Finding]:
     """Findings of one sampler read (:class:`app.jobs.metrics.Sample`, :class:`app.jobs.metrics.AuditSample`,
-    :class:`app.llm.app_profile.DaySpend`)."""
+    :class:`app.llm.app_profile.DaySpend`), against the thresholds in force (AA-1171, crm-085)."""
     out: list[Finding] = []
-    if sample.oldest_queued_age_s > STUCK_AFTER_S:
+    if sample.oldest_queued_age_s > int(ps.get(ps.OPS_JOBS_STUCK_AFTER_S)):
         out.append(
             Finding(
                 "jobs_stuck",
@@ -279,11 +322,11 @@ def state_findings(sample: Any, audit: Any = None, spend: Any = None) -> list[Fi
     if sample.overdue_running:
         out.append(Finding("jobs_overdue", f"{sample.overdue_running} running row(s) overdue"))
     if audit is not None:
-        if audit.export_lag_minutes >= AUDIT_EXPORT_LAG_MIN:
+        if audit.export_lag_minutes >= int(ps.get(ps.OPS_AUDIT_EXPORT_LAG_MIN)):
             out.append(Finding("audit_export_lag", f"{int(audit.export_lag_minutes)} minutes behind"))
-        if audit.partition_months_ahead < 1:
+        if audit.partition_months_ahead < int(ps.get(ps.OPS_AUDIT_PARTITION_MONTHS_AHEAD)):
             out.append(Finding("audit_partitions", f"{audit.partition_months_ahead} month(s) ahead"))
-        if audit.verify_lag_hours >= AUDIT_VERIFY_LAG_H:
+        if audit.verify_lag_hours >= int(ps.get(ps.OPS_AUDIT_VERIFY_LAG_H)):
             out.append(Finding("audit_verify_lag", f"{int(audit.verify_lag_hours)} hours unverified"))
     out += spend_findings(spend)
     return out

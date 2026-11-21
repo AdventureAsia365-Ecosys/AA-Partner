@@ -115,6 +115,15 @@ ADMIN_MFA_REQUIRED = "crm.platform.admin_mfa_required"
 # its task opens, and the disclaimer printed under "Services provided by <agency>"; read by app/ledger/agency_extras.py.
 AGENCY_LINES_DUE_LEAD_DAYS = "crm.agency_lines.due_lead_days"
 AGENCY_LINES_DISCLAIMER = "crm.agency_lines.disclaimer"
+# AA-1171 (crm-085): the thresholds of the in-app ops checks (app/observability/ops_alerts.py, app/jobs/metrics.py,
+# app/cis/membership_feed.py), edited on CIS Platform > Settings (CRM tab), listed by crm.ops.v1 GET /ops-checks.
+OPS_JOBS_STUCK_AFTER_S = "crm.ops.jobs_stuck_after_s"
+OPS_JOBS_OVERDUE_FACTOR = "crm.ops.jobs_overdue_factor"
+OPS_AUDIT_EXPORT_LAG_MIN = "crm.ops.audit_export_lag_min"
+OPS_AUDIT_VERIFY_LAG_H = "crm.ops.audit_verify_lag_h"
+OPS_AUDIT_PARTITION_MONTHS_AHEAD = "crm.ops.audit_partition_months_ahead"
+OPS_MEMBERSHIP_FEED_STUCK_FAILURES = "crm.ops.membership_feed_stuck_failures"
+OPS_APP_SPEND_NEAR_PCT = "crm.ops.app_spend_near_pct"
 
 # The platform ranges of the agency-owner settings: (new-agency default, lowest an owner may pick, highest). The
 # registry service refuses a change that would break min <= default <= max (422 range_inconsistent);

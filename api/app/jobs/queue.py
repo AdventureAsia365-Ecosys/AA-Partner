@@ -444,3 +444,18 @@ async def retry_failed(conn: asyncpg.Connection, job_id: str, tenant_id: str) ->
         tenant_id,
         list(RETRYABLE_KINDS),
     )
+
+
+# ── AA-1171: the last alert of each ops check (crm.ops.v1 1.17 GET /ops-checks) ───────────────────────────────────
+# The ledger rows of app.observability.ops_alerts (kind crm_ops_alert, idempotency key crm_ops_alert:<check>:<scope>).
+LAST_ALERTS_SQL = """
+    SELECT split_part(idempotency_key, ':', 2) AS check_key, max(created_at) AS last_at
+      FROM crm.job
+     WHERE kind = $1 AND created_at >= now() - interval '7 days'
+     GROUP BY 1
+"""
+
+
+async def last_alerts(pool: asyncpg.Pool, kind: str) -> dict[str, Any]:
+    """{check: the time of its last alert ledger row in the last 7 days}."""
+    return {r["check_key"]: r["last_at"] for r in await pool.fetch(LAST_ALERTS_SQL, kind)}

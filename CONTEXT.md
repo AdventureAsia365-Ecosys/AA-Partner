@@ -493,7 +493,7 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 `app/observability/ops_alerts.py` replaced the CRM CloudWatch alarms (root `docs/audits/2026-11-01-S263-alerting-cost/
 diet.md`). The job sampler (`app/jobs/metrics.py`, every 5 minutes, API process) evaluates the **state checks**
 `jobs_stuck` (due row > 900 s, no healthy job running), `jobs_overdue`, `audit_export_lag`, `audit_partitions`,
-`audit_verify_lag`, the CRM's daily AI budget `llm_app_spend_near` (80 %) and `llm_app_spend_cap` (100 %; AA-1025 H1c,
+`audit_verify_lag`, the CRM's daily AI budget `llm_app_spend_near` (80 %, setting `crm.ops.app_spend_near_pct`) and `llm_app_spend_cap` (100 %; AA-1025 H1c,
 `app_profile.read_day_spend`, only when the app profile sets a daily budget), and drains the **events** the code raises with `ops_alerts.emit(check, scope, **ids)` next to the
 log lines it already wrote: `breakglass_opened`, `breakglass_owner_not_mailed` (per session), `ops_release_incomplete_t21`,
 `ops_release_withdrawn` (per release), `aa_extra_nights_requested` (per request, AA-1144: an agency asks AA for
@@ -503,7 +503,14 @@ extra hotel nights), `membership_apply_refused` (per event), `membership_feed_st
 `crm_ops_alert`, status `succeeded`, idempotency key `crm_ops_alert:<check>:<scope or UTC day>`, payload ids only;
 `queue.record_alert` / `queue.forget_alert`). The ledger rows are never claimed and are not busy work for the deploy
 gate or DB Migrate. A test keeps every event check raised somewhere in `app/` (`tests/unit/test_ops_alerts.py`). The
-service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
+service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`. **AA-1171 (crm-085):** the thresholds are CRM
+settings in area `ops` (CIS Platform › Settings, CRM tab), read at every evaluation: `crm.ops.jobs_stuck_after_s` (900),
+`crm.ops.jobs_overdue_factor` (2), `crm.ops.audit_export_lag_min` (180), `crm.ops.audit_verify_lag_h` (50),
+`crm.ops.audit_partition_months_ahead` (1), `crm.ops.membership_feed_stuck_failures` (10),
+`crm.ops.app_spend_near_pct` (80, passed as `near_ratio` to the shared core's `budget.threshold`); the bulk reveal 60
+an hour (also the reveal rate limit) is still a code value, shown so in the registry. `GET /crm/ops/v1/ops-checks` (crm.ops.v1 1.17, any full OPS reader, `app/routers/ops_checks.py`) is the check
+registry the CIS alerts catalogue reads: every check with its setting keys and values in force and the last alert
+(`queue.last_alerts`, the ledger rows of the last 7 days); no agency audit event (no agency data).
 ## CI and release
 
 - **Code-health ratchets** (AA-1097; `.github/scripts/code_health.py`, limits and exemptions with reasons in

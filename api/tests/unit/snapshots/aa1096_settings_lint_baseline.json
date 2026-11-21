@@ -198,8 +198,6 @@
   "app/messaging/webhook.py:KNOWN_TTL_S",
   "app/messaging/webhook.py:MAX_KNOWN_HOOKS",
   "app/messaging/webhook.py:MAX_TEXT",
-  "app/observability/ops_alerts.py:AUDIT_EXPORT_LAG_MIN",
-  "app/observability/ops_alerts.py:MAX_PENDING",
   "app/observability/reveal_meter.py:BULK_REVEAL_THRESHOLD",
   "app/observability/reveal_meter.py:MAX_PER_MEMBER",
   "app/onboarding.py:MAX_CONSENT",
