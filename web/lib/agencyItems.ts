@@ -10,6 +10,14 @@ import type { BlockType } from "@/lib/builder";
 export const AGENCY_ITEM_CATEGORIES = ["flight", "visa", "insurance", "fee"] as const;
 export type AgencyItemCategory = (typeof AGENCY_ITEM_CATEGORIES)[number];
 
+/** AA-1147 (S285 decision T18): only a flight or the agency fee may be folded into the tour price; visa and travel
+ * insurance always show their own price (the API answers 422 bundle_not_allowed; crm-083 option_bundled_chk). */
+export const BUNDLE_CATEGORIES: readonly AgencyItemCategory[] = ["flight", "fee"];
+
+export function canBundle(category: string | null | undefined): boolean {
+  return BUNDLE_CATEGORIES.includes(category as AgencyItemCategory);
+}
+
 /** The builder blocks an agency item may sit on. */
 export const AGENCY_BLOCK_TYPES: readonly BlockType[] = ["other"];
 

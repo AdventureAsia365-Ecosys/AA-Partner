@@ -134,8 +134,11 @@ export function LinesPanel({
 
   async function add(form: FormData) {
     const body = {
-      agency_supplier_id: String(form.get("agency_supplier_id") ?? ""),
+      // AA-1147: an empty supplier = handled by the agency itself
+      agency_supplier_id: String(form.get("agency_supplier_id") ?? "") || null,
       category: String(form.get("category")), // AA-1144: flight | visa | insurance | fee (the select below)
+      due_at: String(form.get("due_on") ?? "") || null, // AA-1147: the deadline (a task opens before it)
+      bundled: form.get("bundled") === "on", // AA-1147: flight or fee only (the API refuses visa / insurance)
       title: String(form.get("title") ?? "").trim(),
       confirmation_no: String(form.get("confirmation_no") ?? "").trim() || null,
       service_from: String(form.get("service_from") ?? "") || null,
@@ -228,8 +231,14 @@ export function LinesPanel({
   function supplierCell(line: Line) {
     return (
       <>
-        {line.supplier_name}
+        {line.supplier_name ?? tr("agencyItem.handledByAgency")}
         {line.read_only && <div style={{ color: K.muted, fontSize: 11.5 }}>{tr("ledger.aaReadOnly")}</div>}
+        {line.due_at && (
+          <div style={{ color: K.muted, fontSize: 11.5 }} data-testid="ledger-line-due">
+            {tr("agencyItem.due").replace("{date}", formatDate(line.due_at.slice(0, 10), locale))}
+          </div>
+        )}
+        {line.bundled && <div style={{ color: K.muted, fontSize: 11.5 }}>{tr("agencyItem.bundledBadge")}</div>}
       </>
     );
   }
@@ -405,7 +414,7 @@ export function LinesPanel({
         </>
       ),
     },
-    { id: "supplier", header: tr("ledger.col.supplier"), accessorFn: (l) => l.supplier_name, cell: ({ row }) => supplierCell(row.original) },
+    { id: "supplier", header: tr("ledger.col.supplier"), accessorFn: (l) => l.supplier_name ?? tr("agencyItem.handledByAgency"), cell: ({ row }) => supplierCell(row.original) },
     { id: "conf", header: tr("ledger.col.conf"), accessorFn: (l) => l.confirmation_no ?? "—" },
     { id: "status", header: tr("ledger.col.status"), accessorFn: (l) => l.status, cell: ({ row }) => statusCell(row.original) },
     ...(margin
@@ -512,15 +521,16 @@ export function LinesPanel({
         )}
         {addingAa ? null : !adding ? (
           <div>
-            <Button size="sm" disabled={!hydrated || own.length === 0} onClick={() => setAdding(true)}>
+            <Button size="sm" disabled={!hydrated} onClick={() => setAdding(true)}>
               {tr("ledger.add")}
             </Button>
           </div>
         ) : (
           <form action={add} style={{ display: "grid", gap: 8, maxWidth: 520 }} data-testid="ledger-add-form">
             <label style={{ display: "grid", gap: 2, fontSize: 12 }}>
-              {tr("ledger.supplier")}
-              <select name="agency_supplier_id" style={field} required>
+              {tr("agencyItem.supplierOptional")}
+              <select name="agency_supplier_id" style={field} defaultValue="" data-testid="ledger-add-supplier">
+                <option value="">{tr("agencyItem.handledByAgency")}</option>
                 {own.map((s) => (
                   <option key={s.agency_supplier_id} value={s.agency_supplier_id}>
                     {s.name}
@@ -548,6 +558,14 @@ export function LinesPanel({
             </label>
             <DateInput locale={locale} name="service_from" label={tr("ledger.from")} readAs={tr("settings.readAs")} invalid={tr("settings.invalidDate")} />
             <DateInput locale={locale} name="service_to" label={tr("ledger.to")} readAs={tr("settings.readAs")} invalid={tr("settings.invalidDate")} />
+            <DateInput locale={locale} name="due_on" label={tr("agencyItem.dueAt")} help={tr("agencyItem.dueHint")} readAs={tr("settings.readAs")} invalid={tr("settings.invalidDate")} />
+            <label style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 12 }} title={tr("agencyItem.bundledHint")}>
+              <input type="checkbox" name="bundled" data-testid="ledger-add-bundled" />
+              <span>
+                {tr("agencyItem.bundled")}
+                <span style={{ display: "block", color: K.muted, fontSize: 11.5 }}>{tr("agencyItem.bundledHint")}</span>
+              </span>
+            </label>
             <label style={{ display: "grid", gap: 2, fontSize: 12 }}>
               {tr("ledger.col.collect")}
               <select name="collect" style={field} defaultValue="agency">
@@ -564,11 +582,6 @@ export function LinesPanel({
               </Button>
             </div>
           </form>
-        )}
-        {own.length === 0 && (
-          <p style={{ margin: "8px 0 0", fontSize: 12.5, color: K.muted }}>
-            <Link href="/suppliers">{tr("ledger.addSupplierFirst")}</Link>
-          </p>
         )}
       </div>
       )}

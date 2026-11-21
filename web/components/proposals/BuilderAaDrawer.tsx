@@ -15,7 +15,7 @@ import { BuilderCatalogueTab } from "@/components/catalogue/BuilderCatalogueTab"
 import { AgencyBlockNote } from "@/components/proposals/AgencyBlockNote";
 import { BuilderAiIdeasTab } from "@/components/proposals/BuilderAiIdeasTab";
 import { type AaProduct, type CatalogTour } from "@/lib/aa";
-import { AGENCY_ITEM_CATEGORIES, drawerTabs, type AgencyItemCategory } from "@/lib/agencyItems";
+import { AGENCY_ITEM_CATEGORIES, canBundle, drawerTabs, type AgencyItemCategory } from "@/lib/agencyItems";
 import { AA_TARIFF_PATH } from "@/lib/aaTariff";
 import { bffSend } from "@/lib/bffClient";
 import { builderErrorKey, dayOfBlock, moneyInput, TIERS, type BlockType, type BuilderView, type Tier } from "@/lib/builder";
@@ -86,6 +86,7 @@ export function BuilderAaDrawer({
   const [supplier, setSupplier] = useState("");
   const [category, setCategory] = useState<AgencyItemCategory>("flight");
   const [payOnArrival, setPayOnArrival] = useState(false);
+  const [bundled, setBundled] = useState(false); // AA-1147 (T18): a flight or the agency fee only
   const [busy, setBusy] = useState(false);
   const [offline, setOffline] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -156,6 +157,7 @@ export function BuilderAaDrawer({
       return;
     }
     const body: Record<string, unknown> = { title: title.trim(), pay_on_arrival: payOnArrival, category };
+    if (bundled && canBundle(category)) body.bundled = true;
     if (tier) body.tier = tier;
     if (supplier) body.agency_supplier_id = supplier;
     if (canMoney && sellMoney !== null) body.sell_amount = sellMoney;
@@ -324,6 +326,15 @@ export function BuilderAaDrawer({
                   </option>
                 ))}
               </select>
+            </label>
+          )}
+          {canBundle(category) && (
+            <label style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 12 }}>
+              <input type="checkbox" checked={bundled} onChange={(e) => setBundled(e.target.checked)} data-testid="builder-agency-bundled" />
+              <span>
+                {tr("agencyItem.bundled")}
+                <span style={{ display: "block", color: K.muted, fontSize: 11.5 }}>{tr("agencyItem.bundledHint")}</span>
+              </span>
             </label>
           )}
           {tierSelect}

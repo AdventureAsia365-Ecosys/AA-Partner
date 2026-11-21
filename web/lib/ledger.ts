@@ -41,8 +41,16 @@ export interface Line {
   booking_line_id: string;
   trip_id: string;
   supplier_kind: "aa" | "agency";
-  agency_supplier_id: string;
-  supplier_name: string;
+  /** AA-1147 (crm-083): null on an agency line the agency handles itself ("Handled by the agency"). */
+  agency_supplier_id: string | null;
+  supplier_name: string | null;
+  handled_by_agency?: boolean;
+  /** AA-1144: flight | visa | insurance | fee (agency lines). */
+  category?: string | null;
+  /** AA-1147: the item of the accepted proposal it came from, its deadline, folded into the tour price. */
+  option_id?: string | null;
+  due_at?: string | null;
+  bundled?: boolean;
   status: LineStatus;
   aa_sub_status: string | null;
   title: string;

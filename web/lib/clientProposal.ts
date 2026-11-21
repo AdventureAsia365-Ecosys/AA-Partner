@@ -122,6 +122,14 @@ export interface ClientBuilderPage extends PublicProposal {
   before_you_go?: ClientBeforeYouGo | null;
   /** AA-1070 crm-35: the "Included" / "Not included" lists (the AA tours of the client's current choice). */
   inclusions?: ClientInclusions | null;
+  /** AA-1147 (S285 decision T18): the agency's own services of the choice ("Services provided by <agency>"): each
+   * with its price, none when a flight or the fee is folded into the tour price; the disclaimer per language. */
+  agency_services?: ClientAgencyServices | null;
+}
+
+export interface ClientAgencyServices {
+  items: { title: string; category: string | null; bundled: boolean; amount: string | null }[];
+  disclaimer: { en: string; vi: string };
 }
 
 export type AnyClientPage = (PublicProposal & { kind?: "text" }) | ClientBuilderPage;
