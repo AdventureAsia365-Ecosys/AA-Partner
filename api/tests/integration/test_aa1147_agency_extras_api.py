@@ -11,6 +11,11 @@
   printable page carries the group and the disclaimer.
 - Nothing of an agency line is ever sent to Adventure Asia Booking: the Booking sync, the hold and the confirm of an
   accepted version with AA and agency items carry only the AA lines.
+
+After each test the agencies made here are locked and the shared catalog row of the sent version leaves (as in
+``test_aa1072_book_now_api``): a later file's Booking sync asks Booking for every active agency and its catalog sync
+counts every cached tour, so an active agency with confirmed AA lines here would turn ``test_aa_lines_api`` red when
+both files run in one CI shard.
 """
 
 from __future__ import annotations
@@ -18,11 +23,13 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 from collections import Counter
+from collections.abc import AsyncIterator
 from decimal import Decimal
 from typing import Any
 
 import asyncpg
 import pytest
+import pytest_asyncio
 
 from app.booking.sync import BookingSync
 from app.documents import service as documents
@@ -35,13 +42,46 @@ from app.proposals import public as page
 from app.tenancy import system_tx, tenant_tx
 from app.vault import Vault
 from tests.aa_fakes import FakeBooking, booking_client
-from tests.integration.test_builder_api import _as, _create, _pid, _setup
-from tests.integration.test_client_proposal_api import PLAIN, _accept, _raw, _sent
+from tests.integration.conftest import OWNER
+from tests.integration.test_builder_api import _as, _create, _pid
+from tests.integration.test_builder_api import _setup as _builder_setup
+from tests.integration.test_client_proposal_api import PLAIN, _accept, _raw
+from tests.integration.test_client_proposal_api import _sent as _client_sent
 from tests.integration.test_proposal_confirm_api import _pay_deposit
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 PDF = b"%PDF-1.7\n1 0 obj << >> endobj\ntrailer << >>\n%%EOF\n"
+AGENCIES: list[uuid.UUID] = []
+SENT_TOUR = "T-950"  # the AA day tour of test_client_proposal_api._sent
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _leave_no_trace(admin: asyncpg.Connection, app_pool: asyncpg.Pool) -> AsyncIterator[None]:
+    """After each test: lock the agencies made here and remove the sent version's tour from the shared catalog cache."""
+    yield
+    while AGENCIES:
+        tenant_id = AGENCIES.pop()
+        async with app_pool.acquire() as conn, conn.transaction():
+            await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
+            await conn.execute("UPDATE crm.tenant SET status = 'locked'")
+    await admin.execute(f"SET ROLE {OWNER}")
+    try:
+        await admin.execute("DELETE FROM crm.aa_catalog_tour WHERE source_system = 'cis' AND source_id = $1", SENT_TOUR)
+    finally:
+        await admin.execute("RESET ROLE")
+
+
+async def _setup(pool: asyncpg.Pool) -> dict[str, Any]:
+    s = await _builder_setup(pool)
+    AGENCIES.append(s["tenant"])
+    return s
+
+
+async def _sent(pool: asyncpg.Pool, **kw: Any) -> dict[str, Any]:
+    s = await _client_sent(pool, **kw)
+    AGENCIES.append(s["tenant"])
+    return s
 
 
 async def _other_block(pool: asyncpg.Pool, s: dict[str, Any], v: dict[str, Any], day_no: int, title: str) -> Any:
