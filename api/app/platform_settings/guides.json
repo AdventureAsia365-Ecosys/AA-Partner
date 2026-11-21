@@ -880,6 +880,22 @@
     "when": "Giảm khi đại lý cần gỡ thành viên nhanh; tăng khi đang cố ý khởi động lại CIS nhiều lần.",
     "example": "Với mặc định 10 và thời gian chờ giãn dần của feed, cảnh báo tới sau khoảng một giờ lỗi liên tiếp."
    }
+  },
+  "crm.ops.app_spend_near_pct": {
+   "en": {
+    "what": "At what share of the CRM's daily AI budget the 'near its cap' alert e-mail goes out.",
+    "raise": "The warning comes later, leaving less of the day to react before the CRM stops calling models.",
+    "lower": "The warning comes earlier, also on days that would have stayed under the cap.",
+    "when": "Lower it when the cap was reached with little warning; raise it when busy normal days alert.",
+    "example": "With the default 80 % and a 5 USD daily budget, the alert goes out at 4 USD of spend."
+   },
+   "vi": {
+    "what": "Ở mức bao nhiêu phần trăm ngân sách AI hằng ngày của CRM thì e-mail cảnh báo 'sắp chạm trần' được gửi.",
+    "raise": "Cảnh báo tới muộn hơn, còn ít thời gian trong ngày để xử lý trước khi CRM ngừng gọi model.",
+    "lower": "Cảnh báo tới sớm hơn, kể cả những ngày lẽ ra vẫn dưới trần.",
+    "when": "Giảm khi CRM chạm trần mà gần như không được báo trước; tăng khi những ngày bận bình thường gây cảnh báo.",
+    "example": "Với mặc định 80 % và ngân sách 5 USD mỗi ngày, cảnh báo được gửi khi đã chi 4 USD."
+   }
   }
  }
 }

@@ -6,7 +6,7 @@
 -- header, Guard 0 and the registration below, and the tests that name it (git grep '085_' and 'crm-085').
 --
 -- What:
---   1. Six crm.setting_definition rows, area "ops" (settings-seed block, read by api/scripts/gen_settings_defaults.py
+--   1. Seven crm.setting_definition rows, area "ops" (settings-seed block, read by api/scripts/gen_settings_defaults.py
 --      into app/platform_settings/compiled_defaults.json; guides in app/platform_settings/guides.json; readers in
 --      app/observability/ops_alerts.py, app/jobs/metrics.py and app/cis/membership_feed.py, shipped in this PR),
 --      today's code constants as the defaults:
@@ -16,6 +16,8 @@
 --        crm.ops.audit_verify_lag_h              int hours, default 50 (AUDIT_VERIFY_LAG_H)
 --        crm.ops.audit_partition_months_ahead    int months, default 1 (the "< 1 month ahead" rule)
 --        crm.ops.membership_feed_stuck_failures  int, default 10 (membership_feed.STUCK_FAILURES)
+--        crm.ops.app_spend_near_pct              pct 50-99, default 80 (the AI core's NEAR_CAP_RATIO, as CIS 469's
+--                                                cis.ops.app_spend_near_pct)
 --      Edited on the CIS Platform > Settings page (CRM tab, crm.ops.v1 /settings), single approval like the other
 --      operational CRM values; the CIS alerts catalogue lists them next to their checks (crm.ops.v1 GET /ops-checks).
 --   2. Register crm-085.
@@ -68,7 +70,8 @@ SELECT s.key, s.app, s.area, s.label, s.description, s.value_type, s.unit, s.min
 {"key": "crm.ops.audit_export_lag_min", "app": "crm", "area": "ops", "label": "Audit check: export behind after (minutes)", "description": "The ops check audit_export_lag e-mails when the hourly agency audit export is this many minutes or more behind (design v3 4.9: no partition can be dropped while an agency is behind). Read by app/observability/ops_alerts.py (the job sampler's tick, app/jobs/metrics.py).", "value_type": "int", "unit": "minutes", "min_value": 30, "max_value": 1440, "allowed_values": null, "default_value": 180, "scope_kind": "platform", "impact": "medium", "approval": "single", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
 {"key": "crm.ops.audit_verify_lag_h", "app": "crm", "area": "ops", "label": "Audit check: export not verified after (hours)", "description": "The ops check audit_verify_lag e-mails when an agency's exported audit has not been verified for this many hours or more. Read by app/observability/ops_alerts.py (the job sampler's tick, app/jobs/metrics.py).", "value_type": "int", "unit": "hours", "min_value": 6, "max_value": 240, "allowed_values": null, "default_value": 50, "scope_kind": "platform", "impact": "medium", "approval": "single", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
 {"key": "crm.ops.audit_partition_months_ahead", "app": "crm", "area": "ops", "label": "Audit check: partitions needed ahead (months)", "description": "The ops check audit_partitions e-mails when fewer than this many future months have a crm.audit_event partition (without next month's, every audit write fails from the 1st). Read by app/observability/ops_alerts.py (the job sampler's tick, app/jobs/metrics.py).", "value_type": "int", "unit": "months", "min_value": 1, "max_value": 6, "allowed_values": null, "default_value": 1, "scope_kind": "platform", "impact": "medium", "approval": "single", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
-{"key": "crm.ops.membership_feed_stuck_failures", "app": "crm", "area": "ops", "label": "Feed check: CIS membership feed stuck after (failed pulls in a row)", "description": "The ops check membership_feed_stuck e-mails (and logs crm_membership_feed_stuck) once the pull of the CIS membership feed has failed this many times in a row: CIS removals and agency locks no longer reach the CRM. Read by app/cis/membership_feed.py.", "value_type": "int", "unit": "failures", "min_value": 3, "max_value": 100, "allowed_values": null, "default_value": 10, "scope_kind": "platform", "impact": "medium", "approval": "single", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true}
+{"key": "crm.ops.membership_feed_stuck_failures", "app": "crm", "area": "ops", "label": "Feed check: CIS membership feed stuck after (failed pulls in a row)", "description": "The ops check membership_feed_stuck e-mails (and logs crm_membership_feed_stuck) once the pull of the CIS membership feed has failed this many times in a row: CIS removals and agency locks no longer reach the CRM. Read by app/cis/membership_feed.py.", "value_type": "int", "unit": "failures", "min_value": 3, "max_value": 100, "allowed_values": null, "default_value": 10, "scope_kind": "platform", "impact": "medium", "approval": "single", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
+{"key": "crm.ops.app_spend_near_pct", "app": "crm", "area": "ops", "label": "Spend check: AI spend near its daily cap (%)", "description": "The ops check llm_app_spend_near e-mails the platform alerts topic when the CRM's AI spend today (UTC) passes this share of its daily budget (the CRM app profile's daily budget); the cap alert at 100 % is separate. 80 % was the shared AI core's near-cap ratio. Read by app/observability/ops_alerts.py (the job sampler's tick, app/jobs/metrics.py).", "value_type": "pct", "unit": "%", "min_value": 50, "max_value": 99, "allowed_values": null, "default_value": 80, "scope_kind": "platform", "impact": "medium", "approval": "single", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true}
 ]
 $seed$::jsonb) AS s (key text, app text, area text, label text, description text, value_type text, unit text,
                       min_value numeric, max_value numeric, allowed_values jsonb, default_value jsonb, scope_kind text,
@@ -80,13 +83,13 @@ ON CONFLICT (key) DO NOTHING;
 -- ── Post-check ────────────────────────────────────────────────────────────────────────────────────
 DO $$
 BEGIN
-    IF (SELECT count(*) FROM crm.setting_definition WHERE key LIKE 'crm.ops.%') < 6 THEN
+    IF (SELECT count(*) FROM crm.setting_definition WHERE key LIKE 'crm.ops.%') < 7 THEN
         RAISE EXCEPTION 'crm-085: the ops check settings are not defined';
     END IF;
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('crm-085', now(), 'AA-1171 ops check settings: crm.ops.* (job queue stuck, job overdue factor, audit export / verify lag, audit partitions ahead, membership feed stuck)')
+VALUES ('crm-085', now(), 'AA-1171 ops check settings: crm.ops.* (job queue stuck, job overdue factor, audit export / verify lag, audit partitions ahead, membership feed stuck, AI spend near cap)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

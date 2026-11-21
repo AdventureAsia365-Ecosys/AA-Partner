@@ -585,6 +585,26 @@
    "enforced": true
   },
   {
+   "key": "crm.ops.app_spend_near_pct",
+   "app": "crm",
+   "area": "ops",
+   "label": "Spend check: AI spend near its daily cap (%)",
+   "description": "The ops check llm_app_spend_near e-mails the platform alerts topic when the CRM's AI spend today (UTC) passes this share of its daily budget (the CRM app profile's daily budget); the cap alert at 100 % is separate. 80 % was the shared AI core's near-cap ratio. Read by app/observability/ops_alerts.py (the job sampler's tick, app/jobs/metrics.py).",
+   "value_type": "pct",
+   "unit": "%",
+   "min_value": 50,
+   "max_value": 99,
+   "allowed_values": null,
+   "default_value": 80,
+   "scope_kind": "platform",
+   "impact": "medium",
+   "approval": "single",
+   "evidence_required": false,
+   "env_override": null,
+   "cache_s": 30,
+   "enforced": true
+  },
+  {
    "key": "crm.ops.audit_export_lag_min",
    "app": "crm",
    "area": "ops",

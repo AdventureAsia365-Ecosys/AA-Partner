@@ -12,8 +12,9 @@ alarms used, so the recipients are the same):
   (>= ``crm.ops.audit_verify_lag_h``) — AA-1171 (crm-085): the thresholds are CRM settings, read at every evaluation,
   defaults 900 s, 2 x, 180 min, 1 month, 50 h —, and the CRM's daily AI
   budget (AA-1025 H1c, the app profile of :mod:`app.llm.app_profile`): ``llm_app_spend_near`` when today's (UTC) AI
-  spend of every agency together passes 80 % of ``default_daily_budget_usd`` and ``llm_app_spend_cap`` at 100 % (the
-  gateway then refuses every call ``app_budget_exhausted``), the thresholds of the shared core's ``budget.threshold``;
+  spend of every agency together passes ``crm.ops.app_spend_near_pct`` (80 % by default, AA-1171) of
+  ``default_daily_budget_usd`` and ``llm_app_spend_cap`` at 100 % (the gateway then refuses every call
+  ``app_budget_exhausted``), through the shared core's ``budget.threshold`` with that share as ``near_ratio``;
   two checks so a cap reached after the near e-mail still mails. No daily budget = no check. One e-mail per check per
   UTC day while it lasts.
 - **events** raised where the code already writes the alarm line, with :func:`emit` (sync, never raises): the
@@ -94,7 +95,8 @@ CHECKS: dict[str, Check] = {
     ),
     "llm_app_spend_near": Check(
         "CRM AI spend near its daily budget",
-        "The CRM's AI spend today (every agency together) passed 80 % of the daily budget of its app profile. At 100 % "
+        "The CRM's AI spend today (every agency together) passed the warning share (crm.ops.app_spend_near_pct, "
+        "80 % by default) of the daily budget of its app profile. At 100 % "
         "the CRM gateway refuses every AI call (app_budget_exhausted) until the UTC day ends and agencies reply by "
         "hand. Check the CRM's AI calls on the platform console, then raise the budget on AI providers > App profiles "
         "(row crm) if the traffic is real.",
@@ -185,6 +187,7 @@ THRESHOLD_KEYS: dict[str, tuple[str, ...]] = {
     "audit_verify_lag": (ps.OPS_AUDIT_VERIFY_LAG_H,),
     "audit_partitions": (ps.OPS_AUDIT_PARTITION_MONTHS_AHEAD,),
     "membership_feed_stuck": (ps.OPS_MEMBERSHIP_FEED_STUCK_FAILURES,),
+    "llm_app_spend_near": (ps.OPS_APP_SPEND_NEAR_PCT,),
 }
 # The component each check watches (the catalogue's Component column).
 COMPONENTS: dict[str, str] = {
@@ -205,7 +208,6 @@ COMPONENTS: dict[str, str] = {
 }
 # Thresholds that are still code values, named so the catalogue shows them as not editable yet.
 FIXED_THRESHOLDS: dict[str, str] = {
-    "llm_app_spend_near": "80 % of the daily AI budget (the shared AI core's budget.threshold)",
     "llm_app_spend_cap": "100 % of the daily AI budget",
     "bulk_reveal": "60 reveals by one member in an hour (also the hourly reveal limit)",
 }
@@ -287,11 +289,13 @@ def emit(check: str, scope: Any = None, **details: Any) -> None:
 def spend_findings(spend: Any) -> list[Finding]:
     """The daily budget finding of one read (:class:`app.llm.app_profile.DaySpend`, None = no budget or unreadable):
     ``llm_app_spend_cap`` at 100 % (a budget of 0 is reached at once: the CRM makes no AI call), ``llm_app_spend_near``
-    from 80 %. Pure."""
+    from the share in force (``crm.ops.app_spend_near_pct``, 80 % by default; AA-1171). Pure but for the setting
+    read."""
     if spend is None:
         return []
     spent, cap = float(spend.spent_usd), float(spend.cap_usd)
-    threshold = llm_budget.threshold(spent, cap)
+    near_ratio = float(ps.get(ps.OPS_APP_SPEND_NEAR_PCT)) / 100.0
+    threshold = llm_budget.threshold(spent, cap, near_ratio=near_ratio)
     if threshold is None:
         return []
     pct = None if cap <= 0 else round(100.0 * spent / cap, 1)

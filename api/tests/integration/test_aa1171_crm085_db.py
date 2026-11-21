@@ -1,4 +1,4 @@
-"""AA-1171 (crm-085) on PostgreSQL with the RDS role shape: the six crm.ops.* settings are defined exactly as compiled
+"""AA-1171 (crm-085) on PostgreSQL with the RDS role shape: the seven crm.ops.* settings are defined exactly as compiled
 (area ops, platform scope, single approval, enforced, today's constants as defaults), a value outside the bounds is
 refused, crm-085 is registered, and the last-alert read of the ops check registry parses. Rolled back; invented actor
 values only."""
@@ -23,6 +23,7 @@ KEYS = (
     ps.OPS_AUDIT_VERIFY_LAG_H,
     ps.OPS_AUDIT_PARTITION_MONTHS_AHEAD,
     ps.OPS_MEMBERSHIP_FEED_STUCK_FAILURES,
+    ps.OPS_APP_SPEND_NEAR_PCT,
 )
 STAFF = "platform:zz-staff-1"
 REASON = "zz test reason long enough for the check"
@@ -57,6 +58,9 @@ async def test_a_value_outside_the_bounds_is_refused(app_pool: asyncpg.Pool) -> 
             with pytest.raises(asyncpg.PostgresError):
                 async with c.transaction():
                     await c.fetchval(PROPOSE, ps.OPS_JOBS_STUCK_AFTER_S, "60", 1, STAFF, REASON)
+            with pytest.raises(asyncpg.PostgresError):
+                async with c.transaction():
+                    await c.fetchval(PROPOSE, ps.OPS_APP_SPEND_NEAR_PCT, "100", 1, STAFF, REASON)
             assert await c.fetchval(PROPOSE, ps.OPS_JOBS_STUCK_AFTER_S, "1200", 1, STAFF, REASON) is not None
         finally:
             await tx.rollback()

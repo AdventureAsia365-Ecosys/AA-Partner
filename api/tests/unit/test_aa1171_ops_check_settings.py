@@ -5,6 +5,7 @@ every check with its setting keys and the values in force. No DB, invented numbe
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -12,6 +13,7 @@ import pytest
 from app import platform_settings as ps
 from app.jobs.kinds import overdue_after_seconds
 from app.jobs.metrics import AuditSample, Sample, backlog_sample
+from app.llm.app_profile import DaySpend
 from app.observability import ops_alerts
 from app.routers import ops_checks
 
@@ -22,6 +24,7 @@ DEFAULTS = {
     ps.OPS_AUDIT_VERIFY_LAG_H: 50,
     ps.OPS_AUDIT_PARTITION_MONTHS_AHEAD: 1,
     ps.OPS_MEMBERSHIP_FEED_STUCK_FAILURES: 10,
+    ps.OPS_APP_SPEND_NEAR_PCT: 80,
 }
 
 
@@ -59,6 +62,18 @@ def test_a_changed_threshold_changes_what_fires(setting: dict[str, Any]) -> None
     assert sorted(f.check for f in ops_alerts.state_findings(sample, audit)) == ["audit_partitions", "audit_verify_lag"]
 
 
+def test_spend_near_share_is_the_setting(setting: dict[str, Any]) -> None:
+    spend = DaySpend(day="2026-11-21", spent_usd=Decimal("7"), cap_usd=Decimal("10"))
+    assert ops_alerts.spend_findings(spend) == []  # 70 % < 80 %
+    setting[ps.OPS_APP_SPEND_NEAR_PCT] = 60
+    (near,) = ops_alerts.spend_findings(spend)
+    assert near.check == "llm_app_spend_near" and near.details["threshold"] == "near"
+    setting[ps.OPS_APP_SPEND_NEAR_PCT] = 75
+    assert ops_alerts.spend_findings(spend) == []
+    capped = DaySpend(day="2026-11-21", spent_usd=Decimal("10"), cap_usd=Decimal("10"))
+    assert [f.check for f in ops_alerts.spend_findings(capped)] == ["llm_app_spend_cap"]  # the cap stays 100 %
+
+
 def test_overdue_factor_is_the_setting(setting: dict[str, Any]) -> None:
     assert overdue_after_seconds("crm_unknown", 3) == 900
     rows = [("crm_heartbeat", 70.0)]  # expected 30 s: overdue at 2 x, not at 3 x
@@ -89,4 +104,6 @@ def test_registry_lists_every_check_with_its_keys_and_values(setting: dict[str, 
     assert checks["bulk_reveal"]["kind"] == "event" and checks["bulk_reveal"]["thresholds"][0]["editable_via"] == "none"
     assert checks["bulk_reveal"]["last_alert_at"] == (now - timedelta(hours=2)).isoformat()
     assert checks["jobs_stuck"]["kind"] == "state" and checks["jobs_stuck"]["last_alert_at"] is None
+    near = [(t["setting"], t["value"], t["editable_via"]) for t in checks["llm_app_spend_near"]["thresholds"]]
+    assert near == [(ps.OPS_APP_SPEND_NEAR_PCT, 80, "settings")]
     assert all(k in ps.keys() for keys in ops_alerts.THRESHOLD_KEYS.values() for k in keys)

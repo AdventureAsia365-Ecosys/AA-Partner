@@ -123,6 +123,7 @@ OPS_AUDIT_EXPORT_LAG_MIN = "crm.ops.audit_export_lag_min"
 OPS_AUDIT_VERIFY_LAG_H = "crm.ops.audit_verify_lag_h"
 OPS_AUDIT_PARTITION_MONTHS_AHEAD = "crm.ops.audit_partition_months_ahead"
 OPS_MEMBERSHIP_FEED_STUCK_FAILURES = "crm.ops.membership_feed_stuck_failures"
+OPS_APP_SPEND_NEAR_PCT = "crm.ops.app_spend_near_pct"
 
 # The platform ranges of the agency-owner settings: (new-agency default, lowest an owner may pick, highest). The
 # registry service refuses a change that would break min <= default <= max (422 range_inconsistent);
