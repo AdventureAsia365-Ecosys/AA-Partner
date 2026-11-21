@@ -38,6 +38,7 @@ from dataclasses import dataclass
 
 import asyncpg
 
+from app import platform_settings as ps
 from app.jobs.kinds import overdue_after_seconds
 from app.llm import app_profile
 from app.mail import metrics as mail_metrics
@@ -72,13 +73,17 @@ class Sample:
     due_queued_age_s: float  # raw age of the oldest due queued row, before the "healthy job running" rule
 
 
-def backlog_sample(oldest_due_age_s: float | None, running: Iterable[tuple[str, float | None]]) -> Sample:
+def backlog_sample(
+    oldest_due_age_s: float | None, running: Iterable[tuple[str, float | None]], overdue_factor: float | None = None
+) -> Sample:
     """The two metric values from the raw reads (pure).
 
     ``running`` is ``(kind, attempt age in seconds)`` per running row; an unknown age (no start time at all) counts as
     healthy, never as overdue."""
     rows = list(running)
-    overdue = sum(1 for kind, age in rows if age is not None and age > overdue_after_seconds(kind))
+    # AA-1171 (crm-085): the overdue factor in force (None = read the setting now).
+    factor = float(ps.get(ps.OPS_JOBS_OVERDUE_FACTOR)) if overdue_factor is None else overdue_factor
+    overdue = sum(1 for kind, age in rows if age is not None and age > overdue_after_seconds(kind, factor))
     healthy_running = len(rows) - overdue > 0
     due_age = max(float(oldest_due_age_s or 0.0), 0.0)
     return Sample(

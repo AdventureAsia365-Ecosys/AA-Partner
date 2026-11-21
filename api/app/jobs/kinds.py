@@ -2,7 +2,8 @@
 the deploy-blocking kinds (AA-993 G5).
 
 A running job counts as **overdue** in the backlog metrics (:mod:`app.jobs.metrics`) once its current attempt has run
-longer than ``OVERDUE_FACTOR`` x its expected seconds. Every kind the worker handles must be listed here (a unit test
+longer than the setting ``crm.ops.jobs_overdue_factor`` x its expected seconds. Every kind the worker handles must be
+listed here (a unit test
 compares this map with the handlers the lifespan registers).
 
 ``DEPLOY_BLOCKING_KINDS`` (AA-993 G5): the deploy gate is unsafe only while a row of one of these kinds is RUNNING,
@@ -125,7 +126,6 @@ TENANT_ERASE = "crm_tenant_erase"
 CAMPAIGN_TICK = "crm_campaign_tick"
 
 DEFAULT_EXPECTED_SECONDS = 300
-OVERDUE_FACTOR = 2
 
 DEPLOY_GATE_EXEMPT: frozenset[str] = frozenset({HEARTBEAT, MEMBERSHIP_PULL, BOOKING_SYNC})
 
@@ -183,6 +183,8 @@ def expected_seconds(kind: str) -> int:
     return EXPECTED_SECONDS.get(kind, DEFAULT_EXPECTED_SECONDS)
 
 
-def overdue_after_seconds(kind: str) -> int:
-    """Seconds after which the current attempt of a running job of ``kind`` counts as overdue."""
-    return OVERDUE_FACTOR * expected_seconds(kind)
+def overdue_after_seconds(kind: str, factor: float) -> float:
+    """Seconds after which the current attempt of a running job of ``kind`` counts as overdue: ``factor`` x its
+    expected seconds. AA-1171: ``factor`` is the setting ``crm.ops.jobs_overdue_factor`` (crm-085, default 2), read by
+    the caller (:mod:`app.jobs.metrics`)."""
+    return float(factor) * expected_seconds(kind)

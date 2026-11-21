@@ -12,6 +12,7 @@ from typing import Any
 import asyncpg
 import pytest
 
+from app import platform_settings as ps
 from app.cis import feed_state
 from app.cis import membership_feed as feed
 from app.cis.http import HttpError, HttpResponse
@@ -304,7 +305,8 @@ async def test_an_apply_failure_keeps_the_cursor_and_backs_off(
 
 @pytest.mark.asyncio
 async def test_a_stuck_feed_logs_an_error_line_for_the_alarm(caplog: pytest.LogCaptureFixture) -> None:
-    pool = FakePool(failures=feed.STUCK_FAILURES - 2, last_error_at=NOW - dt.timedelta(hours=1))
+    stuck = ps.get(ps.OPS_MEMBERSHIP_FEED_STUCK_FAILURES)  # AA-1171 (crm-085): the setting, default 10
+    pool = FakePool(failures=stuck - 2, last_error_at=NOW - dt.timedelta(hours=1))
     await _feed(Transport(HttpResponse(503, b"")))(pool, JOB)  # type: ignore[arg-type]
     assert not [r for r in caplog.records if "crm_membership_feed_stuck" in r.message]
     pool.state["last_error_at"] = NOW - dt.timedelta(hours=1)

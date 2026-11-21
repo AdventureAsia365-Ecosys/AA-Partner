@@ -503,7 +503,14 @@ extra hotel nights), `membership_apply_refused` (per event), `membership_feed_st
 `crm_ops_alert`, status `succeeded`, idempotency key `crm_ops_alert:<check>:<scope or UTC day>`, payload ids only;
 `queue.record_alert` / `queue.forget_alert`). The ledger rows are never claimed and are not busy work for the deploy
 gate or DB Migrate. A test keeps every event check raised somewhere in `app/` (`tests/unit/test_ops_alerts.py`). The
-service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`.
+service being down is the Infra alarm `aa-crm-<env>-no-healthy-task`. **AA-1171 (crm-085):** the thresholds are CRM
+settings in area `ops` (CIS Platform › Settings, CRM tab), read at every evaluation: `crm.ops.jobs_stuck_after_s` (900),
+`crm.ops.jobs_overdue_factor` (2), `crm.ops.audit_export_lag_min` (180), `crm.ops.audit_verify_lag_h` (50),
+`crm.ops.audit_partition_months_ahead` (1), `crm.ops.membership_feed_stuck_failures` (10); the 80 % AI spend share (the
+shared AI core) and the bulk reveal 60 an hour (also the reveal rate limit) are still code values, shown so in the
+registry. `GET /crm/ops/v1/ops-checks` (crm.ops.v1 1.17, any full OPS reader, `app/routers/ops_checks.py`) is the check
+registry the CIS alerts catalogue reads: every check with its setting keys and values in force and the last alert
+(`queue.last_alerts`, the ledger rows of the last 7 days); no agency audit event (no agency data).
 ## CI and release
 
 - **Code-health ratchets** (AA-1097; `.github/scripts/code_health.py`, limits and exemptions with reasons in

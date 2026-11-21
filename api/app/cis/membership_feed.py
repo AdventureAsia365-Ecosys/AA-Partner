@@ -42,8 +42,8 @@ Rules (outcome / reason code in the inbox; every applied change also writes the 
   lock placed on a CIS-locked agency turns its source into ``aa_ops``, :func:`app.ops.console.lock_agency`).
 
 Monitoring: ``/crm/health/ready`` reports ``membership_feed`` (:func:`app.cis.feed_state.health`; never fails
-readiness), and from :data:`STUCK_FAILURES` consecutive failures on every failed run logs the ERROR line
-``crm_membership_feed_stuck`` (and raises the ops check ``membership_feed_stuck``, S263).
+readiness), and from ``crm.ops.membership_feed_stuck_failures`` consecutive failures on every failed run logs the
+ERROR line ``crm_membership_feed_stuck`` (and raises the ops check ``membership_feed_stuck``, S263).
 """
 
 from __future__ import annotations
@@ -59,6 +59,7 @@ from typing import Any
 
 import asyncpg
 
+from app import platform_settings as ps
 from app.cis import contract, feed_state
 from app.cis.http import DEFAULT_TIMEOUT_S, HttpError, Transport, urllib_transport
 from app.cis.m2m import TokenError, TokenProvider
@@ -77,8 +78,9 @@ BACKOFF_BASE_S = 20
 BACKOFF_MAX_S = 300
 INFORMATIONAL = frozenset({"tenant.created", "membership.invited", "membership.activated", "membership.role_changed"})
 LOCK_EVENTS = {"tenant.locked": "cis_tenant_locked", "tenant.deleted": "cis_tenant_deleted"}
-# About half an hour of failures with the 5-minute cap (20 + 40 + 80 + 160 + 6 x 300 s).
-STUCK_FAILURES = 10
+# AA-1171 (crm-085): the failures in a row before the feed counts as stuck are the setting
+# crm.ops.membership_feed_stuck_failures (default 10: about half an hour with the 5-minute cap, 20 + 40 + 80 + 160 +
+# 6 x 300 s), read on every failed run.
 # SQLSTATE classes that belong to the event, not to the system: a CRM guard (CRMxx) or an integrity error. Anything
 # else (connection, deadlock / serialization, lock timeout, privileges, a missing object, and data errors: asyncpg
 # reports a wrong argument type as 22000 before the server sees it, which is a bug in this code) is systemic.
@@ -375,7 +377,7 @@ class MembershipFeed:
         except _FeedError as exc:
             failures = await feed_state.fail(pool, exc.error_class)
             log.warning("crm_membership_pull_failed error=%s failures=%d", exc.error_class, failures)
-            if failures >= STUCK_FAILURES:
+            if failures >= int(ps.get(ps.OPS_MEMBERSHIP_FEED_STUCK_FAILURES)):
                 # Revocations stopped reaching the CRM: the alarm line (an error class code and a count only).
                 log.error("crm_membership_feed_stuck error=%s failures=%d", exc.error_class, failures)
                 ops_alerts.emit("membership_feed_stuck", error=exc.error_class, failures=failures)

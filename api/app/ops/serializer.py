@@ -255,6 +255,18 @@ OPS_ALLOWED_KEYS: frozenset[str] = frozenset(
         "evidence_max",
         # the operator's guide of a CRM setting (the CIS 416 shape the Settings page reads): plain text per language
         "guide",
+        # 1.17 (AA-1171): GET /ops-checks, the in-app check registry the CIS alerts catalogue reads
+        "checks",
+        "title",
+        "component",
+        "severity",
+        "action",
+        "thresholds",
+        "setting",
+        "editable_via",
+        "where",
+        "channel",
+        "last_alert_at",
         "en",
         "vi",
         "what",
