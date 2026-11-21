@@ -110,7 +110,7 @@ afterEach(() => {
   document.body.innerHTML = "";
 });
 
-async function mount(l: Line, onSave: (body: Record<string, unknown>) => Promise<boolean>): Promise<HTMLElement> {
+async function mount(l: Line, onSave: (lineId: string, body: Record<string, unknown>) => Promise<boolean>): Promise<HTMLElement> {
   const container = document.createElement("div");
   document.body.appendChild(container);
   const tr = (key: string) => MESSAGES.en[key as keyof typeof MESSAGES.en] ?? key;
@@ -143,7 +143,7 @@ describe("Deadline and supplier", () => {
     await typeInto(q(c, "date-input") as HTMLInputElement, "20/02/2031");
     const f = q(c, "line-edit-form") as HTMLFormElement;
     await act(async () => f.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
-    expect(onSave).toHaveBeenCalledWith({ due_at: "2031-02-20" });
+    expect(onSave).toHaveBeenCalledWith(ID, { due_at: "2031-02-20" });
     expect(q(c, "line-edit-form")).toBeNull();
   });
 
@@ -153,6 +153,6 @@ describe("Deadline and supplier", () => {
     await click(q(c, "line-edit-service"));
     expect(q(c, "line-edit-supplier")).toBeNull(); // a requested line keeps its supplier
     await click(q(c, "line-edit-clear-due"));
-    expect(onSave).toHaveBeenCalledWith({ due_at: null });
+    expect(onSave).toHaveBeenCalledWith(ID, { due_at: null });
   });
 });

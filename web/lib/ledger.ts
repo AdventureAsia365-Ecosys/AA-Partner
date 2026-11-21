@@ -267,16 +267,22 @@ export function lineChangeBody(
   form: FormData,
   line: Pick<Line, "status" | "due_at" | "agency_supplier_id" | "bundled" | "category">,
 ): Record<string, unknown> {
-  const body: Record<string, unknown> = {};
+  return { ...dueChange(form, line), ...supplierChange(form, line), ...bundledChange(form, line) };
+}
+
+function dueChange(form: FormData, line: Pick<Line, "due_at">): Record<string, unknown> {
   const due = String(form.get("due_on") ?? "").trim();
-  if (due && due !== (line.due_at ?? "").slice(0, 10)) body.due_at = due;
-  if (line.status === "planning" && form.has("agency_supplier_id")) {
-    const supplier = String(form.get("agency_supplier_id") ?? "").trim() || null;
-    if (supplier !== (line.agency_supplier_id ?? null)) body.agency_supplier_id = supplier;
-  }
-  if (canBundle(line.category)) {
-    const bundled = form.get("bundled") === "on";
-    if (bundled !== Boolean(line.bundled)) body.bundled = bundled;
-  }
-  return body;
+  return due && due !== (line.due_at ?? "").slice(0, 10) ? { due_at: due } : {};
+}
+
+function supplierChange(form: FormData, line: Pick<Line, "status" | "agency_supplier_id">): Record<string, unknown> {
+  if (line.status !== "planning" || !form.has("agency_supplier_id")) return {};
+  const supplier = String(form.get("agency_supplier_id") ?? "").trim() || null;
+  return supplier === (line.agency_supplier_id ?? null) ? {} : { agency_supplier_id: supplier };
+}
+
+function bundledChange(form: FormData, line: Pick<Line, "bundled" | "category">): Record<string, unknown> {
+  if (!canBundle(line.category)) return {};
+  const bundled = form.get("bundled") === "on";
+  return bundled === Boolean(line.bundled) ? {} : { bundled };
 }

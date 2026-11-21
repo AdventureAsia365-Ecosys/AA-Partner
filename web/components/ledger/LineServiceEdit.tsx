@@ -31,8 +31,8 @@ type Props = {
   disabled: boolean;
   locale: DateLocale;
   tr: (key: string) => string;
-  /** The panel's PATCH (busy flag, refusal wording, refresh); true when the API took it. */
-  onSave: (body: Record<string, unknown>) => Promise<boolean>;
+  /** The panel's PATCH lines/{id} (busy flag, refusal wording, refresh); true when the API took it. */
+  onSave: (lineId: string, body: Record<string, unknown>) => Promise<boolean>;
 };
 
 function SupplierPick({ line, suppliers, tr }: Pick<Props, "line" | "suppliers" | "tr">) {
@@ -68,7 +68,7 @@ export function LineServiceEdit({ line, suppliers, closed, disabled, locale, tr,
   if (!canEditService(line, closed)) return null;
   if (!open) {
     return (
-      <Button size="sm" variant="ghost" disabled={disabled} onClick={() => setOpen(true)} data-testid="line-edit-service">
+      <Button size="sm" variant="ghost" disabled={disabled} onClick={() => setOpen(true)} testId="line-edit-service">
         {tr("agencyItem.editService")}
       </Button>
     );
@@ -76,11 +76,11 @@ export function LineServiceEdit({ line, suppliers, closed, disabled, locale, tr,
 
   async function save(form: FormData) {
     const body = lineChangeBody(form, line);
-    if (Object.keys(body).length === 0 || (await onSave(body))) setOpen(false);
+    if (Object.keys(body).length === 0 || (await onSave(line.booking_line_id, body))) setOpen(false);
   }
 
   async function clearDue() {
-    if (await onSave({ due_at: null })) setOpen(false);
+    if (await onSave(line.booking_line_id, { due_at: null })) setOpen(false);
   }
 
   return (
@@ -101,7 +101,7 @@ export function LineServiceEdit({ line, suppliers, closed, disabled, locale, tr,
           {tr("ledger.save")}
         </Button>
         {line.due_at && (
-          <Button size="sm" variant="ghost" disabled={disabled} onClick={clearDue} data-testid="line-edit-clear-due">
+          <Button size="sm" variant="ghost" disabled={disabled} onClick={clearDue} testId="line-edit-clear-due">
             {tr("agencyItem.clearDue")}
           </Button>
         )}

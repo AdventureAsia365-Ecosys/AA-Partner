@@ -136,6 +136,10 @@ export function LinesPanel({
     return true;
   }
 
+  /** AA-1147: "Deadline and supplier" (LineServiceEdit) sends only what changed. */
+  const locked = !hydrated || busy;
+  const patchLine = (lineId: string, body: Record<string, unknown>) => run("PATCH", `lines/${lineId}`, body);
+
   async function add(form: FormData) {
     const body = newLineBody(form); // AA-1144 category, AA-1147 supplier optional, deadline, fold into the tour price
     if (await run("POST", `trips/${tripId}/lines`, body)) setAdding(false);
@@ -317,10 +321,10 @@ export function LinesPanel({
           line={line}
           suppliers={own}
           closed={closed}
-          disabled={!hydrated || busy}
+          disabled={locked}
           locale={locale}
           tr={tr}
-          onSave={(body) => run("PATCH", `lines/${line.booking_line_id}`, body)}
+          onSave={patchLine}
         />{" "}
         {allowedAaActions(line.aa?.actions ?? [], role).filter((action) => !closed || action === "release").map((action: AaAction) => (
           <Button
