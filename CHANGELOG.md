@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.14.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.13.0...v0.14.0) (2026-11-21)
+
+
+### Features
+
+* AA item names read only in quotes, one note line per item, booking-terms-only studio facts ([#362](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/362)) ([9f2453b](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/9f2453b35b676c9dc170f4bd73866d4a58a22e54))
+* agency services follow the trip from the accepted proposal to the invoice ([#375](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/375)) ([bf663b9](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/bf663b9e8936b89e6c1a6260711c418d56b55938))
+* AI columns and disclosure on the My Content CSV and XLSX export ([#369](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/369)) ([b163d81](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/b163d81ad4500145fd41b5c3ca34e3374f05eb39))
+* catalog export ends with the AI disclosure wording read from CIS ([#372](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/372)) ([44daca2](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/44daca2efa91c8e8ef064c6e165f32823b4c0b2b))
+* CRM agency items limited to flight, visa, insurance and fee; Ask AA for extra nights ([#359](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/359)) ([dfb7ffb](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/dfb7ffb48dc39ddefa846853f3171c2a0c7ec5e1))
+* CRM draft route runs Claude Haiku 5.5 on acc1 with a cap per connection ([#354](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/354)) ([8f255db](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/8f255db646e68dd0b05c008907277ce2c3bb0e71))
+* CRM Home Needs you, member names, unmatched inbox previews, calendar task labels ([#350](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/350)) ([b6e3cd6](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/b6e3cd6fb31cd1f31b080427408549c335a807ba))
+* CRM ops check thresholds as settings (crm-085) and the check registry for the CIS alerts catalogue ([#378](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/378)) ([52ec441](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/52ec44130d1e8b0d252f4f96d852f584c45154ad))
+* crm-077 the CRM's own monthly cap per model connection as a setting ([#344](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/344)) ([4d94f90](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/4d94f90575b3085e9e0c81fda792c6c60526e792))
+* crm-078 route the CRM draft stage to Claude Haiku 5.5 on acc1, Nova Lite last ([#353](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/353)) ([8228052](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/8228052a96170524326d5881c990cfac6f7372b6))
+* crm-079 the CRM copy of its connection budget shares ([#356](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/356)) ([eade89b](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/eade89bda58ce630f41c2590af993e10b50b00a0))
+* crm-080 agency items closed list, extra night requests to AA, T19 re-type and trash ([#358](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/358)) ([bcc3ae0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/bcc3ae00e7bc4df8ecce74cd7f599e96a005181a))
+* crm-081 one display note line per quote item (contract) ([#360](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/360)) ([9626c18](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/9626c185457b40f513a0cc82cb66931204305cd2))
+* crm-082 operations staff must sign in with an authenticator code behind a settings switch ([#363](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/363)) ([e0e8af5](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/e0e8af51b4e936c4f367ba5b46685269ce50b337))
+* crm-083 agency services follow the trip (contract migration) ([#374](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/374)) ([7b4d9e3](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/7b4d9e3bee9bec1b481ac95007842737a2f64295))
+* full nonce CSP on every CRM web response and COOP same-origin ([#341](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/341)) ([00e6f0c](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/00e6f0c4d173e8caf6b09f5808e55cecbd27b724))
+* the agency AI budget from its CRM plan and the studio's used-up AI allowance view with an Upgrade link ([#339](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/339)) ([8596453](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/859645334f5e34d842ba23b5ea47c5f91470401d))
+* the CRM enforces its connection share from the CIS copy, setting as fallback ([#357](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/357)) ([e378127](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/e378127c67f01797eb06dab013ecddbc46f3af1c))
+* the CRM gateway stops at its own monthly cap per model connection ([#345](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/345)) ([8d733be](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/8d733bebb619187cd82ce1c6ba4fbeb7fe41b39b))
+* the Trip planner module in the agency app, in the CRM and in the Content studio for an agency without the CRM ([#366](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/366)) ([1f7d1cf](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/1f7d1cf94b2444983b78df44b0774aec28e56a11))
+
+
+### Bug Fixes
+
+* agency app leftovers: plain access log lines, monthly bill in Studio, seed name guard ([#361](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/361)) ([363a801](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/363a80115af76f468b7b11cca28cd38209ae4fee))
+* CRM web translation and plurals, white-label inquiry form, Academy small fixes ([#349](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/349)) ([1caaef9](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/1caaef90cce9e9d1d95d656384fd3f5117b7c0f3))
+* local person-name check in the PII scrubber (f3-4) ([#371](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/371)) ([e70b106](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/e70b106d794be97a6b9320bbff050b88ea5c45d8))
+* one member label rule, access log in the agency timezone, client host 404, trash and settings lists ([#352](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/352)) ([16e2a32](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/16e2a3273468cb291604295e3b09d8809d48f27b))
+* pinned sidebar footer and the kit PageHeader rules after the kit accessibility sync ([#342](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/342)) ([89a43cc](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/89a43cccbb39c666e01d93728a85358043541363))
+* portal smoke pager case reads the page from the detail line, not the label ([#367](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/367)) ([88db588](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/88db5880a7047a7770a265189ff43ac1be1cd5b2))
+* serve json CRM setting values whole on the crm.ops.v1 settings routes ([#348](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/348)) ([27b8c56](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/27b8c56f3f2c5c4459580e8529757db0adbe1b20))
+* studio save sends only the edited fields; log CRM option edit and validation refusals ([#365](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/365)) ([fbe5ff7](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/fbe5ff7178c043d62fb43a7c508b7130d85f0926))
+
 ## [0.13.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.12.0...v0.13.0) (2026-11-17)
 
 
