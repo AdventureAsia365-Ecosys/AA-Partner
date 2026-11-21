@@ -11,7 +11,8 @@ from __future__ import annotations
 import re
 import uuid
 from decimal import Decimal
-from typing import Any
+
+from app.tenancy import AnyContext
 
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 INCLUDED_SQL = """
@@ -26,7 +27,7 @@ SELECT l.title, l.supplier_kind, l.bundled,
 
 
 async def rows(
-    ctx: Any, trip_id: uuid.UUID, limit: int, currency: str, max_description: int
+    ctx: AnyContext, trip_id: uuid.UUID, limit: int, currency: str, max_description: int
 ) -> list[tuple[str, str, Decimal | None]]:
     """``(source, description, price)`` of each included row, in service order (blank titles left out)."""
     out = []
