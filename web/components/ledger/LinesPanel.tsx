@@ -37,6 +37,7 @@ import {
   fxReading,
   missingCodes,
   moneyBody,
+  newLineBody,
   seesMargin,
   type Line,
   type MoneyKind,
@@ -133,18 +134,7 @@ export function LinesPanel({
   }
 
   async function add(form: FormData) {
-    const body = {
-      // AA-1147: an empty supplier = handled by the agency itself
-      agency_supplier_id: String(form.get("agency_supplier_id") ?? "") || null,
-      category: String(form.get("category")), // AA-1144: flight | visa | insurance | fee (the select below)
-      due_at: String(form.get("due_on") ?? "") || null, // AA-1147: the deadline (a task opens before it)
-      bundled: form.get("bundled") === "on", // AA-1147: flight or fee only (the API refuses visa / insurance)
-      title: String(form.get("title") ?? "").trim(),
-      confirmation_no: String(form.get("confirmation_no") ?? "").trim() || null,
-      service_from: String(form.get("service_from") ?? "") || null,
-      service_to: String(form.get("service_to") ?? "") || null,
-      collect: String(form.get("collect") ?? "agency"),
-    };
+    const body = newLineBody(form); // AA-1144 category, AA-1147 supplier optional, deadline, fold into the tour price
     if (await run("POST", `trips/${tripId}/lines`, body)) setAdding(false);
   }
 

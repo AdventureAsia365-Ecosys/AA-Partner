@@ -227,3 +227,27 @@ export function canToggleShown(line: Pick<Line, "status" | "supplier_kind">, clo
   if (closed || line.status === "cancelled") return false;
   return line.supplier_kind !== "aa" || line.status === "confirmed";
 }
+
+/** AA-1147: the trip's agency service lines a file can be attached to (an e-ticket, a visa letter, a certificate). */
+export function serviceLines(result: { ok: true; data: TripLines } | { ok: false }): { booking_line_id: string; title: string }[] {
+  if (!result.ok) return [];
+  return result.data.lines.filter((l) => l.supplier_kind === "agency").map((l) => ({ booking_line_id: l.booking_line_id, title: l.title }));
+}
+
+/** AA-1147 (crm-083): the body of "Add line": no supplier = handled by the agency itself; a deadline (a task opens
+ * before it); "fold into the tour price" (flight or fee only: the API answers 422 bundle_not_allowed otherwise). */
+export function newLineBody(form: FormData): Record<string, unknown> {
+  const text = (name: string) => String(form.get(name) ?? "").trim();
+  const orNull = (value: string) => (value === "" ? null : value);
+  return {
+    agency_supplier_id: orNull(text("agency_supplier_id")),
+    category: text("category"),
+    title: text("title"),
+    confirmation_no: orNull(text("confirmation_no")),
+    service_from: orNull(text("service_from")),
+    service_to: orNull(text("service_to")),
+    collect: text("collect") || "agency",
+    due_at: orNull(text("due_on")),
+    bundled: form.get("bundled") === "on",
+  };
+}

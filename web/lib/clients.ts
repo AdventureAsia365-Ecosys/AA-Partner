@@ -259,3 +259,14 @@ export function roleText(lang: Lang, role: "lead" | "companion"): string {
 export function tripsCount(lang: Lang, n: number): string {
   return plural(lang, "clients.trips", n);
 }
+
+/** AA-1147: the service line a new file of a trip is about ("" = the whole trip; a client's file has none). */
+export function lineFor(tripId: string | undefined, lineId: string): string | null {
+  return tripId && lineId ? lineId : null;
+}
+
+/** AA-1147: the title of the service line a file is about, when the panel knows it. */
+export function lineTitle(lines: { booking_line_id: string; title: string }[], id: string | null | undefined): string | null {
+  if (!id) return null;
+  return lines.find((l) => l.booking_line_id === id)?.title ?? null;
+}

@@ -15,10 +15,14 @@ import unicodedata
 from typing import Any
 
 from app.errors import Forbidden, Invalid
+from app.ledger import agency_extras
 from app.tenancy import TenantContext
 
 NOTE_MAX = 200  # technical-constant: crm-081 option_display_note_chk (one line under an item, like the title's 200)
 NOTE_COPY_SQL = "UPDATE crm.option SET display_note = $2 WHERE option_id = $1"
+# AA-1147 (crm-083, decision T18): an agency flight or fee folded into the tour price (no price of its own on the
+# client's documents); visa and insurance never (app.ledger.agency_extras.bundled, crm-083 option_bundled_chk).
+BUNDLED_SQL = "UPDATE crm.option SET bundled = $2 WHERE option_id = $1"
 
 
 def rules_json(value: Any) -> str | None:
@@ -58,6 +62,24 @@ def check_title(option: dict[str, Any], changes: dict[str, Any]) -> None:
 
 
 async def copy_note(ctx: TenantContext, option_id: Any, source: dict[str, Any]) -> None:
-    """A new quote version keeps the note of the item it copies (the INSERT shared by every add path has no note)."""
+    """A new quote version keeps the note of the item it copies (the INSERT shared by every add path has no note), and
+    (AA-1147) its "folded into the tour price" flag."""
     if source.get("display_note"):
         await ctx.conn.execute(NOTE_COPY_SQL, option_id, source["display_note"])
+    if source.get("bundled"):
+        await ctx.conn.execute(BUNDLED_SQL, option_id, True)
+
+
+async def set_bundled(ctx: TenantContext, option_id: Any, value: Any, category: str | None) -> None:
+    """AA-1147 (T18): a new agency item folded into the tour price (422 ``bundle_not_allowed`` for visa / insurance)."""
+    if agency_extras.bundled(value, category):
+        await ctx.conn.execute(BUNDLED_SQL, option_id, True)
+
+
+def bundled_after(changes: dict[str, Any], option: dict[str, Any]) -> bool:
+    """AA-1147 (T18): the flag an edit leaves on the item: the checked new one when the edit sends it (an AA item, a
+    visa or an insurance item is 422 ``bundle_not_allowed``), else the current one."""
+    if changes.get("bundled") is None:
+        return bool(option.get("bundled"))
+    category = option.get("category") if option.get("source") == "agency" else None
+    return agency_extras.bundled(changes["bundled"], category)

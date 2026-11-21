@@ -10,7 +10,7 @@ import { useState } from "react";
 import { Badge, Button, K } from "@/app/_kit";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
-import { DOC_KINDS, REVEAL_REASONS, fileProblem, fileSize, fromBase64, label, toBase64, type DocKind, type DocumentRow } from "@/lib/clients";
+import { DOC_KINDS, REVEAL_REASONS, fileProblem, fileSize, fromBase64, label, lineFor, lineTitle, toBase64, type DocKind, type DocumentRow } from "@/lib/clients";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { type Lang, type MessageKey, t } from "@/lib/i18n";
 import type { Role } from "@/lib/nav";
@@ -25,6 +25,38 @@ const field: React.CSSProperties = {
   color: K.ink,
   maxWidth: "100%",
 };
+
+type ServiceLine = { booking_line_id: string; title: string };
+
+/** AA-1147: the service line a document is about (its title under the file name; nothing for the whole trip). */
+function DocLine({ title }: { title: string | null }) {
+  if (!title) return null;
+  return (
+    <span data-testid="document-line" style={{ fontSize: 12, color: K.muted, overflowWrap: "anywhere" }}>
+      {title}
+    </span>
+  );
+}
+
+/** AA-1147: pick the trip's agency service line a new file is about ("The whole trip" by default). */
+function LineSelect({ lines, tripId, value, onChange, lang }: {
+  lines: ServiceLine[]; tripId?: string; value: string; onChange: (v: string) => void; lang: Lang;
+}) {
+  if (!tripId || lines.length === 0) return null;
+  return (
+    <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
+      {t(lang, "docs.line")}
+      <select value={value} onChange={(e) => onChange(e.target.value)} style={field} data-testid="document-line-select">
+        <option value="">{t(lang, "docs.line.trip")}</option>
+        {lines.map((l) => (
+          <option key={l.booking_line_id} value={l.booking_line_id}>
+            {l.title}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 
 export function DocumentsPanel({
   documents,
@@ -45,7 +77,7 @@ export function DocumentsPanel({
   /** The trip is cancelled or being cancelled: nothing new is shown to its travellers. */
   closed?: boolean;
   /** AA-1147: the trip's agency service lines a file can be about (an e-ticket, a visa letter, a certificate). */
-  lines?: { booking_line_id: string; title: string }[];
+  lines?: ServiceLine[];
 }) {
   const router = useRouter();
   const [kind, setKind] = useState<DocKind>(travelerId ? "passport_scan" : "ticket");
@@ -56,8 +88,6 @@ export function DocumentsPanel({
   const [error, setError] = useState<string | null>(null);
   const [asking, setAsking] = useState<string | null>(null);
   const [reason, setReason] = useState("");
-
-  const lineTitle = (id: string) => lines.find((l) => l.booking_line_id === id)?.title ?? null;
 
   async function upload() {
     if (!file) return;
@@ -77,7 +107,7 @@ export function DocumentsPanel({
       content_type: file.type,
       content_b64,
       visible_to_travelers: kind === "passport_scan" || closed ? false : visible,
-      booking_line_id: tripId && lineId ? lineId : null,
+      booking_line_id: lineFor(tripId, lineId),
     });
     setBusy(false);
     if (!res.ok) {
@@ -125,11 +155,7 @@ export function DocumentsPanel({
               <span style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", fontSize: 13.5, color: K.ink }}>
                 <span style={{ overflowWrap: "anywhere" }}>{d.filename}</span>
                 <Badge tone="neutral">{label(lang, "doc", d.kind)}</Badge>
-                {d.booking_line_id && lineTitle(d.booking_line_id) && (
-                  <span data-testid="document-line" style={{ fontSize: 12, color: K.muted, overflowWrap: "anywhere" }}>
-                    {lineTitle(d.booking_line_id)}
-                  </span>
-                )}
+                <DocLine title={lineTitle(lines, d.booking_line_id)} />
                 {d.write_only ? <Badge tone="warning">{t(lang, "docs.writeOnly")}</Badge> : <Badge tone={d.visible_to_travelers ? "accent" : "neutral"}>{t(lang, d.visible_to_travelers ? "docs.shown" : "docs.hidden")}</Badge>}
               </span>
               <span style={{ fontSize: 11.5, color: K.muted }}>
@@ -190,19 +216,7 @@ export function DocumentsPanel({
             ))}
           </select>
         </label>
-        {tripId && lines.length > 0 && (
-          <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
-            {t(lang, "docs.line")}
-            <select value={lineId} onChange={(e) => setLineId(e.target.value)} style={field} data-testid="document-line-select">
-              <option value="">{t(lang, "docs.line.trip")}</option>
-              {lines.map((l) => (
-                <option key={l.booking_line_id} value={l.booking_line_id}>
-                  {l.title}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
+        <LineSelect lines={lines} tripId={tripId} value={lineId} onChange={setLineId} lang={lang} />
         <label style={{ display: "grid", gap: 4, fontSize: 12.5, color: K.muted }}>
           {t(lang, "docs.file")}
           <input type="file" accept="application/pdf,image/jpeg,image/png,image/webp,image/heic" onChange={(e) => setFile(e.target.files?.[0] ?? null)} style={field} data-testid="document-file" />

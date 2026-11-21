@@ -122,6 +122,14 @@ def _view(row: Any, filename: str) -> dict[str, Any]:
     }
 
 
+async def _check_line(ctx: TenantContext, booking_line_id: uuid.UUID | None, trip_id: uuid.UUID | None) -> None:
+    """AA-1147: a file about one booking line names a live line of its own trip (422 ``invalid_booking_line_id``)."""
+    if booking_line_id is None:
+        return
+    if trip_id is None or not await ctx.conn.fetchval(LINE_OF_TRIP_SQL, booking_line_id, trip_id):
+        raise Invalid("invalid_booking_line_id", "a booking line of the document's trip")
+
+
 async def upload(
     ctx: TenantContext,
     vault: Vault,
@@ -161,10 +169,7 @@ async def upload(
         raise NotFound("traveler_not_found")
     if trip_id is not None and not await ctx.conn.fetchval(TRIP_EXISTS_SQL, trip_id):
         raise NotFound("trip_not_found")
-    if booking_line_id is not None and (
-        trip_id is None or not await ctx.conn.fetchval(LINE_OF_TRIP_SQL, booking_line_id, trip_id)
-    ):
-        raise Invalid("invalid_booking_line_id", "a booking line of the document's trip")
+    await _check_line(ctx, booking_line_id, trip_id)
     write_only = kind == "passport_scan"
     if write_only and visible_to_travelers:
         raise Invalid("passport_never_visible", "a passport scan is never shown to travellers")

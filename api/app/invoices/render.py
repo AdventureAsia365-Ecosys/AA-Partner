@@ -61,6 +61,25 @@ def agency_services_title(agency_name: str | None) -> str:
     return f"Services provided by {agency_name}" if agency_name else "Services provided by the agency"
 
 
+def _agency_services(invoice: dict[str, Any], cur: str, agency_name: str | None, disclaimer: str | None) -> str:
+    """AA-1147 (T18): the group of the agency's own services (included rows of source ``agency_line``), each with its
+    price or "Included in the trip price", and the disclaimer; "" when the invoice has none."""
+    e = escape
+    own = [line for line in invoice.get("lines", []) if line["kind"] == "included" and line["source"] == "agency_line"]
+    if not own:
+        return ""
+    rows = "".join(
+        f"<tr><td>{e(line['description'])}</td>"
+        f'<td class="num">{e(_amount(line["amount"], cur) if line.get("amount") else IN_PRICE)}</td></tr>'
+        for line in own
+    )
+    note = f'<div class="disclaimer">{e(disclaimer)}</div>' if disclaimer else ""
+    return (
+        f'<div class="agency-services"><strong>{e(agency_services_title(agency_name))}</strong>'
+        f"<table><tbody>{rows}</tbody></table>{note}</div>"
+    )
+
+
 def _amount(value: str | None, currency: str) -> str:
     if value is None:
         return ""
@@ -93,7 +112,6 @@ def render(
     included = [
         line for line in invoice.get("lines", []) if line["kind"] == "included" and line["source"] != "agency_line"
     ]
-    own = [line for line in invoice.get("lines", []) if line["kind"] == "included" and line["source"] == "agency_line"]
     banner = ""
     if status == "draft":
         banner = '<div class="banner">DRAFT: not issued</div>'
@@ -144,17 +162,7 @@ def render(
     if included:
         items = "".join(f"<li>{e(line['description'])}</li>" for line in included)
         included_html = f'<div class="included">This invoice covers:<ul>{items}</ul></div>'
-    if own:
-        rows_own = "".join(
-            f"<tr><td>{e(line['description'])}</td>"
-            f'<td class="num">{e(_amount(line["amount"], cur) if line.get("amount") else IN_PRICE)}</td></tr>'
-            for line in own
-        )
-        note = f'<div class="disclaimer">{e(disclaimer)}</div>' if disclaimer else ""
-        included_html += (
-            f'<div class="agency-services"><strong>{e(agency_services_title(agency_name))}</strong>'
-            f"<table><tbody>{rows_own}</tbody></table>{note}</div>"
-        )
+    included_html += _agency_services(invoice, cur, agency_name, disclaimer)
     notes = []
     if invoice.get("memo"):
         notes.append(f'<div class="notes">{e(invoice["memo"])}</div>')

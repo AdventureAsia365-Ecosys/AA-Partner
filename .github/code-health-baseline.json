@@ -217,7 +217,6 @@
   "web/components/ledger/LinesPanel.tsx::LinesPanel": 19,
   "web/components/ledger/LinesPanel.tsx::LinesPanel.aaStatus": 11,
   "web/components/ledger/LinesPanel.tsx::LinesPanel.actions": 28,
-  "web/components/ledger/LinesPanel.tsx::LinesPanel.add": 11,
   "web/components/ledger/LinesPanel.tsx::LinesPanel.statusCell": 13,
   "web/components/ledger/SuppliersView.tsx::SuppliersView.bodyOf": 13,
   "web/components/ledger/SuppliersView.tsx::SuppliersView.form": 17,

@@ -83,7 +83,7 @@ export function TripPanel({
   lostHint = null,
   timeZone = "UTC",
   partners = null,
-  serviceLines = [],
+  serviceLines,
 }: {
   view: TripView;
   members: Member[];

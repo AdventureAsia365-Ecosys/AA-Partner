@@ -245,6 +245,29 @@ def agency_services_title(agency: str | None, locale: str) -> str:
     return s["agency_services"].format(agency=agency) if agency else s["agency_services_none"]
 
 
+def split_included(lines: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """AA-1147: the included rows the charge covers, and the agency's own services (source ``agency_line``)."""
+    included = [ln for ln in lines if ln["kind"] == "included"]
+    return (
+        [ln for ln in included if ln.get("source") != "agency_line"],
+        [ln for ln in included if ln.get("source") == "agency_line"],
+    )
+
+
+def _agency_services(doc: Document, own: list[dict[str, Any]], agency: str | None, cur: str, locale: str,
+                     disclaimer: str | None) -> None:  # fmt: skip
+    """AA-1147 (T18): "Services provided by <agency>": each service with its price ("Included in the trip price" when
+    folded into the tour price), then the disclaimer."""
+    if not own:
+        return
+    s = _s(locale)
+    doc.text(agency_services_title(agency, locale), bold=True)
+    rows = [[ln["description"], amount(ln.get("amount"), cur) if ln.get("amount") else s["in_price"]] for ln in own]
+    doc.table(["", ""], rows, widths=[0.7, 0.3], right=(1,), show_header=False)
+    if disclaimer:
+        doc.small(disclaimer)
+
+
 def invoice(view: dict[str, Any], locale: str, *, agency: str | None, bill_to: str | None,
             pay_instructions: list[dict[str, str]], disclaimer: str | None = None) -> bytes:  # fmt: skip
     """``view``: :func:`app.invoices.service.invoice_view` with its lines and payments. AA-1147: the agency's own
@@ -263,8 +286,7 @@ def invoice(view: dict[str, Any], locale: str, *, agency: str | None, bill_to: s
         (s["bill_to"], bill_to),
     ])  # fmt: skip
     charges = [ln for ln in view.get("lines") or [] if ln["kind"] == "charge"]
-    included = [ln for ln in view.get("lines") or [] if ln["kind"] == "included" and ln.get("source") != "agency_line"]
-    own = [ln for ln in view.get("lines") or [] if ln["kind"] == "included" and ln.get("source") == "agency_line"]
+    included, own = split_included(view.get("lines") or [])
     doc.table(
         [s["description"], s["qty"], s["unit"], s["amount"]],
         [
@@ -296,17 +318,7 @@ def invoice(view: dict[str, Any], locale: str, *, agency: str | None, bill_to: s
         doc.text(s["covers"], bold=True)
         for ln in included:
             doc.text(f"• {ln['description']}", indent=8, gap=1)
-    if own:
-        doc.text(agency_services_title(agency, locale), bold=True)
-        doc.table(
-            ["", ""],
-            [[ln["description"], amount(ln.get("amount"), cur) if ln.get("amount") else s["in_price"]] for ln in own],
-            widths=[0.7, 0.3],
-            right=(1,),
-            show_header=False,
-        )
-        if disclaimer:
-            doc.small(disclaimer)
+    _agency_services(doc, own, agency, cur, locale, disclaimer)
     if view.get("memo"):
         doc.space()
         doc.text(view["memo"])

@@ -54,7 +54,7 @@ from app.catalogue import service as catalogue
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.esign import terms as esign_terms
 from app.intake import completeness, stage2
-from app.ledger import agency_extras, agency_items
+from app.ledger import agency_items
 from app.margin import sees_margin
 from app.payments import schedule_plan
 from app.proposals import aa_days, discount, inclusions, option_fields, prep_packs, pricing, retail, rules
@@ -206,11 +206,8 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $
 UPDATE_OPTION_SQL = """
 UPDATE crm.option SET title = $2, tier = $3, agency_supplier_id = $4, sell_amount = $5, net_amount = $6,
        pay_on_arrival = $7, choose_later_allowed = $8, below_from_price = $9, price_rules = $10::jsonb,
-       display_note = $11 WHERE option_id = $1
+       display_note = $11, bundled = $12 WHERE option_id = $1
 """
-# AA-1147 (crm-083, decision T18): an agency flight or fee folded into the tour price (no price of its own on the
-# client's documents); visa and insurance never (app.ledger.agency_extras.bundled, crm-083 option_bundled_chk).
-BUNDLED_SQL = "UPDATE crm.option SET bundled = $2 WHERE option_id = $1"
 # AA-1066: an option priced from its per-traveller rows (sell = their sum) or from the suggestion with the rules used.
 OPTION_PRICE_SQL = """
 UPDATE crm.option SET sell_amount = $2, net_amount = $3, below_from_price = $4, price_rules = $5::jsonb
@@ -939,9 +936,7 @@ async def _copy(
             o["aa_departure_id"], o["aa_quote_id"], o["aa_quote_valid_until"], o["aa_from_price"],
             o["below_from_price"], o["option_id"], o["aa_nights"], _rules_json(o.get("price_rules")), o.get("category"),
         )  # fmt: skip
-        await option_fields.copy_note(ctx, option_id, o)  # AA-1144 (D9): the next version keeps the note
-        if o.get("bundled"):
-            await ctx.conn.execute(BUNDLED_SQL, option_id, True)  # AA-1147: and the "folded into the tour price"
+        await option_fields.copy_note(ctx, option_id, o)  # AA-1144 (D9) note, AA-1147 bundled: the next version keeps
         # AA-1066: the per-traveller rows go with their option.
         await pricing.replace(ctx, proposal_id, option_id, s["prices"].get(str(o["option_id"]), []))
     if s["discount_pct"]:
@@ -1362,13 +1357,11 @@ async def add_agency_option(
     s = await _structure(ctx, proposal_id)
     agency_items.block_takes_agency_items(_block(s, block_id)["type"])
     category = agency_items.category(body.get("category"))
-    bundled = agency_extras.bundled(body.get("bundled"), category)  # AA-1147 (T18): only a flight or the fee
     in_block = [o for o in s["options"] if o["option_block_id"] == block_id]
     if len(in_block) >= MAX_OPTIONS_PER_BLOCK:
         raise Conflict("too_many_options", f"at most {MAX_OPTIONS_PER_BLOCK} options a block")
-    option_id = uuid.uuid4()
     await ctx.conn.execute(
-        INSERT_OPTION_SQL, option_id, proposal_id, row["trip_id"], block_id,
+        INSERT_OPTION_SQL, (option_id := uuid.uuid4()), proposal_id, row["trip_id"], block_id,
         max((o["sort_order"] for o in in_block), default=-1) + 1, "agency",
         _text(body.get("title"), "title", 200, required=True), _tier_in(body.get("tier")),
         await _supplier(ctx, body.get("agency_supplier_id")), _money_in(body.get("sell_amount"), "sell_amount") or 0,
@@ -1376,8 +1369,7 @@ async def add_agency_option(
         bool(body.get("choose_later_allowed", False)), "agency", None, None, None, None, None, None, None, None, None,
         None, None, None, category,
     )  # fmt: skip
-    if bundled:
-        await ctx.conn.execute(BUNDLED_SQL, option_id, True)
+    await option_fields.set_bundled(ctx, option_id, body.get("bundled"), category)  # AA-1147 (T18): flight / fee
     await _settle_default(ctx, proposal_id, block_id, await _tier(ctx, vault, row))
     _raise_conflicts(_conflicts(await _structure(ctx, proposal_id)), s)
     return await _done(ctx, vault, proposal_id, "option_add")
@@ -1487,13 +1479,8 @@ async def update_option(
         _tier_in(changes["tier"]) if "tier" in changes else o["tier"], supplier, sell, net,
         _flag(changes, "pay_on_arrival", o), _flag(changes, "choose_later_allowed", o),
         _below_from(o, Decimal(sell), _party(row)) if aa else None, _rules_json(applied),
-        option_fields.note_after(changes, o),
+        option_fields.note_after(changes, o), option_fields.bundled_after(changes, o),
     )  # fmt: skip
-    if changes.get("bundled") is not None:
-        # AA-1147 (T18): only an agency flight or fee is folded into the tour price (422 bundle_not_allowed)
-        bundled = agency_extras.bundled(changes["bundled"], None if aa else o.get("category"))
-        if bundled != bool(o.get("bundled")):
-            await ctx.conn.execute(BUNDLED_SQL, option_id, bundled)
     if "tier" in changes:
         await _settle_default(ctx, proposal_id, o["option_block_id"], await _tier(ctx, vault, row))
     return await _done(ctx, vault, proposal_id, "option_edit")

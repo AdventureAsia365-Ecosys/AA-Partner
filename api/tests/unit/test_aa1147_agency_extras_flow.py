@@ -158,8 +158,8 @@ def test_the_invoice_page_shows_the_agency_group_and_the_disclaimer() -> None:
     html = render.render(INVOICE, agency_name="Lotus & Pine Travel", bill_to="Mira", disclaimer=DISCLAIMER)
     assert "This invoice covers:<ul><li>Lantern bay cruise</li></ul>" in html
     assert "Services provided by Lotus &amp; Pine Travel" in html and DISCLAIMER in html
-    assert "<td>E-visa</td><td class=\"num\">USD 50.00</td>" in html
-    assert "<td>Return flight</td><td class=\"num\">Included in the trip price</td>" in html
+    assert '<td>E-visa</td><td class="num">USD 50.00</td>' in html
+    assert '<td>Return flight</td><td class="num">Included in the trip price</td>' in html
     plain = render.render({**INVOICE, "lines": INVOICE["lines"][:2]}, agency_name="A", bill_to=None, disclaimer="X")
     assert "Services provided by" not in plain  # no agency line, no group, no disclaimer
 

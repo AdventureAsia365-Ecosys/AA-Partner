@@ -38,7 +38,7 @@ import asyncpg
 
 from app import cancellation, stages
 from app.errors import Conflict, Invalid, NotFound
-from app.invoices import render
+from app.invoices import included, render
 from app.ledger import agency_extras, fx
 from app.payments import claims, reminders
 from app.tenancy import AnyContext, TenantContext
@@ -98,17 +98,6 @@ SELECT s.schedule_id, s.trip_id, s.proposal_id, s.kind, s.seq, s.amount, s.curre
 """
 LIVE_FOR_SCHEDULE_SQL = """
 SELECT invoice_id FROM crm.invoice WHERE schedule_id = $1 AND status <> 'void' AND deleted_at IS NULL
-"""
-# AA-1147 (crm-083): an agency line carries its sell in the invoice's currency (printed under "Services provided by
-# <agency>", never summed), unless it is folded into the tour price (bundled) or has no sell in that currency.
-INCLUDED_SQL = """
-SELECT l.title, l.supplier_kind, l.bundled,
-       (SELECT m.amount FROM crm.v_booking_line_money_current m
-         WHERE m.booking_line_id = l.booking_line_id AND m.kind = 'sell' AND m.currency = $3) AS sell
-  FROM crm.booking_line l
- WHERE l.trip_id = $1 AND l.deleted_at IS NULL AND l.status <> 'cancelled'
- ORDER BY l.service_from NULLS LAST, l.created_at, l.booking_line_id
- LIMIT $2
 """
 INSERT_SQL = """
 INSERT INTO crm.invoice (invoice_id, trip_id, kind, schedule_id, proposal_id, currency, tax_rate, tax_label,
@@ -629,17 +618,10 @@ async def _insert_lines(
 async def _insert_included(
     ctx: AnyContext, invoice_id: uuid.UUID, trip_id: uuid.UUID, start: int, currency: str
 ) -> None:
-    position = start
-    for r in await ctx.conn.fetch(INCLUDED_SQL, trip_id, MAX_INCLUDED, currency.strip()):
-        title = CONTROL.sub(" ", r["title"] or "").strip()[:MAX_DESCRIPTION]
-        if not title:
-            continue
-        source = "aa_line" if r["supplier_kind"] == "aa" else "agency_line"
-        # AA-1147 (T18): an agency service shows its price (visa, insurance; a flight or fee not folded in)
-        price = r.get("sell") if source == "agency_line" and not r.get("bundled") else None
+    found = await included.rows(ctx, trip_id, MAX_INCLUDED, currency, MAX_DESCRIPTION)  # AA-1147: agency rows priced
+    for position, (source, title, price) in enumerate(found, start):
         await ctx.conn.execute(INSERT_LINE_SQL, invoice_id, trip_id, position, "included", source, title, None, None,
                                price)  # fmt: skip
-        position += 1
 
 
 def _translate(exc: asyncpg.PostgresError) -> Exception:
@@ -900,8 +882,7 @@ async def document(ctx: TenantContext, vault: Vault, invoice_id: uuid.UUID) -> d
         pay_instructions=pay_by,
         payments=invoice["payments"],
         balance=invoice["balance_amount"] if invoice["payments"] else None,
-        # AA-1147: the sentence under "Services provided by <agency>" (setting crm.agency_lines.disclaimer)
-        disclaimer=await agency_extras.disclaimer(ctx.conn, ctx.tenant_id, "en"),
+        disclaimer=await agency_extras.disclaimer(ctx.conn, ctx.tenant_id, "en"),  # AA-1147: under the agency group
     )
     ctx.audit("view", "allowed", "invoice", str(invoice_id), fields=("document",))
     return {"invoice_id": str(invoice_id), "filename": f"{invoice['number'] or 'draft-invoice'}.html", "html": html}

@@ -51,7 +51,7 @@ import { crmContext } from "@/lib/crmContext";
 import type { OpsReleaseView } from "@/lib/opsRelease";
 import { t } from "@/lib/i18n";
 import type { Invoice } from "@/lib/invoices";
-import type { SuppliersView, TripLines } from "@/lib/ledger";
+import { serviceLines, type SuppliersView, type TripLines } from "@/lib/ledger";
 import type { Conversation, SavedReply } from "@/lib/mail";
 import { tripClosedForBilling, type Member, type Stage2View, type TripView } from "@/lib/pipeline";
 import type { Agreement, LifecycleView, TripAgreements } from "@/lib/proposals";
@@ -117,7 +117,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
       lang={ctx.lang}
       locale={ctx.locale}
       documents={docs.ok ? docs.data.documents : []}
-      serviceLines={lines.ok ? lines.data.lines.filter((l) => l.supplier_kind === "agency").map((l) => ({ booking_line_id: l.booking_line_id, title: l.title })) : []}
+      serviceLines={serviceLines(lines)}
       stage2={stage2.ok ? stage2.data : null}
       clientOrigin={clientHost ? `https://${clientHost}` : null}
       lostHint={lines.ok ? (lines.data.lost_reason_hint ?? null) : null}

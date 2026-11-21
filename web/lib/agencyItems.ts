@@ -18,6 +18,11 @@ export function canBundle(category: string | null | undefined): boolean {
   return BUNDLE_CATEGORIES.includes(category as AgencyItemCategory);
 }
 
+/** What the builder sends: the box ticked and the type allows it. */
+export function bundledValue(checked: boolean, category: string | null | undefined): boolean {
+  return checked && canBundle(category);
+}
+
 /** The builder blocks an agency item may sit on. */
 export const AGENCY_BLOCK_TYPES: readonly BlockType[] = ["other"];
 

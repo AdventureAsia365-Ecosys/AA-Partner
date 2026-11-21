@@ -35,6 +35,7 @@ from app import stages
 from app.booking import contract
 from app.jobs import queue
 from app.jobs.kinds import BOOKING_SYNC
+from app.ledger import agency_lines
 from app.proposals import builder, client_page, rules
 from app.tenancy import AnyContext
 
@@ -124,6 +125,14 @@ async def nudge(ctx: AnyContext, key: str) -> None:
     actor = getattr(ctx, "actor", None) or f"member:{getattr(ctx, 'member_id', '')}"
     await queue.enqueue(ctx.conn, BOOKING_SYNC, {"tenant_id": str(ctx.tenant_id)},
                         idempotency_key=f"{BOOKING_SYNC}:{key}", max_attempts=3, created_by=actor)  # fmt: skip
+
+
+async def write_agency_lines(ctx: AnyContext, row: Any, s: dict[str, Any], state: dict[str, Any]) -> int:
+    """AA-1147 (T18, crm-083): at the accept itself, the agency items of the accepted choice become planning agency
+    lines (:mod:`app.ledger.agency_lines`; never sent to Booking). The AA lines come later from the hold, above."""
+    return await agency_lines.write_accepted(
+        ctx, row["proposal_id"], s, state["choice"], state["later"], row["starts_on"]
+    )
 
 
 async def due_sets(ctx: AnyContext, limit: int = MAX_SETS) -> list[dict[str, Any]]:
