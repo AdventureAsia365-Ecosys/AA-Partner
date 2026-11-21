@@ -117,6 +117,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
       lang={ctx.lang}
       locale={ctx.locale}
       documents={docs.ok ? docs.data.documents : []}
+      serviceLines={lines.ok ? lines.data.lines.filter((l) => l.supplier_kind === "agency").map((l) => ({ booking_line_id: l.booking_line_id, title: l.title })) : []}
       stage2={stage2.ok ? stage2.data : null}
       clientOrigin={clientHost ? `https://${clientHost}` : null}
       lostHint={lines.ok ? (lines.data.lost_reason_hint ?? null) : null}

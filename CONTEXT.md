@@ -420,6 +420,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-078` | `api/migrations/078_crm_draft_route_haiku_acc1.sql` | AA-1138 (**contract**: ALTER of `crm.llm_stage_route` + a CHECK + an UPDATE of a config row, MIG-4; readiness raised by the code PR): `crm.llm_stage_route.connection_key` (NULL = the process's own Bedrock connection; `bedrock_acc1` = acc1's invoker role) and `sends_temperature` (default true); `crm_draft_reply` position 0 = Claude Haiku 5.5 (`us.anthropic.claude-haiku-5-5`, the US inference profile: the agency terms keep CRM text in US regions and root ADR 0009 decision 10 keeps tenant stages off `global.`; 0.11 / 0.55 USD per million tokens, the AWS regional price; no temperature) on `bedrock_acc1`, Nova Lite at position 2 stays the last fallback; the notes-options and supplier-confirm stages keep Nova Lite only |
 | `crm-080` | `api/migrations/080_crm_agency_lines_closed_list.sql` | AA-1144 (**contract**, MIG-4: ALTERs, new and narrowed CHECKs, an UPDATE of existing rows; one new table): `crm.option.category` / `crm.booking_line.category` (flight / visa / insurance / fee on agency items; NULL on AA items and on agency items made before crm-080); `crm.aa_extra_night_request` (B11: an agency asks AA for hotel nights before / after the tour; open -> closed `quoted` / `not_needed`; place, dates and counts only; cascades from the trip, hold guard); counts first (RAISE NOTICE), own suppliers of a blocked category re-typed to `other`, the unreferenced ones and the live `transfer` catalogue services moved to the trash (`deleted_by` `migration:crm-080`), then `agency_supplier_category_chk` (AA row `dmc`; own: flight / insurance / visa / other) and `agency_service_category_chk` (flight / insurance / visa / fee) narrowed; no `erase_subject` change |
 | `crm-082` | `api/migrations/082_crm_admin_mfa_setting.sql` | AA-1111 S2 (**contract**: one `crm.setting_definition` INSERT, shipped with its reader `app/auth/admin_mfa.py` like crm-075; the reader serves the compiled default, off, until the row exists): the setting `crm.platform.admin_mfa_required` (bool, platform, maker-checker, no env override, default off); no new table, no `erase_subject` change |
+| `crm-083` | `api/migrations/083_crm_agency_extras.sql` | AA-1147 (**contract**, MIG-4: ALTERs, new and widened CHECKs, new keys, a SECURITY DEFINER function, two config rows; readiness raised by the code PR): `crm.booking_line.agency_supplier_id` NULL on an agency line ("Handled by the agency"; `booking_line_supplier_chk` keeps it on AA lines), `option_id` (the accepted item, unique per agency), `due_at`, `bundled` (`booking_line_extras_chk`: agency lines only, bundled = flight / fee); `crm.option.bundled` (`option_bundled_chk`); `crm.document.booking_line_id` / `crm.task.booking_line_id` (same-trip key, SET NULL on purge); document kind `visa_letter`; `invoice_line_amount_chk` lets an included `agency_line` row carry its price; `crm.agency_lines_from_proposal(proposal, lines)` (EXECUTE crm_app: the accept's writer); settings `crm.agency_lines.due_lead_days`, `crm.agency_lines.disclaimer`; no new table, no `erase_subject` change |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -1249,8 +1250,28 @@ API uses), `app/booking/extra_nights.py`; web `lib/agencyItems.ts`, `components/
   the client page (`note`), and carried into the next version of the quote.
 - **The agency's tour copy** (D8, Content studio > Tours): CIS refuses an edit that changes a tour fact (422
   `fact_locked`, CIS `services/content_generation/t2_fact_lock.py`); the studio shows the `factLocked` sentence.
-- Not in this slice (the next one, T18): an accepted proposal writing its agency items as agency lines, attachments
-  and due dates on a line, the invoice group "Services provided by <agency>".
+- **From the accepted proposal to the invoice** (AA-1147, T18; crm-083; `app/ledger/agency_lines.py`,
+  `agency_due.py`, `agency_extras.py`): the client's accept writes one planning agency line per chosen agency item
+  (a block left "for later" waits) in the accept's transaction through `crm.agency_lines_from_proposal` (the client
+  link has no member role): title, type, supplier, `bundled`, `option_id`, the day's date, sell = the item's share of
+  the accepted total (after the discount), cost = its net. A line needs no supplier: none = "Handled by the agency"
+  (`handled_by_agency` in the line view; supplier requests and bills skip it; the voucher and the confirmation PDF
+  name the agency). A line carries a deadline (`due_at`: ticketing time limit, visa file, insurance purchase); the
+  hourly workflow tick opens one urgent task (`agency_flight_due` / `agency_visa_due` / `agency_insurance_due` /
+  `agency_line_due`, `booking_line_id` set) when a planning or requested line comes within
+  `crm.agency_lines.due_lead_days` (default 3, per agency), once per line and deadline; one open task per kind and
+  trip. A file can name one line of its trip (`POST /documents` `booking_line_id`; kind `visa_letter`).
+- **Bundling rule** (T18): only a flight or the agency fee may be folded into the tour price (`bundled`, builder item
+  and line; 422 `bundle_not_allowed` otherwise): it stays in the total and shows no price of its own. Visa (money
+  passed through) and insurance (the client sees the premium) are always their own priced line.
+- **The client's documents**: the client page (`agency_services`), the proposal text and PDF and the invoice
+  (printable page and PDF) show the group "Services provided by <agency>": each agency item with its price ("Included
+  in the trip price" when bundled) and the disclaimer of `crm.agency_lines.disclaimer` ({en, vi}, per agency). This is
+  the one place a client document prints a price per item (decision T18 over D1 / design §2.9 rule 3 for the agency's
+  own services only); an invoice's included `agency_line` rows carry that price and are never summed.
+- **Never sent to AA**: the Booking sync, the hold, the confirm and the ops release read `supplier_kind = 'aa'` lines
+  only (`tests/integration/test_aa1147_agency_extras_api.py` checks every request body). Structured flight legs wait
+  for pilot-agency feedback (advisory item g).
 
 ## Agency service catalogue and supplier booking requests (AA-1069)
 
