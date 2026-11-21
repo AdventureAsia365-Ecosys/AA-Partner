@@ -619,10 +619,10 @@ async def accept(
                 due_anchor, due_at = "hold_expiry", row["hold_expires_at"]
         vault = Vault(keys, ctx)  # type: ignore[arg-type]
         sealed = await vault.encrypt("proposal", "accepted_name_enc", row["proposal_id"], name)
-        if builder_args:
-            accepted_at = await ctx.conn.fetchval(ACCEPT_BUILDER_SQL, row["proposal_id"], sealed, *builder_args)
-        else:
-            accepted_at = await ctx.conn.fetchval(ACCEPT_SQL, row["proposal_id"], sealed)
+        sql, args = (ACCEPT_BUILDER_SQL, builder_args) if builder_args else (ACCEPT_SQL, ())
+        accepted_at = await ctx.conn.fetchval(sql, row["proposal_id"], sealed, *args)
+        if builder_args:  # AA-1147: the agency items the client chose become planning agency lines of the trip
+            await proposal_lines.write_agency_lines(ctx, row, s, state)
         if row["terms_doc_id"] is not None:
             # R34: the acceptance pinned to the terms version, its SHA-256 and the price hash (AA-955).
             await esign_terms.record(

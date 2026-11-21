@@ -111,6 +111,10 @@ AI_CONNECTION_MONTHLY_CAP = "crm.ai.connection_monthly_cap_usd"
 # AA-1111 (crm-082): refuse an AA operations staff session signed in without an authenticator code, read by
 # app/auth/admin_mfa.py.
 ADMIN_MFA_REQUIRED = "crm.platform.admin_mfa_required"
+# AA-1147 (crm-084): the agency's own services (flight, visa, insurance, fee): how many days before a line's deadline
+# its task opens, and the disclaimer printed under "Services provided by <agency>"; read by app/ledger/agency_extras.py.
+AGENCY_LINES_DUE_LEAD_DAYS = "crm.agency_lines.due_lead_days"
+AGENCY_LINES_DISCLAIMER = "crm.agency_lines.disclaimer"
 
 # The platform ranges of the agency-owner settings: (new-agency default, lowest an owner may pick, highest). The
 # registry service refuses a change that would break min <= default <= max (422 range_inconsistent);

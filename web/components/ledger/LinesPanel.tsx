@@ -15,6 +15,8 @@
 // confirmation": saved and confirmed in one call) or goes back to planning.
 // AA-1086: every line that is not cancelled says whether the trip's travellers see it, with a Show / Hide switch; an
 // AA line is switchable once AA confirmed it (shown by default then; its travellers' voucher names the agency).
+// AA-1147: a planning or requested agency line takes "Deadline and supplier" (LineServiceEdit): the lines an accepted
+// proposal writes start without a deadline, so the agent sets it (or clears it), the supplier and the fold here.
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useState } from "react";
@@ -23,6 +25,7 @@ import { Badge, Button, DataTable, K, useHydrated, useIsPhone } from "@/app/_kit
 import { DateInput } from "@/components/DateInput";
 import { SupplierRequestsPanel } from "@/components/catalogue/SupplierRequestsPanel";
 import { AaItemForm } from "@/components/ledger/AaItemForm";
+import { LineServiceEdit } from "@/components/ledger/LineServiceEdit";
 import { useTripClosed, useTripUpdating } from "@/components/pipeline/TripClosed";
 import { aaBadgeKey, aaErrorKey, aaResultKey, allowedAaActions, isRetrying, type AaAction } from "@/lib/aa";
 import { AGENCY_ITEM_CATEGORIES } from "@/lib/agencyItems";
@@ -37,6 +40,7 @@ import {
   fxReading,
   missingCodes,
   moneyBody,
+  newLineBody,
   seesMargin,
   type Line,
   type MoneyKind,
@@ -132,16 +136,12 @@ export function LinesPanel({
     return true;
   }
 
+  /** AA-1147: "Deadline and supplier" (LineServiceEdit) sends only what changed. */
+  const locked = !hydrated || busy;
+  const patchLine = (lineId: string, body: Record<string, unknown>) => run("PATCH", `lines/${lineId}`, body);
+
   async function add(form: FormData) {
-    const body = {
-      agency_supplier_id: String(form.get("agency_supplier_id") ?? ""),
-      category: String(form.get("category")), // AA-1144: flight | visa | insurance | fee (the select below)
-      title: String(form.get("title") ?? "").trim(),
-      confirmation_no: String(form.get("confirmation_no") ?? "").trim() || null,
-      service_from: String(form.get("service_from") ?? "") || null,
-      service_to: String(form.get("service_to") ?? "") || null,
-      collect: String(form.get("collect") ?? "agency"),
-    };
+    const body = newLineBody(form); // AA-1144 category, AA-1147 supplier optional, deadline, fold into the tour price
     if (await run("POST", `trips/${tripId}/lines`, body)) setAdding(false);
   }
 
@@ -228,8 +228,14 @@ export function LinesPanel({
   function supplierCell(line: Line) {
     return (
       <>
-        {line.supplier_name}
+        {line.supplier_name ?? tr("agencyItem.handledByAgency")}
         {line.read_only && <div style={{ color: K.muted, fontSize: 11.5 }}>{tr("ledger.aaReadOnly")}</div>}
+        {line.due_at && (
+          <div style={{ color: K.muted, fontSize: 11.5 }} data-testid="ledger-line-due">
+            {tr("agencyItem.due").replace("{date}", formatDate(line.due_at.slice(0, 10), locale))}
+          </div>
+        )}
+        {line.bundled && <div style={{ color: K.muted, fontSize: 11.5 }}>{tr("agencyItem.bundledBadge")}</div>}
       </>
     );
   }
@@ -311,6 +317,15 @@ export function LinesPanel({
     return (
       <>
         {shown(line)}{" "}
+        <LineServiceEdit
+          line={line}
+          suppliers={own}
+          closed={closed}
+          disabled={locked}
+          locale={locale}
+          tr={tr}
+          onSave={patchLine}
+        />{" "}
         {allowedAaActions(line.aa?.actions ?? [], role).filter((action) => !closed || action === "release").map((action: AaAction) => (
           <Button
             key={action}
@@ -405,7 +420,7 @@ export function LinesPanel({
         </>
       ),
     },
-    { id: "supplier", header: tr("ledger.col.supplier"), accessorFn: (l) => l.supplier_name, cell: ({ row }) => supplierCell(row.original) },
+    { id: "supplier", header: tr("ledger.col.supplier"), accessorFn: (l) => l.supplier_name ?? tr("agencyItem.handledByAgency"), cell: ({ row }) => supplierCell(row.original) },
     { id: "conf", header: tr("ledger.col.conf"), accessorFn: (l) => l.confirmation_no ?? "—" },
     { id: "status", header: tr("ledger.col.status"), accessorFn: (l) => l.status, cell: ({ row }) => statusCell(row.original) },
     ...(margin
@@ -512,15 +527,16 @@ export function LinesPanel({
         )}
         {addingAa ? null : !adding ? (
           <div>
-            <Button size="sm" disabled={!hydrated || own.length === 0} onClick={() => setAdding(true)}>
+            <Button size="sm" disabled={!hydrated} onClick={() => setAdding(true)}>
               {tr("ledger.add")}
             </Button>
           </div>
         ) : (
           <form action={add} style={{ display: "grid", gap: 8, maxWidth: 520 }} data-testid="ledger-add-form">
             <label style={{ display: "grid", gap: 2, fontSize: 12 }}>
-              {tr("ledger.supplier")}
-              <select name="agency_supplier_id" style={field} required>
+              {tr("agencyItem.supplierOptional")}
+              <select name="agency_supplier_id" style={field} defaultValue="" data-testid="ledger-add-supplier">
+                <option value="">{tr("agencyItem.handledByAgency")}</option>
                 {own.map((s) => (
                   <option key={s.agency_supplier_id} value={s.agency_supplier_id}>
                     {s.name}
@@ -548,6 +564,14 @@ export function LinesPanel({
             </label>
             <DateInput locale={locale} name="service_from" label={tr("ledger.from")} readAs={tr("settings.readAs")} invalid={tr("settings.invalidDate")} />
             <DateInput locale={locale} name="service_to" label={tr("ledger.to")} readAs={tr("settings.readAs")} invalid={tr("settings.invalidDate")} />
+            <DateInput locale={locale} name="due_on" label={tr("agencyItem.dueAt")} help={tr("agencyItem.dueHint")} readAs={tr("settings.readAs")} invalid={tr("settings.invalidDate")} />
+            <label style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 12 }} title={tr("agencyItem.bundledHint")}>
+              <input type="checkbox" name="bundled" data-testid="ledger-add-bundled" />
+              <span>
+                {tr("agencyItem.bundled")}
+                <span style={{ display: "block", color: K.muted, fontSize: 11.5 }}>{tr("agencyItem.bundledHint")}</span>
+              </span>
+            </label>
             <label style={{ display: "grid", gap: 2, fontSize: 12 }}>
               {tr("ledger.col.collect")}
               <select name="collect" style={field} defaultValue="agency">
@@ -564,11 +588,6 @@ export function LinesPanel({
               </Button>
             </div>
           </form>
-        )}
-        {own.length === 0 && (
-          <p style={{ margin: "8px 0 0", fontSize: 12.5, color: K.muted }}>
-            <Link href="/suppliers">{tr("ledger.addSupplierFirst")}</Link>
-          </p>
         )}
       </div>
       )}

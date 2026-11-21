@@ -38,8 +38,8 @@ import asyncpg
 
 from app import cancellation, stages
 from app.errors import Conflict, Invalid, NotFound
-from app.invoices import render
-from app.ledger import fx
+from app.invoices import included, render
+from app.ledger import agency_extras, fx
 from app.payments import claims, reminders
 from app.tenancy import AnyContext, TenantContext
 from app.vault import Vault
@@ -98,12 +98,6 @@ SELECT s.schedule_id, s.trip_id, s.proposal_id, s.kind, s.seq, s.amount, s.curre
 """
 LIVE_FOR_SCHEDULE_SQL = """
 SELECT invoice_id FROM crm.invoice WHERE schedule_id = $1 AND status <> 'void' AND deleted_at IS NULL
-"""
-INCLUDED_SQL = """
-SELECT title, supplier_kind FROM crm.booking_line
- WHERE trip_id = $1 AND deleted_at IS NULL AND status <> 'cancelled'
- ORDER BY service_from NULLS LAST, created_at, booking_line_id
- LIMIT $2
 """
 INSERT_SQL = """
 INSERT INTO crm.invoice (invoice_id, trip_id, kind, schedule_id, proposal_id, currency, tax_rate, tax_label,
@@ -621,16 +615,13 @@ async def _insert_lines(
     return position
 
 
-async def _insert_included(ctx: AnyContext, invoice_id: uuid.UUID, trip_id: uuid.UUID, start: int) -> None:
-    position = start
-    for r in await ctx.conn.fetch(INCLUDED_SQL, trip_id, MAX_INCLUDED):
-        title = CONTROL.sub(" ", r["title"] or "").strip()[:MAX_DESCRIPTION]
-        if not title:
-            continue
-        source = "aa_line" if r["supplier_kind"] == "aa" else "agency_line"
+async def _insert_included(
+    ctx: AnyContext, invoice_id: uuid.UUID, trip_id: uuid.UUID, start: int, currency: str
+) -> None:
+    found = await included.rows(ctx, trip_id, MAX_INCLUDED, currency, MAX_DESCRIPTION)  # AA-1147: agency rows priced
+    for position, (source, title, price) in enumerate(found, start):
         await ctx.conn.execute(INSERT_LINE_SQL, invoice_id, trip_id, position, "included", source, title, None, None,
-                               None)  # fmt: skip
-        position += 1
+                               price)  # fmt: skip
 
 
 def _translate(exc: asyncpg.PostgresError) -> Exception:
@@ -684,7 +675,7 @@ async def create_from_schedule(ctx: TenantContext, trip_id: uuid.UUID, schedule_
         "amount": amount,
     }
     after = await _insert_lines(ctx, invoice_id, trip_id, [charge], source="schedule")
-    await _insert_included(ctx, invoice_id, trip_id, after)
+    await _insert_included(ctx, invoice_id, trip_id, after, row["currency"])
     await _write_totals(ctx, invoice_id, rate, True)
     ctx.audit("invoice_create", "allowed", "invoice", str(invoice_id), reason=row["kind"])
     await stages.touch(ctx, trip_id)
@@ -721,7 +712,7 @@ async def create_typed(
     source = "service_fee" if kind == "service_fee" else "manual"
     after = await _insert_lines(ctx, invoice_id, trip_id, charges, source=source)
     if include_trip_lines:
-        await _insert_included(ctx, invoice_id, trip_id, after)
+        await _insert_included(ctx, invoice_id, trip_id, after, currency)
     await _write_totals(ctx, invoice_id, rate, inclusive)
     ctx.audit("invoice_create", "allowed", "invoice", str(invoice_id), reason=kind)
     await stages.touch(ctx, trip_id)
@@ -785,7 +776,7 @@ async def update_draft(ctx: TenantContext, invoice_id: uuid.UUID, changes: dict[
             source = "service_fee" if row["kind"] == "service_fee" else "manual"
             after = await _insert_lines(ctx, invoice_id, row["trip_id"], charges, source=source)
             if had_included:
-                await _insert_included(ctx, invoice_id, row["trip_id"], after)
+                await _insert_included(ctx, invoice_id, row["trip_id"], after, row["currency"])
         await _write_totals(ctx, invoice_id, rate, inclusive)
     except asyncpg.PostgresError as exc:
         raise _translate(exc) from None
@@ -891,6 +882,7 @@ async def document(ctx: TenantContext, vault: Vault, invoice_id: uuid.UUID) -> d
         pay_instructions=pay_by,
         payments=invoice["payments"],
         balance=invoice["balance_amount"] if invoice["payments"] else None,
+        disclaimer=await agency_extras.disclaimer(ctx.conn, ctx.tenant_id, "en"),  # AA-1147: under the agency group
     )
     ctx.audit("view", "allowed", "invoice", str(invoice_id), fields=("document",))
     return {"invoice_id": str(invoice_id), "filename": f"{invoice['number'] or 'draft-invoice'}.html", "html": html}

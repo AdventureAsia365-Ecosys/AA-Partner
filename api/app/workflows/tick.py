@@ -25,7 +25,8 @@ counts a queued row as busy; not deploy-gate exempt). Per agency, in one :func:`
 5. **Travel ops** (AA-1070): the ``passport.invalid_for_trip`` event of a trip that entered Booked in the last 3 days
    with a passport issue (one per entry into Booked, :func:`app.travel_ops.passport.booked_events`), and one
    ``visa_deadline_overdue`` task per trip with an open visa application past its deadline
-   (:func:`app.travel_ops.visas.overdue_tasks`).
+   (:func:`app.travel_ops.visas.overdue_tasks`). AA-1147: one task per agency line (flight, visa, insurance, fee) that
+   comes within the agency's lead time of its deadline (:func:`app.ledger.agency_due.due_tasks`).
 6. **System tags** (AA-960, :mod:`app.tags.system`): the trip system tags from the AA catalogue (R29) every hour, and
    "ready to travel again" (R36) at :data:`SPECIAL_HOURS`; a new system tag starts the tag workflows (in a savepoint:
    a failure is counted ``system_tags_failed``, the tick goes on).
@@ -53,6 +54,7 @@ from app.errors import Forbidden, NotFound, ServiceError
 from app.jobs import queue
 from app.jobs.kinds import TASK_DIGEST, WORKFLOW_RUN, WORKFLOW_TICK
 from app.jobs.queue import Job
+from app.ledger import agency_due
 from app.tags import system as system_tags
 from app.tenancy import SystemContext, system_tx
 from app.travel_ops import passport, visas
@@ -311,6 +313,7 @@ async def run_agency(ctx: SystemContext, vault: Vault, now: datetime) -> Counter
     # starts is picked at once); open visa applications past their deadline get one task per trip.
     counts.update(await passport.booked_events(ctx, vault, triggers.on_trip_event))
     counts.update(await visas.overdue_tasks(ctx, today))
+    counts.update(await agency_due.due_tasks(ctx, now))  # AA-1147: an agency line nearing its deadline
     counts.update(await _system_tags(ctx, today, clients=local.hour in SPECIAL_HOURS))
     counts["runs_queued"] += await _due_runs(ctx)
     counts["tasks_redated"] += await tasks.redate(ctx, tz)

@@ -5,6 +5,7 @@
 // and lines carry no `money` block at all for her, so a missing key always means "not shown", never "zero".
 
 import type { AaBlock } from "@/lib/aa";
+import { canBundle } from "@/lib/agencyItems";
 import type { SupplierThread } from "@/lib/catalogue";
 import type { LineCommission } from "@/lib/commissions";
 
@@ -41,8 +42,16 @@ export interface Line {
   booking_line_id: string;
   trip_id: string;
   supplier_kind: "aa" | "agency";
-  agency_supplier_id: string;
-  supplier_name: string;
+  /** AA-1147 (crm-083): null on an agency line the agency handles itself ("Handled by the agency"). */
+  agency_supplier_id: string | null;
+  supplier_name: string | null;
+  handled_by_agency?: boolean;
+  /** AA-1144: flight | visa | insurance | fee (agency lines). */
+  category?: string | null;
+  /** AA-1147: the item of the accepted proposal it came from, its deadline, folded into the tour price. */
+  option_id?: string | null;
+  due_at?: string | null;
+  bundled?: boolean;
   status: LineStatus;
   aa_sub_status: string | null;
   title: string;
@@ -218,4 +227,62 @@ export function lineDay(line: Line): string | null {
 export function canToggleShown(line: Pick<Line, "status" | "supplier_kind">, closed: boolean): boolean {
   if (closed || line.status === "cancelled") return false;
   return line.supplier_kind !== "aa" || line.status === "confirmed";
+}
+
+/** AA-1147: the trip's agency service lines a file can be attached to (an e-ticket, a visa letter, a certificate). */
+export function serviceLines(result: { ok: true; data: TripLines } | { ok: false }): { booking_line_id: string; title: string }[] {
+  if (!result.ok) return [];
+  return result.data.lines.filter((l) => l.supplier_kind === "agency").map((l) => ({ booking_line_id: l.booking_line_id, title: l.title }));
+}
+
+/** AA-1147 (crm-083): the body of "Add line": no supplier = handled by the agency itself; a deadline (a task opens
+ * before it); "fold into the tour price" (flight or fee only: the API answers 422 bundle_not_allowed otherwise). */
+export function newLineBody(form: FormData): Record<string, unknown> {
+  const text = (name: string) => String(form.get(name) ?? "").trim();
+  const orNull = (value: string) => (value === "" ? null : value);
+  return {
+    agency_supplier_id: orNull(text("agency_supplier_id")),
+    category: text("category"),
+    title: text("title"),
+    confirmation_no: orNull(text("confirmation_no")),
+    service_from: orNull(text("service_from")),
+    service_to: orNull(text("service_to")),
+    collect: text("collect") || "agency",
+    due_at: orNull(text("due_on")),
+    bundled: form.get("bundled") === "on",
+  };
+}
+
+/** AA-1147: an agency line's deadline, supplier and fold change on the Lines tab while it is planned or requested (the
+ * lines an accepted proposal writes start without a deadline). Not on a closed trip or an Adventure Asia line. */
+export function canEditService(line: Pick<Line, "supplier_kind" | "status" | "read_only">, closed: boolean): boolean {
+  if (closed || line.read_only || line.supplier_kind !== "agency") return false;
+  return line.status === "planning" || line.status === "requested";
+}
+
+/** AA-1147: the PATCH body of an agency line's "Deadline and supplier" form: only what changed. An empty deadline field
+ * keeps the deadline ("Clear deadline" sends null); the supplier moves on a planning line only (the API answers 422
+ * line_not_editable otherwise); the fold is sent for a flight or the fee only. */
+export function lineChangeBody(
+  form: FormData,
+  line: Pick<Line, "status" | "due_at" | "agency_supplier_id" | "bundled" | "category">,
+): Record<string, unknown> {
+  return { ...dueChange(form, line), ...supplierChange(form, line), ...bundledChange(form, line) };
+}
+
+function dueChange(form: FormData, line: Pick<Line, "due_at">): Record<string, unknown> {
+  const due = String(form.get("due_on") ?? "").trim();
+  return due && due !== (line.due_at ?? "").slice(0, 10) ? { due_at: due } : {};
+}
+
+function supplierChange(form: FormData, line: Pick<Line, "status" | "agency_supplier_id">): Record<string, unknown> {
+  if (line.status !== "planning" || !form.has("agency_supplier_id")) return {};
+  const supplier = String(form.get("agency_supplier_id") ?? "").trim() || null;
+  return supplier === (line.agency_supplier_id ?? null) ? {} : { agency_supplier_id: supplier };
+}
+
+function bundledChange(form: FormData, line: Pick<Line, "bundled" | "category">): Record<string, unknown> {
+  if (!canBundle(line.category)) return {};
+  const bundled = form.get("bundled") === "on";
+  return bundled === Boolean(line.bundled) ? {} : { bundled };
 }

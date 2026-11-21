@@ -34,7 +34,10 @@ export function SupplierBills({
   const hydrated = useHydrated();
   const toast = useToast();
   const tr = (key: string) => t(lang, key as MessageKey);
-  const suppliers = Array.from(new Map(lines.map((l) => [l.agency_supplier_id, l.supplier_name])).entries());
+  // AA-1147: a line the agency handles itself has no supplier, so no supplier bill.
+  const suppliers = Array.from(
+    new Map(lines.flatMap((l) => (l.agency_supplier_id ? [[l.agency_supplier_id, l.supplier_name ?? ""] as const] : []))).entries(),
+  );
   const [open, setOpen] = useState(false);
   const [supplier, setSupplier] = useState(suppliers[0]?.[0] ?? "");
   const [busy, setBusy] = useState(false);

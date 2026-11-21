@@ -37,10 +37,11 @@ from app import cancellation
 from app.cancel_policy import service as cancel_policy
 from app.errors import Conflict, Invalid, NotFound
 from app.esign import terms as esign_terms
+from app.ledger import agency_extras
 from app.mail import conversations, templates
 from app.payments import schedule_plan
 from app.permissions import Action, require
-from app.proposals import builder, inclusions, prep_packs, rules, service
+from app.proposals import builder, client_page, inclusions, prep_packs, rules, service
 from app.proposals import text_render as tr
 from app.tenancy import TenantContext
 from app.vault import Vault
@@ -171,6 +172,9 @@ async def snapshot(ctx: TenantContext, vault: Vault, row: Any, price_hash: str, 
     lines = await inclusions.lines(ctx, row["proposal_id"])
     own = inclusions.agency_lists(lines)
     tours = await inclusions.aa_block(ctx, row["status"], lines, inclusions.tours_in(s, builder._defaults(s)))
+    # AA-1147 (T18): the agency's own services of the version as sent, and the disclaimer printed under them.
+    own_services = client_page.agency_items_chosen(s, builder._defaults(s))
+    disclaimer = await agency_extras.disclaimer(ctx.conn, ctx.tenant_id, locale) if own_services else ""
     return tr.Snapshot(kind="builder", pay_on_arrival_total=Decimal(sums["pay_on_arrival_total"]),
                        starts_on=row["starts_on"], rooms=tuple(rooms), days=tuple(days), before_you_go=before,
                        schedule=schedule,
@@ -178,6 +182,9 @@ async def snapshot(ctx: TenantContext, vault: Vault, row: Any, price_hash: str, 
                        not_included=tuple(inclusions.text_of(x, locale) for x in own["not_included"]),
                        aa_tours=tuple(tr.TourLists(t["title"], tuple(t["included"]), tuple(t["not_included"]))
                                       for t in tours),
+                       agency_services=tuple(tr.AgencyService(i["title"], Decimal(i["amount"]) if i["amount"] else None)
+                                             for i in own_services),
+                       agency_disclaimer=disclaimer,
                        **common)  # fmt: skip
 
 

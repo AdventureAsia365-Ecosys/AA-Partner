@@ -320,7 +320,10 @@ async def test_create_from_schedule_bills_the_row_with_included_lines() -> None:
                                          "invoice_tax_inclusive": False})  # fmt: skip
     conn.on("FROM crm.booking_line", [{"title": "Halong cruise", "supplier_kind": "aa"},
                                       {"title": " \n ", "supplier_kind": "agency"},
-                                      {"title": "Hanoi hotel\t3 nights", "supplier_kind": "agency"}])  # fmt: skip
+                                      {"title": "Hanoi hotel\t3 nights", "supplier_kind": "agency",
+                                       "sell": Decimal("120"), "bundled": False},
+                                      {"title": "Return flight", "supplier_kind": "agency", "sell": Decimal("270"),
+                                       "bundled": True}])  # fmt: skip
     out = await inv.create_from_schedule(tenant_ctx(conn), TRIP, SCHEDULE)
     assert out["status"] == "draft"
     insert = conn.sql("INSERT INTO crm.invoice (")[0]
@@ -330,7 +333,10 @@ async def test_create_from_schedule_bills_the_row_with_included_lines() -> None:
         (1, "charge", "schedule", "Deposit (proposal version 2)"),
         (2, "included", "aa_line", "Halong cruise"),
         (3, "included", "agency_line", "Hanoi hotel 3 nights"),
+        (4, "included", "agency_line", "Return flight"),
     ]
+    # AA-1147 (T18): an included agency row carries its sell unless it is folded into the tour price; never summed
+    assert [a[8] for a in lines] == [Decimal("300.00"), None, Decimal("120"), None]
     assert conn.sql("UPDATE crm.invoice SET subtotal_amount")[0][1:] == (Decimal("272.73"), Decimal("27.27"),
                                                                        Decimal("300.00"))  # fmt: skip
     assert conn.sql("last_activity_at")

@@ -42,7 +42,8 @@ FLIGHT_STATUS_URL = "https://www.flightaware.com/live/flight/{code}"
 COLUMNS = """
 k.task_id, k.kind, k.priority, k.assignee_member_id, k.status, k.due_at, k.due_anchor, k.due_offset_days,
 k.due_overridden, k.done_at, k.created_at, k.created_by, k.trip_id, k.traveler_id, k.workflow_run_id, k.title_enc,
-t.title AS trip_title, t.stage AS trip_stage
+t.title AS trip_title, t.stage AS trip_stage, k.booking_line_id,
+(SELECT l.title FROM crm.booking_line l WHERE l.booking_line_id = k.booking_line_id) AS line_title
 """
 LIST_SQL = f"""
 SELECT {COLUMNS}
@@ -158,6 +159,9 @@ async def _view(vault: Vault, r: Any) -> dict[str, Any]:
         "trip_stage": r["trip_stage"],
         "traveler_id": str(r["traveler_id"]) if r["traveler_id"] else None,
         "workflow_run_id": str(r["workflow_run_id"]) if r["workflow_run_id"] else None,
+        # AA-1147 (crm-083): the booking line the task is about (an agency line nearing its deadline) and its title
+        "booking_line_id": str(r["booking_line_id"]) if r.get("booking_line_id") else None,
+        "line_title": r.get("line_title"),
         "source": source(r),
     }
 

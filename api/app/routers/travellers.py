@@ -164,6 +164,8 @@ class DocumentIn(_Body):
     # base64 of at most 10 MiB
     content_b64: str = Field(min_length=4, max_length=(documents.MAX_BYTES * 4) // 3 + 8)
     visible_to_travelers: bool = False
+    # AA-1147 (crm-083): the booking line of trip_id the file is about (an e-ticket, a visa letter, a certificate)
+    booking_line_id: uuid.UUID | None = None
 
 
 class DownloadIn(_Body):
@@ -366,6 +368,7 @@ async def post_document(request: Request, caller: CallerDep, tenant_id: TenantDe
             content_type=body.content_type,
             content=content,
             visible_to_travelers=body.visible_to_travelers,
+            booking_line_id=body.booking_line_id,
         )
 
 

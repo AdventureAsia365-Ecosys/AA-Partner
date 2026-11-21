@@ -83,6 +83,7 @@ export function TripPanel({
   lostHint = null,
   timeZone = "UTC",
   partners = null,
+  serviceLines,
 }: {
   view: TripView;
   members: Member[];
@@ -90,6 +91,8 @@ export function TripPanel({
   lang: Lang;
   locale: DateLocale;
   documents?: DocumentRow[];
+  /** AA-1147: the trip's agency service lines a file can be attached to. */
+  serviceLines?: { booking_line_id: string; title: string }[];
   /** AA-943: GET /trips/{id}/stage2 (null = it failed; undefined = not asked, the panel is left out). */
   stage2?: Stage2View | null;
   clientOrigin?: string | null;
@@ -568,7 +571,7 @@ export function TripPanel({
           </ul>
         </Panel>
 
-        <DocumentsPanel documents={documents} tripId={trip.trip_id} role={role} lang={lang} locale={locale} closed={closed} />
+        <DocumentsPanel documents={documents} tripId={trip.trip_id} role={role} lang={lang} locale={locale} closed={closed} lines={serviceLines} />
 
         <Panel title={t(lang, "trip.history")} testId="trip-history">
           <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 6 }}>

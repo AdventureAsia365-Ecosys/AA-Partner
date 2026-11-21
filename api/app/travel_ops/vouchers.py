@@ -70,7 +70,7 @@ LINES_SQL = """
 SELECT l.booking_line_id, l.supplier_kind, l.title, l.confirmation_no, l.service_from, l.service_to,
        l.visible_to_travelers, l.bk_booking_id, l.departure_id, l.agency_supplier_id, s.name AS supplier_name,
        s.kind AS supplier_type, s.category, s.contact_name_enc
-  FROM crm.booking_line l JOIN crm.agency_supplier s ON s.agency_supplier_id = l.agency_supplier_id
+  FROM crm.booking_line l LEFT JOIN crm.agency_supplier s ON s.agency_supplier_id = l.agency_supplier_id
  WHERE l.trip_id = $1 AND l.status = 'confirmed' AND l.deleted_at IS NULL
  ORDER BY l.service_from NULLS LAST, l.created_at, l.booking_line_id
 """
@@ -193,7 +193,8 @@ def _supplier(ln: Any, contact: str | None, agency: str | None, travellers_only:
         return {"name": agency, "category": ln["category"], "contact_name": None, "aa_booking_ref": None,
                 "aa_departure_id": None}  # fmt: skip
     return {
-        "name": AA_SUPPLIER_NAME if aa else ln["supplier_name"],
+        # AA-1147 (crm-083): an agency line without a supplier is the agency's own doing: it names the agency
+        "name": AA_SUPPLIER_NAME if aa else (ln["supplier_name"] or agency),
         "category": ln["category"],
         "contact_name": contact,
         "aa_booking_ref": ((ln["bk_booking_id"] or "")[:8] or None) if aa else None,

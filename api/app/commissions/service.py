@@ -57,7 +57,7 @@ SELECT c.commission_id, c.trip_id, c.booking_line_id, c.status, c.due_on, c.clai
        m.base_currency AS expected_base_currency
   FROM crm.commission c
   JOIN crm.booking_line l ON l.booking_line_id = c.booking_line_id
-  JOIN crm.agency_supplier s ON s.agency_supplier_id = l.agency_supplier_id
+  LEFT JOIN crm.agency_supplier s ON s.agency_supplier_id = l.agency_supplier_id
   JOIN crm.trip t ON t.trip_id = c.trip_id AND t.deleted_at IS NULL
   LEFT JOIN crm.v_booking_line_money_current m ON m.booking_line_id = c.booking_line_id
        AND m.kind = 'commission_expected'
@@ -183,7 +183,7 @@ def commission_view(r: Any, today: dt.date) -> dict[str, Any]:
         "line_status": r["line_status"],
         "service_from": _iso(r["service_from"]),
         "service_to": _iso(r["service_to"]),
-        "agency_supplier_id": str(r["agency_supplier_id"]),
+        "agency_supplier_id": str(r["agency_supplier_id"]) if r["agency_supplier_id"] else None,
         "supplier_name": r["supplier_name"],
         "status": r["status"],
         "due_on": _iso(r["due_on"]),

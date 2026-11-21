@@ -403,9 +403,12 @@ async def test_a_priced_block_on_day_0_is_in_every_text() -> None:
                                              "title": "Airport pickup", "sell_amount": Decimal("40")}])  # fmt: skip
     for fmt in ("email", "whatsapp"):
         body = (await text_proposal.preview(tenant_ctx(conn), FakeVault(), P, fmt=fmt, locale="en"))["body"]
-        before, _, days = body.partition("Day 1")
+        before, _, rest = body.partition("Day 1")
+        days, _, services = rest.partition("Services provided by")
         assert "Before you go" in before and "- Arrival: Airport pickup" in before
         assert "Airport pickup" not in days and "- Lodging: Homestay" in days
+        # AA-1147 (T18): the agency's own items again in their group, priced, with the disclaimer under them
+        assert "- Airport pickup: 40.00 USD" in services and "arranged and provided by the agency" in services
 
 
 @pytest.mark.asyncio

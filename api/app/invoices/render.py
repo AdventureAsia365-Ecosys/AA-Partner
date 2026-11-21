@@ -5,7 +5,10 @@ PDF from the browser.
   remote load, no form), so a typed description can never run in the page that opens it.
 - The agency is the brand (design §2.9): its display name heads the document; no Adventure Asia mark.
 - Never shown: per-line prices of the trip's booking lines, the B2B price, any margin (design §2.9 rule 3): included
-  lines are titles only.
+  lines are titles only. AA-1147 (S285 decision T18): the agency's own services (flight, visa, insurance, its fee)
+  stand in their own group "Services provided by <agency>" with the client's price of each (a flight or fee folded
+  into the tour price reads "Included in the trip price") and the disclaimer of the setting
+  ``crm.agency_lines.disclaimer``.
 - A draft prints with a DRAFT banner and no number; a void invoice with VOID and its reason.
 """
 
@@ -16,6 +19,7 @@ from decimal import Decimal
 from html import escape
 from typing import Any
 
+IN_PRICE = "Included in the trip price"
 CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src 'none'; form-action 'none'; base-uri 'none'"
 KIND_TITLE = {
     "deposit": "Deposit invoice",
@@ -45,8 +49,35 @@ td.num,th.num{text-align:right;white-space:nowrap}
 .included{margin-top:20px;font-size:13px;color:#4a5563}
 .included ul{margin:6px 0 0 18px;padding:0}
 .notes{margin-top:20px;font-size:13px;white-space:pre-wrap}
+.agency-services{margin-top:20px;font-size:13px}
+.agency-services table{margin-top:6px}
+.disclaimer{margin-top:6px;font-size:12px;color:#4a5563}
 @media print{body{padding:0}}
 """
+
+
+def agency_services_title(agency_name: str | None) -> str:
+    """AA-1147: the heading of the agency's own services group."""
+    return f"Services provided by {agency_name}" if agency_name else "Services provided by the agency"
+
+
+def _agency_services(invoice: dict[str, Any], cur: str, agency_name: str | None, disclaimer: str | None) -> str:
+    """AA-1147 (T18): the group of the agency's own services (included rows of source ``agency_line``), each with its
+    price or "Included in the trip price", and the disclaimer; "" when the invoice has none."""
+    e = escape
+    own = [line for line in invoice.get("lines", []) if line["kind"] == "included" and line["source"] == "agency_line"]
+    if not own:
+        return ""
+    rows = "".join(
+        f"<tr><td>{e(line['description'])}</td>"
+        f'<td class="num">{e(_amount(line["amount"], cur) if line.get("amount") else IN_PRICE)}</td></tr>'
+        for line in own
+    )
+    note = f'<div class="disclaimer">{e(disclaimer)}</div>' if disclaimer else ""
+    return (
+        f'<div class="agency-services"><strong>{e(agency_services_title(agency_name))}</strong>'
+        f"<table><tbody>{rows}</tbody></table>{note}</div>"
+    )
 
 
 def _amount(value: str | None, currency: str) -> str:
@@ -69,14 +100,18 @@ def render(
     pay_instructions: list[dict[str, str]] | None = None,
     payments: list[dict[str, Any]] | None = None,
     balance: str | None = None,
+    disclaimer: str | None = None,
 ) -> str:
-    """The HTML document of one invoice view (:func:`app.invoices.service.invoice_view` with its lines)."""
+    """The HTML document of one invoice view (:func:`app.invoices.service.invoice_view` with its lines).
+    ``disclaimer``: the sentence under the agency's own services (AA-1147)."""
     e = escape
     cur = invoice["currency"]
     status = invoice["status"]
     title = KIND_TITLE.get(invoice["kind"], "Invoice")
     charges = [line for line in invoice.get("lines", []) if line["kind"] == "charge"]
-    included = [line for line in invoice.get("lines", []) if line["kind"] == "included"]
+    included = [
+        line for line in invoice.get("lines", []) if line["kind"] == "included" and line["source"] != "agency_line"
+    ]
     banner = ""
     if status == "draft":
         banner = '<div class="banner">DRAFT: not issued</div>'
@@ -127,6 +162,7 @@ def render(
     if included:
         items = "".join(f"<li>{e(line['description'])}</li>" for line in included)
         included_html = f'<div class="included">This invoice covers:<ul>{items}</ul></div>'
+    included_html += _agency_services(invoice, cur, agency_name, disclaimer)
     notes = []
     if invoice.get("memo"):
         notes.append(f'<div class="notes">{e(invoice["memo"])}</div>')

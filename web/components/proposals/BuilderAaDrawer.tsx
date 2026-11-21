@@ -15,7 +15,7 @@ import { BuilderCatalogueTab } from "@/components/catalogue/BuilderCatalogueTab"
 import { AgencyBlockNote } from "@/components/proposals/AgencyBlockNote";
 import { BuilderAiIdeasTab } from "@/components/proposals/BuilderAiIdeasTab";
 import { type AaProduct, type CatalogTour } from "@/lib/aa";
-import { AGENCY_ITEM_CATEGORIES, drawerTabs, type AgencyItemCategory } from "@/lib/agencyItems";
+import { AGENCY_ITEM_CATEGORIES, bundledValue, canBundle, drawerTabs, type AgencyItemCategory } from "@/lib/agencyItems";
 import { AA_TARIFF_PATH } from "@/lib/aaTariff";
 import { bffSend } from "@/lib/bffClient";
 import { builderErrorKey, dayOfBlock, moneyInput, TIERS, type BlockType, type BuilderView, type Tier } from "@/lib/builder";
@@ -41,6 +41,20 @@ export interface Supplier {
   agency_supplier_id: string;
   name: string;
   kind: string;
+}
+
+/** AA-1147 (T18): "Fold into the tour price", offered for a flight or the agency fee only. */
+function BundleToggle({ category, checked, onChange, tr }: { category: AgencyItemCategory; checked: boolean; onChange: (v: boolean) => void; tr: (k: string) => string }) {
+  if (!canBundle(category)) return null;
+  return (
+    <label style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 12 }}>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} data-testid="builder-agency-bundled" />
+      <span>
+        {tr("agencyItem.bundled")}
+        <span style={{ display: "block", color: K.muted, fontSize: 11.5 }}>{tr("agencyItem.bundledHint")}</span>
+      </span>
+    </label>
+  );
 }
 
 export function BuilderAaDrawer({
@@ -86,6 +100,7 @@ export function BuilderAaDrawer({
   const [supplier, setSupplier] = useState("");
   const [category, setCategory] = useState<AgencyItemCategory>("flight");
   const [payOnArrival, setPayOnArrival] = useState(false);
+  const [bundled, setBundled] = useState(false); // AA-1147 (T18): a flight or the agency fee only
   const [busy, setBusy] = useState(false);
   const [offline, setOffline] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -156,6 +171,7 @@ export function BuilderAaDrawer({
       return;
     }
     const body: Record<string, unknown> = { title: title.trim(), pay_on_arrival: payOnArrival, category };
+    body.bundled = bundledValue(bundled, category); // AA-1147 (T18): a flight or the agency fee only
     if (tier) body.tier = tier;
     if (supplier) body.agency_supplier_id = supplier;
     if (canMoney && sellMoney !== null) body.sell_amount = sellMoney;
@@ -326,6 +342,7 @@ export function BuilderAaDrawer({
               </select>
             </label>
           )}
+          <BundleToggle category={category} checked={bundled} onChange={setBundled} tr={tr} />
           {tierSelect}
           {canMoney && (
             <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))" }}>

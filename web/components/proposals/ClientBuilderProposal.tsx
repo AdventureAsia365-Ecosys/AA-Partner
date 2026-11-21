@@ -32,6 +32,7 @@ import {
   PROPOSAL_API,
   zoneLabel,
   type ChangeReason,
+  type ClientAgencyServices,
   type ClientBeforeYouGo,
   type ClientBlock,
   type ClientBuilderPage,
@@ -170,6 +171,33 @@ export function ClientInclusionsContent({ data, lang, t }: { data: ClientInclusi
           </div>
         );
       })}
+    </section>
+  );
+}
+
+/** AA-1147 (T18): "Services provided by <agency>": the agency's own flights, visa, insurance and fee with their price
+ * ("Included in the trip price" when folded in) and the disclaimer printed under them. */
+export function ClientAgencyServicesBox({ data, agency, cur, locale, lang, t }: {
+  data?: ClientAgencyServices | null; agency: string; cur: string; locale: DateLocale; lang: string; t: (k: string) => string;
+}) {
+  if (!data || data.items.length === 0) return null;
+  const note = lang === "vi" ? data.disclaimer.vi || data.disclaimer.en : data.disclaimer.en;
+  return (
+    <section data-testid="client-agency-services" style={{ ...card, gap: 6 }}>
+      <h2 style={{ margin: 0, fontSize: 16, color: K.ink, overflowWrap: "anywhere" }}>
+        {fmt(t("client.agencyServices.title"), { agency })}
+      </h2>
+      <dl style={{ margin: 0, display: "grid", gridTemplateColumns: "1fr auto", gap: "4px 12px", fontSize: 13.5 }}>
+        {data.items.map((item, i) => (
+          <div key={i} style={{ display: "contents" }}>
+            <dt style={{ color: K.body, overflowWrap: "anywhere" }}>{item.title}</dt>
+            <dd style={{ margin: 0, color: K.ink, textAlign: "right" }}>
+              {item.amount ? formatAmount(item.amount, cur, locale) : t("client.agencyServices.inPrice")}
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {note && <p data-testid="client-agency-disclaimer" style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{note}</p>}
     </section>
   );
 }
@@ -352,6 +380,7 @@ export function ClientBuilderProposal({ initial, dict, locale }: { initial: Clie
       ))}
 
       {hasInclusions(page.inclusions) && <ClientInclusionsContent data={page.inclusions} lang={lang} t={t} />}
+      <ClientAgencyServicesBox data={page.agency_services} agency={page.agency_name} cur={cur} locale={locale} lang={lang} t={t} />
 
       <dl data-testid="client-amounts" style={{ margin: 0, display: "grid", gridTemplateColumns: "auto 1fr", gap: "6px 12px", fontSize: 14 }}>
         {page.totals.discount && page.totals.subtotal && (

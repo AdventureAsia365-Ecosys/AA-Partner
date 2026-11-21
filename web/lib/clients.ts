@@ -38,7 +38,7 @@ export type RevealReason = (typeof REVEAL_REASONS)[number];
 export const RELATION_KINDS = ["spouse", "partner", "parent", "child", "sibling", "friend", "referrer", "referred"] as const;
 export type RelationKind = (typeof RELATION_KINDS)[number];
 
-export const DOC_KINDS = ["passport_scan", "waiver_pdf", "terms_pdf", "ticket", "voucher", "invoice_pdf", "supplier_confirmation", "other"] as const;
+export const DOC_KINDS = ["passport_scan", "waiver_pdf", "terms_pdf", "ticket", "voucher", "invoice_pdf", "supplier_confirmation", "visa_letter", "other"] as const;
 export type DocKind = (typeof DOC_KINDS)[number];
 export const DOC_TYPES = ["application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic"] as const;
 export const DOC_MAX_BYTES = 7 * 1024 * 1024;
@@ -128,6 +128,8 @@ export interface DocumentRow {
   visible_to_travelers: boolean;
   write_only: boolean;
   created_at: string;
+  /** AA-1147: the booking line of the trip the file is about (null = the whole trip). */
+  booking_line_id?: string | null;
 }
 
 /** The masked form of a field that holds a value: never a digit or a letter of it (design §4.4, Fix B15). */
@@ -256,4 +258,15 @@ export function roleText(lang: Lang, role: "lead" | "companion"): string {
 
 export function tripsCount(lang: Lang, n: number): string {
   return plural(lang, "clients.trips", n);
+}
+
+/** AA-1147: the service line a new file of a trip is about ("" = the whole trip; a client's file has none). */
+export function lineFor(tripId: string | undefined, lineId: string): string | null {
+  return tripId && lineId ? lineId : null;
+}
+
+/** AA-1147: the title of the service line a file is about, when the panel knows it. */
+export function lineTitle(lines: { booking_line_id: string; title: string }[], id: string | null | undefined): string | null {
+  if (!id) return null;
+  return lines.find((l) => l.booking_line_id === id)?.title ?? null;
 }

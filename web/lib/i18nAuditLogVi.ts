@@ -106,6 +106,7 @@ export const auditLogVi: Record<keyof typeof auditLogEn, string> = {
   "log.say.aa_cancel_case": "đã xử lý một chuyến đi AA huỷ",
   "log.say.aa_confirm": "đã thử xác nhận một đặt chỗ AA",
   "log.say.aa_lines_from_proposal": "đã gửi AA các dòng của một đề xuất",
+  "log.say.agency_lines_from_proposal": "đã ghi các dòng dịch vụ của đại lý từ một đề xuất được chấp nhận",
   "log.say.aa_request": "đã nhờ AA đặt một dòng dịch vụ",
   "log.say.aa_sync": "đã cập nhật một đặt chỗ từ AA",
   "log.say.access_log_view": "đã thử mở nhật ký truy cập",

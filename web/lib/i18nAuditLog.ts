@@ -118,6 +118,7 @@ export const auditLogEn = {
   "log.say.aa_cancel_case": "handled a trip AA cancelled",
   "log.say.aa_confirm": "tried to confirm an AA booking",
   "log.say.aa_lines_from_proposal": "asked AA for the lines of a proposal",
+  "log.say.agency_lines_from_proposal": "wrote the agency's own service lines of an accepted proposal",
   "log.say.aa_request": "asked AA to book a line",
   "log.say.aa_sync": "updated a booking from AA",
   "log.say.access_log_view": "tried to open the access log",

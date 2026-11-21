@@ -42,6 +42,7 @@ KINDS = (
     "other",
     "confirmation_pdf",  # AA-1070 (crm-055): the server-side PDFs of app.documents.pdf_job
     "proposal_pdf",
+    "visa_letter",  # AA-1147 (crm-083): the invitation letter of a visa line
 )
 # AA-1070 (crm-055): ``system`` = a PDF the crm_pdf_render job wrote on a member's request.
 UPLOADERS = ("member", "traveler", "system")
@@ -50,23 +51,25 @@ MAX_FILENAME = 200
 
 INSERT_SQL = """
 INSERT INTO crm.document (document_id, trip_id, traveler_id, kind, s3_key, sha256, size_bytes, content_type,
-                          filename_enc, visible_to_travelers, write_only, uploaded_by_kind)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                          filename_enc, visible_to_travelers, write_only, uploaded_by_kind, booking_line_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 RETURNING created_at
 """
 TRAVELLER_SHARE = "no new document is shown to its travellers"
 ROW_SQL = """
 SELECT document_id, trip_id, traveler_id, kind, s3_key, sha256, size_bytes, content_type, filename_enc,
-       visible_to_travelers, write_only, created_at
+       visible_to_travelers, write_only, created_at, booking_line_id
   FROM crm.document WHERE document_id = $1 AND deleted_at IS NULL
 """
 TRIP_DOCS_SQL = """
 SELECT document_id, trip_id, traveler_id, kind, size_bytes, content_type, filename_enc, visible_to_travelers,
-       write_only, created_at
+       write_only, created_at, booking_line_id
   FROM crm.document WHERE trip_id = $1 AND deleted_at IS NULL ORDER BY created_at DESC, document_id
 """
 TRAVELER_EXISTS_SQL = "SELECT 1 FROM crm.traveler WHERE traveler_id = $1 AND deleted_at IS NULL"
 TRIP_EXISTS_SQL = "SELECT 1 FROM crm.trip WHERE trip_id = $1 AND deleted_at IS NULL"
+# AA-1147 (crm-083): a file about one booking line of the same trip (an e-ticket, a visa letter, a certificate).
+LINE_OF_TRIP_SQL = "SELECT 1 FROM crm.booking_line WHERE booking_line_id = $1 AND trip_id = $2 AND deleted_at IS NULL"
 TRASH_SQL = """
 UPDATE crm.document SET deleted_at = now(), deleted_by = $2, purge_after = now() + make_interval(days => $3)
  WHERE document_id = $1
@@ -115,7 +118,16 @@ def _view(row: Any, filename: str) -> dict[str, Any]:
         "visible_to_travelers": row["visible_to_travelers"],
         "write_only": row["write_only"],
         "created_at": row["created_at"].isoformat(),
+        "booking_line_id": str(row["booking_line_id"]) if row.get("booking_line_id") else None,
     }
+
+
+async def _check_line(ctx: TenantContext, booking_line_id: uuid.UUID | None, trip_id: uuid.UUID | None) -> None:
+    """AA-1147: a file about one booking line names a live line of its own trip (422 ``invalid_booking_line_id``)."""
+    if booking_line_id is None:
+        return
+    if trip_id is None or not await ctx.conn.fetchval(LINE_OF_TRIP_SQL, booking_line_id, trip_id):
+        raise Invalid("invalid_booking_line_id", "a booking line of the document's trip")
 
 
 async def upload(
@@ -131,8 +143,10 @@ async def upload(
     content: bytes,
     visible_to_travelers: bool = False,
     uploaded_by_kind: str = "member",
+    booking_line_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
-    """``uploaded_by_kind`` = ``traveler`` for the client portal's passport scan (AA-953), else the agency member."""
+    """``uploaded_by_kind`` = ``traveler`` for the client portal's passport scan (AA-953), else the agency member.
+    AA-1147: ``booking_line_id`` = the line of ``trip_id`` the file is about (422 ``invalid_booking_line_id`` else)."""
     if uploaded_by_kind not in UPLOADERS:
         raise Invalid("invalid_uploader", ", ".join(UPLOADERS))
     if kind not in KINDS:
@@ -155,6 +169,7 @@ async def upload(
         raise NotFound("traveler_not_found")
     if trip_id is not None and not await ctx.conn.fetchval(TRIP_EXISTS_SQL, trip_id):
         raise NotFound("trip_not_found")
+    await _check_line(ctx, booking_line_id, trip_id)
     write_only = kind == "passport_scan"
     if write_only and visible_to_travelers:
         raise Invalid("passport_never_visible", "a passport scan is never shown to travellers")
@@ -178,6 +193,7 @@ async def upload(
         visible_to_travelers,
         write_only,
         uploaded_by_kind,
+        booking_line_id,
     )
     await store.put(key, sealed)
     ctx.audit("create", "allowed", "document", str(document_id), fields=("content", "filename"))
@@ -192,6 +208,7 @@ async def upload(
         "visible_to_travelers": visible_to_travelers,
         "write_only": write_only,
         "created_at": row["created_at"].isoformat(),
+        "booking_line_id": str(booking_line_id) if booking_line_id else None,
     }
 
 

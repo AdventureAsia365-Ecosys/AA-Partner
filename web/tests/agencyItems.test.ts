@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "vitest";
 
-import { AGENCY_ITEM_CATEGORIES, asksAaForNights, drawerTabs, extraNightBody, type ExtraNightForm } from "@/lib/agencyItems";
+import { AGENCY_ITEM_CATEGORIES, asksAaForNights, canBundle, drawerTabs, extraNightBody, type ExtraNightForm } from "@/lib/agencyItems";
 import { CATEGORIES } from "@/lib/catalogue";
 import { matchBff } from "@/lib/bff";
 import { matchStaffBff } from "@/lib/staffBff";
@@ -52,4 +52,11 @@ test("the BFFs pass the new routes only", () => {
   assert.equal(matchBff("DELETE", `aa-extra-nights/${id}`), null);
   assert.ok(matchStaffBff("GET", "aa-extra-nights"));
   assert.equal(matchStaffBff("POST", "aa-extra-nights"), null);
+});
+
+test("AA-1147 (T18): only a flight or the agency fee may be folded into the tour price", () => {
+  assert.deepEqual(AGENCY_ITEM_CATEGORIES.filter(canBundle), ["flight", "fee"]);
+  assert.equal(canBundle("visa"), false);
+  assert.equal(canBundle("insurance"), false);
+  assert.equal(canBundle(null), false);
 });
