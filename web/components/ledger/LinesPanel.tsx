@@ -15,6 +15,8 @@
 // confirmation": saved and confirmed in one call) or goes back to planning.
 // AA-1086: every line that is not cancelled says whether the trip's travellers see it, with a Show / Hide switch; an
 // AA line is switchable once AA confirmed it (shown by default then; its travellers' voucher names the agency).
+// AA-1147: a planning or requested agency line takes "Deadline and supplier" (LineServiceEdit): the lines an accepted
+// proposal writes start without a deadline, so the agent sets it (or clears it), the supplier and the fold here.
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Fragment, useState } from "react";
@@ -23,6 +25,7 @@ import { Badge, Button, DataTable, K, useHydrated, useIsPhone } from "@/app/_kit
 import { DateInput } from "@/components/DateInput";
 import { SupplierRequestsPanel } from "@/components/catalogue/SupplierRequestsPanel";
 import { AaItemForm } from "@/components/ledger/AaItemForm";
+import { LineServiceEdit } from "@/components/ledger/LineServiceEdit";
 import { useTripClosed, useTripUpdating } from "@/components/pipeline/TripClosed";
 import { aaBadgeKey, aaErrorKey, aaResultKey, allowedAaActions, isRetrying, type AaAction } from "@/lib/aa";
 import { AGENCY_ITEM_CATEGORIES } from "@/lib/agencyItems";
@@ -310,6 +313,15 @@ export function LinesPanel({
     return (
       <>
         {shown(line)}{" "}
+        <LineServiceEdit
+          line={line}
+          suppliers={own}
+          closed={closed}
+          disabled={!hydrated || busy}
+          locale={locale}
+          tr={tr}
+          onSave={(body) => run("PATCH", `lines/${line.booking_line_id}`, body)}
+        />{" "}
         {allowedAaActions(line.aa?.actions ?? [], role).filter((action) => !closed || action === "release").map((action: AaAction) => (
           <Button
             key={action}

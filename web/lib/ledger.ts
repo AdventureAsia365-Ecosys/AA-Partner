@@ -5,6 +5,7 @@
 // and lines carry no `money` block at all for her, so a missing key always means "not shown", never "zero".
 
 import type { AaBlock } from "@/lib/aa";
+import { canBundle } from "@/lib/agencyItems";
 import type { SupplierThread } from "@/lib/catalogue";
 import type { LineCommission } from "@/lib/commissions";
 
@@ -250,4 +251,32 @@ export function newLineBody(form: FormData): Record<string, unknown> {
     due_at: orNull(text("due_on")),
     bundled: form.get("bundled") === "on",
   };
+}
+
+/** AA-1147: an agency line's deadline, supplier and fold change on the Lines tab while it is planned or requested (the
+ * lines an accepted proposal writes start without a deadline). Not on a closed trip or an Adventure Asia line. */
+export function canEditService(line: Pick<Line, "supplier_kind" | "status" | "read_only">, closed: boolean): boolean {
+  if (closed || line.read_only || line.supplier_kind !== "agency") return false;
+  return line.status === "planning" || line.status === "requested";
+}
+
+/** AA-1147: the PATCH body of an agency line's "Deadline and supplier" form: only what changed. An empty deadline field
+ * keeps the deadline ("Clear deadline" sends null); the supplier moves on a planning line only (the API answers 422
+ * line_not_editable otherwise); the fold is sent for a flight or the fee only. */
+export function lineChangeBody(
+  form: FormData,
+  line: Pick<Line, "status" | "due_at" | "agency_supplier_id" | "bundled" | "category">,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  const due = String(form.get("due_on") ?? "").trim();
+  if (due && due !== (line.due_at ?? "").slice(0, 10)) body.due_at = due;
+  if (line.status === "planning" && form.has("agency_supplier_id")) {
+    const supplier = String(form.get("agency_supplier_id") ?? "").trim() || null;
+    if (supplier !== (line.agency_supplier_id ?? null)) body.agency_supplier_id = supplier;
+  }
+  if (canBundle(line.category)) {
+    const bundled = form.get("bundled") === "on";
+    if (bundled !== Boolean(line.bundled)) body.bundled = bundled;
+  }
+  return body;
 }
