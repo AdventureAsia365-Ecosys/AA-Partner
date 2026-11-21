@@ -107,8 +107,11 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING booking_line_id
 """
 TRIP_OF_LINE_SQL = """
-SELECT trip_id, status, supplier_kind, category, bundled FROM crm.booking_line
- WHERE booking_line_id = $1 AND deleted_at IS NULL
+SELECT trip_id, status, supplier_kind FROM crm.booking_line WHERE booking_line_id = $1 AND deleted_at IS NULL
+"""
+# AA-1147: the type and "folded into the tour price" flag of a line, read when an edit touches either.
+LINE_TYPE_SQL = """
+SELECT category, bundled FROM crm.booking_line WHERE booking_line_id = $1 AND deleted_at IS NULL
 """
 CONFIRM_SQL = "SELECT crm.booking_line_confirm($1)"
 CHECK_SQL = "SELECT crm.booking_line_confirm_check($1)"
@@ -558,7 +561,8 @@ async def update_line(ctx: TenantContext, line_id: uuid.UUID, changes: dict[str,
         raise NotFound("line_not_found")
     if current["supplier_kind"] == "aa":
         _aa_visibility_only(current["status"], changes)
-    if "category" in changes and "bundled" not in changes and current["bundled"]:
+    typed = await ctx.conn.fetchrow(LINE_TYPE_SQL, line_id) if "category" in changes or "bundled" in changes else None
+    if "category" in changes and "bundled" not in changes and typed is not None and typed["bundled"]:
         # AA-1147 (T18): a folded-in line keeps a type that may be folded in (unfold it first)
         agency_extras.bundled(True, changes["category"])
     sets: list[str] = []
@@ -578,7 +582,7 @@ async def update_line(ctx: TenantContext, line_id: uuid.UUID, changes: dict[str,
                         "line_incomplete", "a confirmed line keeps its confirmation number", missing=["confirmation_no"]
                     )
         elif field == "bundled":
-            category = changes["category"] if "category" in changes else current["category"]
+            category = changes["category"] if "category" in changes else (typed["category"] if typed else None)
             value = agency_extras.bundled(value, category)
         else:  # agency_supplier_id: a planning line moves to another own supplier, or to none (handled by the agency)
             if value in (None, ""):

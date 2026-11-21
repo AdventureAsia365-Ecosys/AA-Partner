@@ -156,6 +156,17 @@ async def test_a_line_nearing_its_deadline_opens_one_task(app_pool: asyncpg.Pool
         with pytest.raises(Invalid) as err:
             await lines.create_line(ctx, s["trip"], {"title": "E-visa", "category": "visa", "bundled": True})
     assert err.value.code == "bundle_not_allowed"
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        fee = await lines.create_line(ctx, s["trip"], {"title": "Agency fee", "category": "fee"})
+        fee = await lines.update_line(ctx, uuid.UUID(fee["booking_line_id"]), {"bundled": True})
+        with pytest.raises(Invalid) as err:  # a folded-in fee cannot become a visa without unfolding it
+            await lines.update_line(ctx, uuid.UUID(fee["booking_line_id"]), {"category": "visa"})
+        with pytest.raises(Invalid):
+            await lines.update_line(ctx, uuid.UUID(visa["booking_line_id"]), {"bundled": True})
+        moved = await lines.update_line(ctx, uuid.UUID(visa["booking_line_id"]), {"due_at": None})
+    assert fee["bundled"] is True and err.value.code == "bundle_not_allowed" and moved["due_at"] is None
+    async with tenant_tx(app_pool, s["who"]["agent"], s["tenant"]) as ctx:
+        await lines.update_line(ctx, uuid.UUID(visa["booking_line_id"]), {"due_at": due})
     assert visa["handled_by_agency"] and visa["agency_supplier_id"] is None and visa["due_at"] is not None
     async with system_tx(app_pool, s["tenant"], actor="job:crm_workflow_tick") as ctx:
         first = await agency_due.due_tasks(ctx, dt.datetime.now(dt.UTC))
