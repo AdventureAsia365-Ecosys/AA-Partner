@@ -752,6 +752,38 @@
     "when": "Chỉ bật sau khi mọi người trong các nhóm này đã cài ứng dụng xác thực và một lần đăng nhập thử cho thấy mã đã được dùng; chỉ tắt để cho một người vào lại trong lúc đặt lại ứng dụng xác thực.",
     "example": "Với mặc định tắt, nhân viên vận hành đăng nhập bằng mã e-mail vẫn mở được các trang vận hành CRM; khi bật, cùng phiên đó nhận lỗi yêu cầu đăng nhập kèm mã xác thực."
    }
+  },
+  "crm.agency_lines.due_lead_days": {
+   "en": {
+    "what": "How many days before an agency service line's deadline (a flight's ticketing time limit, a visa file's submission date, the day to buy the insurance) the trip owner gets a task to act on it. The hourly workflow tick opens the task while the line is still planning or requested.",
+    "raise": "The task comes earlier, so there is more time to issue the ticket or file the visa, but it may sit open for days before anyone can act.",
+    "lower": "The task comes closer to the deadline and stays relevant, but a busy agent has less time before a held seat is released or a visa date is missed.",
+    "when": "Raise it for an agency whose consolidator or visa office needs more working days; lower it if agents say the tasks come too early to be useful.",
+    "example": "With the default of 3 days, a flight line whose ticketing time limit is on the 20th opens its task on the 17th."
+   },
+   "vi": {
+    "what": "Số ngày trước hạn của một dòng dịch vụ của đại lý (hạn xuất vé máy bay, hạn nộp hồ sơ thị thực, ngày cần mua bảo hiểm) mà người phụ trách chuyến đi nhận một việc cần làm. Lượt chạy workflow hằng giờ mở việc khi dòng còn ở trạng thái đang lên kế hoạch hoặc đã yêu cầu.",
+    "raise": "Việc đến sớm hơn, có thêm thời gian xuất vé hay nộp hồ sơ thị thực, nhưng việc có thể nằm mở nhiều ngày trước khi làm được.",
+    "lower": "Việc đến sát hạn hơn và còn đúng lúc, nhưng người bận rộn có ít thời gian hơn trước khi chỗ giữ bị huỷ hoặc lỡ ngày nộp thị thực.",
+    "when": "Tăng cho đại lý có đại lý vé cấp trên hoặc nơi nhận hồ sơ thị thực cần nhiều ngày làm việc hơn; giảm nếu nhân viên báo việc đến quá sớm.",
+    "example": "Với mặc định 3 ngày, dòng vé máy bay có hạn xuất vé ngày 20 sẽ mở việc vào ngày 17."
+   }
+  },
+  "crm.agency_lines.disclaimer": {
+   "en": {
+    "what": "The sentence printed under the group \"Services provided by <agency>\" on the client's proposal (page, e-mail text and PDF) and invoice (printable page and PDF), one text per language (en, vi). It tells the client that the agency, not Adventure Asia, arranges and answers for its own flights, visa service, travel insurance and fee.",
+    "raise": "Not a number: a longer text can name more limits (refund rules of airlines, insurer claims), but clients read short sentences.",
+    "lower": "Not a number: a shorter text is easier to read, but must still say who is responsible for these services.",
+    "when": "Change it when the partner terms change, or give one agency its own wording when its lawyer asks for it.",
+    "example": "The default English text starts with \"These services are arranged and provided by the agency named above\"."
+   },
+   "vi": {
+    "what": "Câu in dưới nhóm \"Dịch vụ do <đại lý> cung cấp\" trên đề xuất (trang, văn bản e-mail và PDF) và hoá đơn (trang in và PDF) của khách, mỗi ngôn ngữ một câu (en, vi). Câu này cho khách biết đại lý, không phải Adventure Asia, sắp xếp và chịu trách nhiệm về vé máy bay, dịch vụ thị thực, bảo hiểm du lịch và phí của đại lý.",
+    "raise": "Không phải con số: câu dài hơn có thể nêu thêm giới hạn (điều kiện hoàn vé, yêu cầu bồi thường bảo hiểm), nhưng khách đọc câu ngắn tốt hơn.",
+    "lower": "Không phải con số: câu ngắn dễ đọc hơn, nhưng vẫn phải nói rõ ai chịu trách nhiệm các dịch vụ này.",
+    "when": "Đổi khi điều khoản đối tác thay đổi, hoặc cho một đại lý câu riêng khi luật sư của đại lý yêu cầu.",
+    "example": "Câu tiếng Anh mặc định bắt đầu bằng \"These services are arranged and provided by the agency named above\"."
+   }
   }
  }
 }
