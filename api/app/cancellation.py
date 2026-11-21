@@ -116,7 +116,7 @@ RETURNING aa_request_id
 """
 SUPPLIER_LINES_SQL = """
 SELECT l.booking_line_id, l.title, s.agency_supplier_id, s.name AS supplier_name, l.confirmation_no
-  FROM crm.booking_line l JOIN crm.agency_supplier s ON s.agency_supplier_id = l.agency_supplier_id
+  FROM crm.booking_line l LEFT JOIN crm.agency_supplier s ON s.agency_supplier_id = l.agency_supplier_id
  WHERE l.trip_id = $1 AND l.supplier_kind = 'agency' AND l.status IN ('requested', 'confirmed') AND l.deleted_at IS NULL
  ORDER BY s.name, l.service_from NULLS LAST, l.title
  LIMIT $2
@@ -153,7 +153,7 @@ SELECT c.commission_id, c.status, l.title, s.name AS supplier_name, m.amount AS 
        m.currency AS expected_currency
   FROM crm.commission c
   JOIN crm.booking_line l ON l.booking_line_id = c.booking_line_id
-  JOIN crm.agency_supplier s ON s.agency_supplier_id = l.agency_supplier_id
+  LEFT JOIN crm.agency_supplier s ON s.agency_supplier_id = l.agency_supplier_id
   LEFT JOIN crm.v_booking_line_money_current m ON m.booking_line_id = c.booking_line_id
        AND m.kind = 'commission_expected'
  WHERE c.trip_id = $1 AND c.status IN ('expected', 'claimed')

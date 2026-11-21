@@ -8,6 +8,7 @@ from __future__ import annotations
 import datetime as dt
 import uuid
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -104,16 +105,25 @@ def test_confirm_classes_and_choose_later_only_for_agency_items() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_view_shows_deltas_or_only_the_total() -> None:
+async def test_the_view_shows_deltas_or_only_the_total(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def disclaimers(_conn: object, _tenant: object) -> dict[str, str]:
+        return {"en": "Arranged by the agency.", "vi": "Do đại lý sắp xếp."}
+
+    monkeypatch.setattr(client_page.agency_extras, "disclaimers", disclaimers)  # AA-1147: no settings read here
     s = _s()
-    shown = await client_page.view(object(), object(), _row(), s, [_pick(LODGE, L2)], NOW)  # type: ignore[arg-type]
+    ctx = SimpleNamespace(conn=None, tenant_id=None)
+    shown = await client_page.view(ctx, object(), _row(), s, [_pick(LODGE, L2)], NOW)  # type: ignore[arg-type]
     lodge = shown["days"][0]["blocks"][0]["options"]
     assert [o["delta"] for o in lodge] == ["0.00", "40.00"] and lodge[1]["chosen"]
     assert shown["totals"]["total"] == "790.00" and shown["totals"]["deposit"] == "237.00"
     assert shown["days"][0]["utc_offset"] == "+05:45" and shown["hold"]["status"] == "missing"
     assert {g["confirm_class"] for g in shown["groups"]} == {"agent", "on_payment"}
     assert "net_amount" not in str(shown) and "sell_amount" not in str(shown)
-    only = await client_page.view(object(), object(), _row(price_visibility="total_only"), s, [], NOW)  # type: ignore[arg-type]
+    # AA-1147 (T18): the agency's own items stand in their group with their price and the disclaimer
+    services = shown["agency_services"]
+    assert services["disclaimer"]["en"] == "Arranged by the agency."
+    assert all(i["amount"] is not None and not i["bundled"] for i in services["items"])
+    only = await client_page.view(ctx, object(), _row(price_visibility="total_only"), s, [], NOW)  # type: ignore[arg-type]
     assert all(o["delta"] is None for d in only["days"] for b in d["blocks"] for o in b["options"])
 
 

@@ -81,11 +81,16 @@ def test_the_route_takes_a_note() -> None:
 
 
 @pytest.mark.asyncio
-async def test_the_client_page_shows_the_note() -> None:
+async def test_the_client_page_shows_the_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def disclaimers(_conn: object, _tenant: object) -> dict[str, str]:
+        return {"en": "Arranged by the agency.", "vi": "Do đại lý sắp xếp."}
+
+    monkeypatch.setattr(client_page.agency_extras, "disclaimers", disclaimers)  # AA-1147: no settings read here
     s = _s()
     for o in s["options"]:
         o["display_note"] = "Sea view on request" if o["option_id"] == T1 else None
-    page = await client_page.view(object(), object(), _row(), s, [], NOW)  # type: ignore[arg-type]
+    ctx = SimpleNamespace(conn=None, tenant_id=None)
+    page = await client_page.view(ctx, object(), _row(), s, [], NOW)  # type: ignore[arg-type]
     notes = {o["option_id"]: o["note"] for d in page["days"] for b in d["blocks"] for o in b["options"]}
     assert notes[str(T1)] == "Sea view on request" and notes[str(L1)] is None
     assert str(LODGE) in {b["option_block_id"] for d in page["days"] for b in d["blocks"]}

@@ -45,6 +45,7 @@ from app.jobs import queue
 from app.jobs.kinds import PDF_RENDER
 from app.jobs.queue import Job
 from app.jobs.worker import Handler, PermanentError
+from app.ledger import agency_extras
 from app.proposals import prep_packs, text_proposal, text_render
 from app.tenancy import AnyContext, TenantContext, system_tx
 from app.travel_ops import vouchers
@@ -152,7 +153,10 @@ async def build(ctx: AnyContext, vault: Vault, trip_id: uuid.UUID, kind: str,
                 "title": ln["title"],
                 "service_from": _iso(ln["service_from"]),
                 "service_to": _iso(ln["service_to"]),
-                "supplier": vouchers.AA_SUPPLIER_NAME if ln["supplier_kind"] == "aa" else ln["supplier_name"],
+                # AA-1147: an agency line without a supplier is handled by the agency (its name heads the page)
+                "supplier": (
+                    vouchers.AA_SUPPLIER_NAME if ln["supplier_kind"] == "aa" else (ln["supplier_name"] or agency)
+                ),
                 "confirmation_no": ln["confirmation_no"],
             }
             for ln in await ctx.conn.fetch(vouchers.LINES_SQL, trip_id)
@@ -180,7 +184,8 @@ async def build(ctx: AnyContext, vault: Vault, trip_id: uuid.UUID, kind: str,
             else []
         )
         bill = await invoices.bill_to(ctx, vault, trip_id)  # type: ignore[arg-type]
-        content = renders.invoice(view, locale, agency=agency, bill_to=bill, pay_instructions=pay_by)
+        note = await agency_extras.disclaimer(ctx.conn, ctx.tenant_id, locale)  # AA-1147: under the agency's services
+        content = renders.invoice(view, locale, agency=agency, bill_to=bill, pay_instructions=pay_by, disclaimer=note)
         return content, f"invoice-{view.get('number') or 'draft'}.pdf"
     if kind == "proposal":
         row = await ctx.conn.fetchrow(text_proposal.ROW_SQL, subject_id)

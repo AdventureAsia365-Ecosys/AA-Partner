@@ -26,6 +26,7 @@ import json
 from decimal import Decimal
 from typing import Any
 
+from app.ledger import agency_extras
 from app.payments import schedule_plan
 from app.proposals import builder, rules
 from app.tenancy import AnyContext
@@ -273,6 +274,7 @@ async def view(ctx: AnyContext, vault: Any, row: Any, s: dict[str, Any], pick_ro
             groups[confirm_class(o)].append({"title": o["title"], "choose_later": bid in later})
     t = totals(s, row, picks)
     aa_ids = aa_chosen(choice, options)
+    out_services = await agency_services(ctx, s, choice)
     return {
         "kind": "builder",
         "price_visibility": row["price_visibility"],
@@ -282,7 +284,32 @@ async def view(ctx: AnyContext, vault: Any, row: Any, s: dict[str, Any], pick_ro
         "totals": public_totals(t),
         "selection_hash": selection_hash(choice, later),
         "hold": hold_state(row, aa_ids, now),
+        # AA-1147 (T18): the agency's own services of the choice with their price (none when folded into the tour
+        # price) and the disclaimer printed under them; null when the choice has none.
+        "agency_services": out_services,
     }
+
+
+def agency_items_chosen(s: dict[str, Any], choice: dict[str, str]) -> list[dict[str, Any]]:
+    """AA-1147: the agency items of a choice (flight, visa, insurance, fee) as group rows, in day order, each with its
+    share of the total (after the version's discount) unless folded into the tour price."""
+    options = builder._option_map(s)
+    sells = builder.line_sells(s, choice)
+    order = {str(b["option_block_id"]): i for i, b in enumerate(s["blocks"])}
+    rows = []
+    for _bid, oid in sorted(choice.items(), key=lambda kv: order.get(kv[0], 0)):
+        o = options.get(oid)
+        if o is None or o["source"] != "agency":
+            continue
+        rows.append(agency_extras.group_item(o["title"], o.get("category"), sells.get(oid), bool(o.get("bundled"))))
+    return rows
+
+
+async def agency_services(ctx: AnyContext, s: dict[str, Any], choice: dict[str, str]) -> dict[str, Any] | None:
+    items = agency_items_chosen(s, choice)
+    if not items:
+        return None
+    return {"items": items, "disclaimer": await agency_extras.disclaimers(ctx.conn, ctx.tenant_id)}
 
 
 def choice_diff(s: dict[str, Any], pick_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

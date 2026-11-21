@@ -39,7 +39,7 @@ import asyncpg
 from app import cancellation, stages
 from app.errors import Conflict, Invalid, NotFound
 from app.invoices import render
-from app.ledger import fx
+from app.ledger import agency_extras, fx
 from app.payments import claims, reminders
 from app.tenancy import AnyContext, TenantContext
 from app.vault import Vault
@@ -99,10 +99,15 @@ SELECT s.schedule_id, s.trip_id, s.proposal_id, s.kind, s.seq, s.amount, s.curre
 LIVE_FOR_SCHEDULE_SQL = """
 SELECT invoice_id FROM crm.invoice WHERE schedule_id = $1 AND status <> 'void' AND deleted_at IS NULL
 """
+# AA-1147 (crm-083): an agency line carries its sell in the invoice's currency (printed under "Services provided by
+# <agency>", never summed), unless it is folded into the tour price (bundled) or has no sell in that currency.
 INCLUDED_SQL = """
-SELECT title, supplier_kind FROM crm.booking_line
- WHERE trip_id = $1 AND deleted_at IS NULL AND status <> 'cancelled'
- ORDER BY service_from NULLS LAST, created_at, booking_line_id
+SELECT l.title, l.supplier_kind, l.bundled,
+       (SELECT m.amount FROM crm.v_booking_line_money_current m
+         WHERE m.booking_line_id = l.booking_line_id AND m.kind = 'sell' AND m.currency = $3) AS sell
+  FROM crm.booking_line l
+ WHERE l.trip_id = $1 AND l.deleted_at IS NULL AND l.status <> 'cancelled'
+ ORDER BY l.service_from NULLS LAST, l.created_at, l.booking_line_id
  LIMIT $2
 """
 INSERT_SQL = """
@@ -621,15 +626,19 @@ async def _insert_lines(
     return position
 
 
-async def _insert_included(ctx: AnyContext, invoice_id: uuid.UUID, trip_id: uuid.UUID, start: int) -> None:
+async def _insert_included(
+    ctx: AnyContext, invoice_id: uuid.UUID, trip_id: uuid.UUID, start: int, currency: str
+) -> None:
     position = start
-    for r in await ctx.conn.fetch(INCLUDED_SQL, trip_id, MAX_INCLUDED):
+    for r in await ctx.conn.fetch(INCLUDED_SQL, trip_id, MAX_INCLUDED, currency.strip()):
         title = CONTROL.sub(" ", r["title"] or "").strip()[:MAX_DESCRIPTION]
         if not title:
             continue
         source = "aa_line" if r["supplier_kind"] == "aa" else "agency_line"
+        # AA-1147 (T18): an agency service shows its price (visa, insurance; a flight or fee not folded in)
+        price = r.get("sell") if source == "agency_line" and not r.get("bundled") else None
         await ctx.conn.execute(INSERT_LINE_SQL, invoice_id, trip_id, position, "included", source, title, None, None,
-                               None)  # fmt: skip
+                               price)  # fmt: skip
         position += 1
 
 
@@ -684,7 +693,7 @@ async def create_from_schedule(ctx: TenantContext, trip_id: uuid.UUID, schedule_
         "amount": amount,
     }
     after = await _insert_lines(ctx, invoice_id, trip_id, [charge], source="schedule")
-    await _insert_included(ctx, invoice_id, trip_id, after)
+    await _insert_included(ctx, invoice_id, trip_id, after, row["currency"])
     await _write_totals(ctx, invoice_id, rate, True)
     ctx.audit("invoice_create", "allowed", "invoice", str(invoice_id), reason=row["kind"])
     await stages.touch(ctx, trip_id)
@@ -721,7 +730,7 @@ async def create_typed(
     source = "service_fee" if kind == "service_fee" else "manual"
     after = await _insert_lines(ctx, invoice_id, trip_id, charges, source=source)
     if include_trip_lines:
-        await _insert_included(ctx, invoice_id, trip_id, after)
+        await _insert_included(ctx, invoice_id, trip_id, after, currency)
     await _write_totals(ctx, invoice_id, rate, inclusive)
     ctx.audit("invoice_create", "allowed", "invoice", str(invoice_id), reason=kind)
     await stages.touch(ctx, trip_id)
@@ -785,7 +794,7 @@ async def update_draft(ctx: TenantContext, invoice_id: uuid.UUID, changes: dict[
             source = "service_fee" if row["kind"] == "service_fee" else "manual"
             after = await _insert_lines(ctx, invoice_id, row["trip_id"], charges, source=source)
             if had_included:
-                await _insert_included(ctx, invoice_id, row["trip_id"], after)
+                await _insert_included(ctx, invoice_id, row["trip_id"], after, row["currency"])
         await _write_totals(ctx, invoice_id, rate, inclusive)
     except asyncpg.PostgresError as exc:
         raise _translate(exc) from None
@@ -891,6 +900,8 @@ async def document(ctx: TenantContext, vault: Vault, invoice_id: uuid.UUID) -> d
         pay_instructions=pay_by,
         payments=invoice["payments"],
         balance=invoice["balance_amount"] if invoice["payments"] else None,
+        # AA-1147: the sentence under "Services provided by <agency>" (setting crm.agency_lines.disclaimer)
+        disclaimer=await agency_extras.disclaimer(ctx.conn, ctx.tenant_id, "en"),
     )
     ctx.audit("view", "allowed", "invoice", str(invoice_id), fields=("document",))
     return {"invoice_id": str(invoice_id), "filename": f"{invoice['number'] or 'draft-invoice'}.html", "html": html}

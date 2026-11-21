@@ -169,6 +169,8 @@ class OptionIn(_Body):
     choose_later_allowed: bool = False
     # AA-1144: flight | visa | insurance | fee, on an Other block only (422 with the reason; app.ledger.agency_items)
     category: str | None = Field(default=None, max_length=40)
+    # AA-1147 (T18): fold a flight or the agency fee into the tour price (422 bundle_not_allowed for visa / insurance)
+    bundled: bool = False
 
 
 class CatalogueOptionIn(_Body):
@@ -204,6 +206,8 @@ class OptionChange(_Body):
     use_suggested: bool | None = None
     # AA-1144 (D9): one line shown under the item (null or "" clears it); an AA item's title is read only
     display_note: str | None = Field(default=None, max_length=1000)
+    # AA-1147 (T18): fold a flight or the agency fee into the tour price (422 bundle_not_allowed otherwise)
+    bundled: bool | None = None
 
 
 class PriceRowIn(_Body):

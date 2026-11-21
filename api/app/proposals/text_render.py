@@ -5,7 +5,8 @@ with the version's price reference (the first 12 hex digits of its ``price_hash`
 a text came from and the send path can refuse a text whose hash is not the version's (card R).
 
 What a client text never carries: a net price, a margin, a per-line price (D1: only the difference of an alternative
-against the included option, and only for ``total_with_deltas``), a traveller's name other than the greeting the
+against the included option, and only for ``total_with_deltas``; AA-1147, decision T18: the agency's own services
+group shows each of its items' price, unless folded into the tour price), a traveller's name other than the greeting the
 agent's template asks for, visa advice (only the official links, :func:`app.proposals.prep_packs.sections`).
 
 Merge fields of a template (R9; the names of the CIS starter templates, AA-977): ``{{traveller_first_name}}``,
@@ -74,6 +75,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "link": "See the details, choose your options and accept here: {link}",
         "reference": "Proposal reference: {ref}",
         "fallback_name": "there",
+        "agency_services": "Services provided by {agency}",
+        "in_price": "included in the trip price",
     },
     "vi": {
         "subject": "Đề xuất chuyến đi của bạn: {trip} (phiên bản {version})",
@@ -106,6 +109,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "link": "Xem chi tiết, chọn dịch vụ và chấp nhận tại đây: {link}",
         "reference": "Mã tham chiếu đề xuất: {ref}",
         "fallback_name": "bạn",
+        "agency_services": "Dịch vụ do {agency} cung cấp",
+        "in_price": "đã gồm trong giá chuyến đi",
     },
 }
 _MONTHS_EN = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
@@ -164,6 +169,15 @@ class TourLists:
 
 
 @dataclass(frozen=True)
+class AgencyService:
+    """AA-1147 (T18): one of the agency's own services (flight, visa, insurance, fee) and its price (None = folded
+    into the tour price)."""
+
+    title: str
+    amount: Decimal | None = None
+
+
+@dataclass(frozen=True)
 class Snapshot:
     """One proposal version as the client sees it (no net, no margin)."""
 
@@ -189,6 +203,9 @@ class Snapshot:
     included: tuple[str, ...] = ()
     not_included: tuple[str, ...] = ()
     aa_tours: tuple[TourLists, ...] = ()
+    # AA-1147: the group "Services provided by <agency>" and the disclaimer printed under it (crm.agency_lines.*).
+    agency_services: tuple[AgencyService, ...] = ()
+    agency_disclaimer: str = ""
 
 
 @dataclass(frozen=True)
@@ -349,6 +366,20 @@ def _inclusions(snap: Snapshot, fmt: str, s: dict[str, Any]) -> list[str]:
     return out
 
 
+def _agency_services(snap: Snapshot, fmt: str, locale: str, s: dict[str, Any]) -> list[str]:
+    """AA-1147 (T18): the agency's own services with their price (or "included in the trip price") and the
+    disclaimer. This group is the one place a client text shows a price per item: the agency sells these itself."""
+    if not snap.agency_services:
+        return []
+    out = ["", _bold(s["agency_services"].format(agency=snap.agency_name), fmt)]
+    for item in snap.agency_services:
+        price = money(item.amount, snap.currency, locale) if item.amount is not None else s["in_price"]
+        out.append(f"- {item.title}: {price}")
+    if snap.agency_disclaimer:
+        out.append(snap.agency_disclaimer)
+    return out
+
+
 def _price(snap: Snapshot, fmt: str, locale: str, s: dict[str, Any]) -> list[str]:
     out = [_bold(s["price"], fmt), f"{s['total']}: {money(snap.total, snap.currency, locale)}"]
     if snap.schedule:
@@ -391,6 +422,7 @@ def proposal_block(snap: Snapshot, fmt: str, locale: str, link_url: str | None =
             if d.notes:
                 out.append(d.notes.strip())
         out += _inclusions(snap, fmt, s)
+        out += _agency_services(snap, fmt, locale, s)
     elif snap.body.strip():
         out += ["", snap.body.strip()]
     out += ["", *_price(snap, fmt, locale, s)]

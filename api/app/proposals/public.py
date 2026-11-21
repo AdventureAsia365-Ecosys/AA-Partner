@@ -57,6 +57,7 @@ from app.errors import Conflict, Invalid, NotFound
 from app.esign import merge, signing
 from app.esign import terms as esign_terms
 from app.intake import stage1
+from app.ledger import agency_lines
 from app.payments import claims, gateway, schedule_plan
 from app.portal.public import check_origin
 from app.proposals import builder, client_page, events, holds, inclusions, prep_packs
@@ -621,6 +622,9 @@ async def accept(
         sealed = await vault.encrypt("proposal", "accepted_name_enc", row["proposal_id"], name)
         if builder_args:
             accepted_at = await ctx.conn.fetchval(ACCEPT_BUILDER_SQL, row["proposal_id"], sealed, *builder_args)
+            # AA-1147: the agency items the client chose become planning agency lines of the trip (crm-083)
+            await agency_lines.write_accepted(ctx, row["proposal_id"], s, state["choice"], state["later"],
+                                              row["starts_on"])  # fmt: skip
         else:
             accepted_at = await ctx.conn.fetchval(ACCEPT_SQL, row["proposal_id"], sealed)
         if row["terms_doc_id"] is not None:

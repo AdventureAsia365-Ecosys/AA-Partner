@@ -13,6 +13,7 @@
     "agency_create",
     "agency_delete",
     "agency_export",
+    "agency_lines_from_proposal",
     "agreement_draft",
     "ai_budget_alert",
     "ai_budget_follows_plan",

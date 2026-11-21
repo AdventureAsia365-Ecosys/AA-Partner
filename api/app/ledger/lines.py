@@ -40,7 +40,7 @@ from app import cancellation, stages
 from app.booking import views as aa_views
 from app.commissions import service as commissions
 from app.errors import Conflict, Forbidden, Invalid, NotFound
-from app.ledger import agency_items, fx, refusal
+from app.ledger import agency_extras, agency_items, fx, refusal
 from app.margin import sees_margin
 from app.tenancy import AnyContext, TenantContext
 
@@ -58,6 +58,7 @@ l.aa_sub_status, l.title, l.confirmation_no, l.service_from, l.service_to, l.col
 l.visible_to_travelers, l.confirmed_at, l.departure_id, l.created_at, l.updated_at, l.requested_at, l.request_ref,
 l.aa_tour_source_id, l.aa_component_kind, l.aa_currency, l.aa_pax, l.quote_valid_until, l.hold_expires_at,
 l.from_price, l.below_from_price, l.aa_decline_code, l.aa_result_code, l.bk_hold_id, l.bk_booking_id,
+l.option_id, l.due_at, l.bundled,
 (SELECT c.served_state FROM crm.aa_catalog_tour c
   WHERE c.source_system = 'cis' AND c.source_id = l.aa_tour_source_id) AS aa_catalog_state,
 (SELECT jsonb_build_object('aa_request_id', r.aa_request_id, 'kind', r.kind, 'attempts', r.attempts,
@@ -68,13 +69,13 @@ l.from_price, l.below_from_price, l.aa_decline_code, l.aa_result_code, l.bk_hold
 """
 LINES_SQL = f"""
 SELECT {_LINE_COLUMNS}
-  FROM crm.booking_line l JOIN crm.agency_supplier s ON s.agency_supplier_id = l.agency_supplier_id
+  FROM crm.booking_line l LEFT JOIN crm.agency_supplier s ON s.agency_supplier_id = l.agency_supplier_id
  WHERE l.trip_id = $1 AND l.deleted_at IS NULL
  ORDER BY l.service_from NULLS LAST, l.created_at, l.booking_line_id
 """  # noqa: S608 — fixed text
 LINE_SQL = f"""
 SELECT {_LINE_COLUMNS}
-  FROM crm.booking_line l JOIN crm.agency_supplier s ON s.agency_supplier_id = l.agency_supplier_id
+  FROM crm.booking_line l LEFT JOIN crm.agency_supplier s ON s.agency_supplier_id = l.agency_supplier_id
  WHERE l.booking_line_id = $1 AND l.deleted_at IS NULL
 """  # noqa: S608 — fixed text
 MONEY_SQL = """
@@ -101,12 +102,13 @@ SELECT c.agency_supplier_id, c.conversation_id,
 SUPPLIER_SQL = "SELECT kind, deleted_at FROM crm.agency_supplier WHERE agency_supplier_id = $1"
 INSERT_SQL = """
 INSERT INTO crm.booking_line (trip_id, agency_supplier_id, title, confirmation_no, service_from, service_to, collect,
-                              confirm_class, visible_to_travelers, category)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                              confirm_class, visible_to_travelers, category, due_at, bundled)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING booking_line_id
 """
 TRIP_OF_LINE_SQL = """
-SELECT trip_id, status, supplier_kind FROM crm.booking_line WHERE booking_line_id = $1 AND deleted_at IS NULL
+SELECT trip_id, status, supplier_kind, category, bundled FROM crm.booking_line
+ WHERE booking_line_id = $1 AND deleted_at IS NULL
 """
 CONFIRM_SQL = "SELECT crm.booking_line_confirm($1)"
 CHECK_SQL = "SELECT crm.booking_line_confirm_check($1)"
@@ -133,7 +135,7 @@ SELECT EXISTS (SELECT 1 FROM crm.booking_line
 LEDGER_SQL = f"""
 SELECT {_LINE_COLUMNS}, t.title AS trip_title, t.stage AS trip_stage
   FROM crm.booking_line l
-  JOIN crm.agency_supplier s ON s.agency_supplier_id = l.agency_supplier_id
+  LEFT JOIN crm.agency_supplier s ON s.agency_supplier_id = l.agency_supplier_id
   JOIN crm.trip t ON t.trip_id = l.trip_id AND t.deleted_at IS NULL
  WHERE l.deleted_at IS NULL AND ($1::text IS NULL OR l.status = $1)
    AND ($2::date IS NULL OR l.service_from >= $2) AND ($3::date IS NULL OR l.service_from <= $3)
@@ -190,6 +192,8 @@ EDITABLE = (
     "visible_to_travelers",
     "agency_supplier_id",
     "category",  # AA-1144: flight | visa | insurance | fee (app.ledger.agency_items)
+    "due_at",  # AA-1147 (crm-083): the line's deadline (ticketing time limit, visa file, insurance purchase)
+    "bundled",  # AA-1147 (T18): a flight or fee folded into the tour price on the client's documents
 )
 
 
@@ -254,6 +258,20 @@ def _uuid(value: Any, field: str) -> uuid.UUID:
         raise Invalid(f"invalid_{field}", "an id") from None
 
 
+def _due(value: Any) -> dt.datetime | None:
+    """AA-1147: a deadline (an ISO date-time with its offset, or a date = that day at 00:00 UTC); null clears it."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, dt.datetime):
+        parsed = value
+    else:
+        try:
+            parsed = dt.datetime.fromisoformat(str(value))
+        except ValueError:
+            raise Invalid("invalid_due_at", "a date-time, ISO 8601 with its offset") from None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=dt.UTC)
+
+
 def _visible(value: Any) -> bool:
     if not isinstance(value, bool):
         raise Invalid("invalid_visible_to_travelers", "true or false")
@@ -269,6 +287,7 @@ _SIMPLE: dict[str, Any] = {
     "confirm_class": lambda v: _choice(v, CONFIRM_CLASSES, "confirm_class", optional=True),
     "visible_to_travelers": _visible,
     "category": agency_items.category,
+    "due_at": _due,
 }
 
 
@@ -329,8 +348,13 @@ def _line_view(row: Any, money: dict[str, Any] | None, trip_stage: str | None = 
         "booking_line_id": str(row["booking_line_id"]),
         "trip_id": str(row["trip_id"]),
         "supplier_kind": row["supplier_kind"],
-        "agency_supplier_id": str(row["agency_supplier_id"]),
+        "agency_supplier_id": str(row["agency_supplier_id"]) if row["agency_supplier_id"] else None,
         "supplier_name": row["supplier_name"],
+        # AA-1147 (crm-083): an agency line without a supplier is handled by the agency itself
+        "handled_by_agency": row["supplier_kind"] == "agency" and row["agency_supplier_id"] is None,
+        "option_id": str(row["option_id"]) if row.get("option_id") else None,
+        "due_at": row["due_at"].isoformat() if row.get("due_at") else None,
+        "bundled": bool(row.get("bundled")),
         "status": row["status"],
         "aa_sub_status": row["aa_sub_status"],
         "title": row["title"],
@@ -401,7 +425,8 @@ async def _attach_threads(ctx: TenantContext, trip_id: uuid.UUID, views: list[di
         return
     threads = {r["agency_supplier_id"]: r for r in await ctx.conn.fetch(THREADS_SQL, trip_id)}
     for v in views:
-        t = threads.get(uuid.UUID(v["agency_supplier_id"])) if v["supplier_kind"] == "agency" else None
+        supplier = v["agency_supplier_id"]
+        t = threads.get(uuid.UUID(supplier)) if v["supplier_kind"] == "agency" and supplier else None
         if t is None:
             v["supplier_thread"] = None
             continue
@@ -482,13 +507,18 @@ async def create_line(ctx: TenantContext, trip_id: uuid.UUID, body: dict[str, An
     if await ctx.conn.fetchval(TRIP_SQL, trip_id) is None:
         raise NotFound("trip_not_found")
     await cancellation.ensure_not_cancelled(ctx, trip_id, "no new booking line")  # S262 round 3 (C12 §2.7)
-    supplier_id = _uuid(body.get("agency_supplier_id"), "agency_supplier_id")
-    await _own_supplier(ctx, supplier_id)
+    # AA-1147 (crm-083): no supplier = handled by the agency itself
+    raw_supplier = body.get("agency_supplier_id")
+    supplier_id = None if raw_supplier in (None, "") else _uuid(raw_supplier, "agency_supplier_id")
+    if supplier_id is not None:
+        await _own_supplier(ctx, supplier_id)
     start, end = _date(body.get("service_from"), "service_from"), _date(body.get("service_to"), "service_to")
     if start and end and end < start:
         raise Invalid("invalid_service_to", "on or after the start date")
     visible = _visible(body.get("visible_to_travelers", False))
     category = agency_items.category(body.get("category"))  # AA-1144: the closed list, required on a new line
+    bundled = agency_extras.bundled(body.get("bundled"), category)  # AA-1147 (T18): a flight or the fee only
+    due_at = _due(body.get("due_at"))
     try:
         async with ctx.conn.transaction():
             line_id = await ctx.conn.fetchval(
@@ -503,6 +533,8 @@ async def create_line(ctx: TenantContext, trip_id: uuid.UUID, body: dict[str, An
                 _choice(body.get("confirm_class"), CONFIRM_CLASSES, "confirm_class", optional=True),
                 visible,
                 category,
+                due_at,
+                bundled,
             )
     except asyncpg.PostgresError as exc:
         raise _db(exc) from None
@@ -526,6 +558,9 @@ async def update_line(ctx: TenantContext, line_id: uuid.UUID, changes: dict[str,
         raise NotFound("line_not_found")
     if current["supplier_kind"] == "aa":
         _aa_visibility_only(current["status"], changes)
+    if "category" in changes and "bundled" not in changes and current["bundled"]:
+        # AA-1147 (T18): a folded-in line keeps a type that may be folded in (unfold it first)
+        agency_extras.bundled(True, changes["category"])
     sets: list[str] = []
     args: list[Any] = [line_id]
     for field in EDITABLE:
@@ -542,9 +577,15 @@ async def update_line(ctx: TenantContext, line_id: uuid.UUID, changes: dict[str,
                     raise Conflict(
                         "line_incomplete", "a confirmed line keeps its confirmation number", missing=["confirmation_no"]
                     )
-        else:  # agency_supplier_id: a planning line moves to another own supplier
-            value = _uuid(value, field)
-            await _own_supplier(ctx, value)
+        elif field == "bundled":
+            category = changes["category"] if "category" in changes else current["category"]
+            value = agency_extras.bundled(value, category)
+        else:  # agency_supplier_id: a planning line moves to another own supplier, or to none (handled by the agency)
+            if value in (None, ""):
+                value = None
+            else:
+                value = _uuid(value, field)
+                await _own_supplier(ctx, value)
             if current["status"] != "planning":
                 raise Invalid("line_not_editable", _not_planning(current["status"], "its supplier does not change"))
         args.append(value)

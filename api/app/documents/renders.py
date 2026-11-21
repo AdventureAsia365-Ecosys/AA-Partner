@@ -55,6 +55,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "refunded": "Refunded",
         "balance": "Balance",
         "covers": "This invoice covers",
+        "agency_services": "Services provided by {agency}",
+        "agency_services_none": "Services provided by the agency",
+        "in_price": "Included in the trip price",
         "draft": "DRAFT: not issued",
         "void": "VOID",
         "voucher_no": "Voucher no.",
@@ -118,6 +121,9 @@ STRINGS: dict[str, dict[str, str]] = {
         "refunded": "Đã hoàn",
         "balance": "Còn lại",
         "covers": "Hoá đơn này gồm",
+        "agency_services": "Dịch vụ do {agency} cung cấp",
+        "agency_services_none": "Dịch vụ do đại lý cung cấp",
+        "in_price": "Đã gồm trong giá chuyến đi",
         "draft": "BẢN NHÁP: chưa phát hành",
         "void": "ĐÃ HUỶ",
         "voucher_no": "Số phiếu",
@@ -233,9 +239,16 @@ def confirmation(view: dict[str, Any], locale: str) -> bytes:
     return doc.render()
 
 
+def agency_services_title(agency: str | None, locale: str) -> str:
+    """AA-1147: the heading of the agency's own services group (flight, visa, insurance, fee)."""
+    s = _s(locale)
+    return s["agency_services"].format(agency=agency) if agency else s["agency_services_none"]
+
+
 def invoice(view: dict[str, Any], locale: str, *, agency: str | None, bill_to: str | None,
-            pay_instructions: list[dict[str, str]]) -> bytes:  # fmt: skip
-    """``view``: :func:`app.invoices.service.invoice_view` with its lines and payments."""
+            pay_instructions: list[dict[str, str]], disclaimer: str | None = None) -> bytes:  # fmt: skip
+    """``view``: :func:`app.invoices.service.invoice_view` with its lines and payments. AA-1147: the agency's own
+    services (included rows of source ``agency_line``) stand in their own group with their price and ``disclaimer``."""
     s = _s(locale)
     cur = view["currency"]
     doc = _doc(s["invoice"], agency)
@@ -250,7 +263,8 @@ def invoice(view: dict[str, Any], locale: str, *, agency: str | None, bill_to: s
         (s["bill_to"], bill_to),
     ])  # fmt: skip
     charges = [ln for ln in view.get("lines") or [] if ln["kind"] == "charge"]
-    included = [ln for ln in view.get("lines") or [] if ln["kind"] == "included"]
+    included = [ln for ln in view.get("lines") or [] if ln["kind"] == "included" and ln.get("source") != "agency_line"]
+    own = [ln for ln in view.get("lines") or [] if ln["kind"] == "included" and ln.get("source") == "agency_line"]
     doc.table(
         [s["description"], s["qty"], s["unit"], s["amount"]],
         [
@@ -282,6 +296,17 @@ def invoice(view: dict[str, Any], locale: str, *, agency: str | None, bill_to: s
         doc.text(s["covers"], bold=True)
         for ln in included:
             doc.text(f"• {ln['description']}", indent=8, gap=1)
+    if own:
+        doc.text(agency_services_title(agency, locale), bold=True)
+        doc.table(
+            ["", ""],
+            [[ln["description"], amount(ln.get("amount"), cur) if ln.get("amount") else s["in_price"]] for ln in own],
+            widths=[0.7, 0.3],
+            right=(1,),
+            show_header=False,
+        )
+        if disclaimer:
+            doc.small(disclaimer)
     if view.get("memo"):
         doc.space()
         doc.text(view["memo"])

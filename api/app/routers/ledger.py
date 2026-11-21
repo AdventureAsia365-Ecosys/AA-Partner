@@ -121,7 +121,8 @@ class RevealIn(_Body):
 
 
 class LineIn(_Body):
-    agency_supplier_id: uuid.UUID
+    # AA-1147 (crm-083): none = handled by the agency itself ("Handled by the agency")
+    agency_supplier_id: uuid.UUID | None = None
     title: str = Field(min_length=1, max_length=200)
     confirmation_no: str | None = Field(default=None, max_length=80)
     service_from: dt.date | None = None
@@ -131,6 +132,10 @@ class LineIn(_Body):
     visible_to_travelers: bool = False
     # AA-1144: flight | visa | insurance | fee (else 422 invalid_category with the reason; app.ledger.agency_items)
     category: str | None = Field(default=None, max_length=40)
+    # AA-1147 (crm-083): the deadline (ticketing time limit, visa file, insurance purchase) and, for a flight or the
+    # fee only, "folded into the tour price" (422 bundle_not_allowed otherwise)
+    due_at: dt.datetime | None = None
+    bundled: bool = False
 
 
 class LineChange(_Body):
@@ -143,6 +148,8 @@ class LineChange(_Body):
     confirm_class: Literal["confirmed", "aa_on_request", "agency_booking"] | None = None
     visible_to_travelers: bool | None = None
     category: str | None = Field(default=None, max_length=40)
+    due_at: dt.datetime | None = None  # AA-1147: null clears the deadline
+    bundled: bool | None = None  # AA-1147 (T18): a flight or the fee only
 
 
 class ExtraNightsIn(_Body):
