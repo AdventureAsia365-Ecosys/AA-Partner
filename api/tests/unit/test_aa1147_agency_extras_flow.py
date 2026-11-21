@@ -21,6 +21,7 @@ from app.documents import renders
 from app.errors import Invalid
 from app.invoices import render
 from app.ledger import agency_due, agency_lines, lines
+from app.proposals import option_fields
 from app.proposals import text_render as tr
 from tests.unit.fakes import ScriptedConn
 from tests.unit.slice_fakes import TENANT, system_ctx
@@ -248,3 +249,32 @@ def test_the_deadline_field() -> None:
     with pytest.raises(Invalid) as err:
         lines._due("next week")
     assert err.value.code == "invalid_due_at"
+
+
+# ── the builder's "fold into the tour price" ─────────────────────────────────────────────────────────────────────
+def test_an_edit_keeps_or_sets_the_fold_by_the_rules() -> None:
+    fee = {"source": "agency", "category": "fee", "bundled": False}
+    assert option_fields.bundled_after({}, {**fee, "bundled": True}) is True  # not sent: kept
+    assert option_fields.bundled_after({"bundled": None}, fee) is False
+    assert option_fields.bundled_after({"bundled": True}, fee) is True
+    for item in ({"source": "agency", "category": "visa"}, {"source": "aa", "category": None}):
+        with pytest.raises(Invalid) as err:
+            option_fields.bundled_after({"bundled": True}, item)
+        assert err.value.code == "bundle_not_allowed"
+
+
+@pytest.mark.asyncio
+async def test_a_new_item_is_folded_in_only_when_asked() -> None:
+    conn = ScriptedConn()
+    ctx = system_ctx(conn)
+    await option_fields.set_bundled(ctx, O_FLIGHT, None, "flight")  # type: ignore[arg-type]
+    await option_fields.set_bundled(ctx, O_FLIGHT, True, "flight")  # type: ignore[arg-type]
+    assert conn.sql("SET bundled") == [(O_FLIGHT, True)]
+    await option_fields.copy_note(ctx, O_VISA, {"display_note": None, "bundled": True})  # type: ignore[arg-type]
+    assert conn.sql("SET bundled")[-1] == (O_VISA, True)
+
+
+def test_the_pdf_splits_the_agency_services_from_what_the_charge_covers() -> None:
+    covers, own = renders.split_included(INVOICE["lines"])  # type: ignore[arg-type]
+    assert [ln["description"] for ln in covers] == ["Lantern bay cruise"]
+    assert [ln["description"] for ln in own] == ["Return flight", "E-visa"]
