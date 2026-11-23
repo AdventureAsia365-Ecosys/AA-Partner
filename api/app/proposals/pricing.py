@@ -388,6 +388,18 @@ def party_counts(
     return {"adult": max(1, int(adults)) + older, "child": children, "infant": infants, "single_supp": singles}
 
 
+def row_counts(row: Mapping[str, Any], bands: Settings) -> dict[str, int]:
+    """:func:`party_counts` of a proposal row (its rooms JSON, adults and child ages)."""
+    rooms = json.loads(row["room_config"]) if isinstance(row["room_config"], str) else row["room_config"]
+    return party_counts(rooms, int(row["party_adults"]), row["party_child_ages"] or [], bands)
+
+
+def payers(counts: Mapping[str, int]) -> int:
+    """AA-1152: the travellers who pay a share of the per-traveller grid (:func:`grid`: infants start at 0), the head
+    count a suggestion is rounded on (:func:`app.proposals.rounding.for_party`)."""
+    return counts.get("adult", 0) + counts.get("child", 0)
+
+
 def grid(total: Decimal, counts: Mapping[str, int]) -> list[dict[str, Any]]:
     """Starting rows for a total: the adults and children share it per head (rounded up), infants and the single
     supplement start at 0. Types with nobody are left out."""

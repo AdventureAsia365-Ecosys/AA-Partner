@@ -515,26 +515,28 @@ async def test_refresh_keeps_an_add_on_s_rrp_and_follows_aa_s_new_one() -> None:
     gone = _refresh_plan(component_id=SV2)
     client = FakeBooking(_page(_addon_json(rrp_per_person={"amount": "48.00", "currency": "USD"})))
     out = await aa_addons.refresh_rrp(client, TENANT, [(addon, _answer()), (tour, _answer()), (gone, _answer())])  # type: ignore[arg-type]
-    assert [a.from_price for _, a in out] == [D("48.00"), None, None]
+    # AA's new RRP; a tour is left to price parity; an add-on Booking no longer lists keeps its stored RRP.
+    assert [a.from_price for _, a in out] == [D("48.00"), None, D("45.00")]
     assert len(client.asked) == 1  # one add-on list per day and party
     down = FakeBooking(contract.ContractError("bad"))
     kept = await aa_addons.refresh_rrp(down, TENANT, [(addon, _answer())])  # type: ignore[arg-type]
-    assert kept[0][1].from_price is None  # Booking failed: the stored RRP is kept by apply_refresh (below)
+    assert kept[0][1].from_price == D("45.00")  # Booking failed: the stored RRP stays
+    sold_out = await aa_addons.refresh_rrp(client, TENANT, [(addon, _answer(quote_id=None))])  # type: ignore[arg-type]
+    assert sold_out[0][1].from_price is None  # a sold-out answer is not priced (apply_refresh only marks it)
 
 
 @pytest.mark.asyncio
-async def test_apply_refresh_keeps_the_stored_rrp_of_an_add_on() -> None:
+async def test_apply_refresh_writes_the_add_on_rrp_and_the_plan_carries_it() -> None:
     from app.proposals import builder
     from tests.unit.slice_fakes import FakeVault
     from tests.unit.test_builder_service import P, _conn
 
-    addon, tour = _refresh_plan(), _refresh_plan(component_kind="trip_plan", component_id="tp:1", from_price="200.00")
     conn = _conn()
     await builder.apply_refresh(tenant_ctx(conn, role="agent"), FakeVault(), P, 5,  # type: ignore[arg-type]
-                                [(addon, _answer()), (tour, _answer())])  # fmt: skip
-    rows = conn.sql("UPDATE crm.option SET net_amount = $2, availability = $3")
-    assert rows[0][5] == D("45.00")  # the add-on keeps its RRP (Booking gave none again)
-    assert rows[1][5] is None  # a tour's "from" price comes from price parity only (none answered here)
+                                [(_refresh_plan(), _answer(D("45.00")))])  # fmt: skip
+    assert conn.sql("UPDATE crm.option SET net_amount = $2, availability = $3")[0][5] == D("45.00")
+    plans = await builder.aa_refresh_plan(tenant_ctx(_conn(), role="agent"), P, 5)  # type: ignore[arg-type]
+    assert [p["from_price"] for p in plans] == ["200.00"]  # the stored "from" price goes with the plan
 
 
 @pytest.mark.asyncio

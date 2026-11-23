@@ -73,7 +73,7 @@ async def day_of(ctx: TenantContext, proposal_id: uuid.UUID, block_id: uuid.UUID
         "currency": row["currency"],
         "place": day.get("place"),
         "tour_source_id": await ctx.conn.fetchval(TOUR_SQL, proposal_id, block_id),
-        "rctx": await builder._retail_ctx(ctx, {"options": [{"source": "aa"}]}, row["currency"]),  # noqa: SLF001
+        "rctx": await builder._retail_ctx(ctx, {"options": [{"source": "aa"}]}, row),  # noqa: SLF001
         "sees_margin": sees_margin(ctx.member_role),
     }
 
@@ -169,8 +169,9 @@ async def refresh_rrp(
     client: BookingClient, tenant_id: uuid.UUID, answers: list[tuple[dict[str, Any], aa_options.AaQuote]]
 ) -> list[tuple[dict[str, Any], aa_options.AaQuote]]:
     """The refresh answers with AA's current RRP on each add-on option (an AA item other than a tour that carries a
-    "from" price: only add-ons do). One add-on list per day and party; the RRP is a suggestion only, so a list Booking
-    refuses or cannot give keeps the stored RRP (never fails the refresh)."""
+    "from" price: only add-ons do; :func:`app.proposals.aa_options.quote` gives a tour's only). One add-on list per day
+    and party; the RRP is a suggestion only, so an add-on Booking no longer lists, or a list it refuses or cannot give,
+    keeps the stored RRP (never fails the refresh, never drops the suggestion's fallback)."""
     lists: dict[tuple[str, int], dict[str, booking_addons.Addon] | None] = {}
     out = []
     for the_plan, answer in answers:
@@ -186,7 +187,7 @@ async def refresh_rrp(
                 lists[key] = None
         found = (lists[key] or {}).get(the_plan["component_id"])
         rrp = found.rrp_per_person if found is not None else None
-        out.append((the_plan, dataclasses.replace(answer, from_price=rrp) if rrp is not None else answer))
+        out.append((the_plan, dataclasses.replace(answer, from_price=rrp or Decimal(the_plan["from_price"]))))
     return out
 
 

@@ -106,6 +106,12 @@ def suggested_total(total: Decimal, party: int, step: Decimal | None) -> Decimal
     return (per_person(total, party, step or ONE) * max(party, 1)).quantize(CENT)
 
 
+def for_party(total: Decimal, party: int, rctx: dict[str, Any]) -> Decimal:
+    """:func:`suggested_total` with the builder's pricing context: rounded per paying traveller (``rctx["payers"]``,
+    adults and children; an infant starts at 0 in the per-traveller grid), else per traveller of ``party``."""
+    return suggested_total(total, rctx.get("payers") or party, rctx.get("round_step"))
+
+
 HUNDRED = Decimal("100")
 
 
