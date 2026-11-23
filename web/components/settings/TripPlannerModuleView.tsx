@@ -111,8 +111,13 @@ function SaveButton({ show, busy, lang, onClick, testId, label = "tp.save" }: {
   );
 }
 
-function CrmNote({ crm, lang }: { crm: boolean; lang: Lang }) {
+/** AA-1160: with the CRM add-on, leads go to the CRM only once the CRM holds the agency (CIS ``effective_channel``,
+ * tenant.addons.v1 1.2); until then the route below applies, and the note says so. */
+function CrmNote({ crm, effective, lang }: { crm: boolean; effective: string; lang: Lang }) {
   if (!crm) return null;
+  if (effective !== "crm") {
+    return <p style={{ ...small, color: K.ink }} data-testid="tp-route-no-agency">{t(lang, "tp.route.noAgency")}</p>;
+  }
   return (
     <>
       <p style={{ ...small, color: K.ink }}>{t(lang, "tp.route.crm")}</p>
@@ -194,7 +199,7 @@ function RouteSection({ site, owner, lang, onSaved }: { site: TripPlannerModule;
   return (
     <Section title={t(lang, "tp.route.title")} description={t(lang, "tp.route.about")} actions={routeNow(route, lang)}>
       <div style={{ display: "grid", gap: 12 }} data-testid="tp-route">
-        <CrmNote crm={site.crm_core} lang={lang} />
+        <CrmNote crm={site.crm_core} effective={route.effective_channel} lang={lang} />
         <Field label={t(lang, "tp.route.channel")} as="div">
           <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
             {(["email", "webhook", "none"] as const).map((c) => (
