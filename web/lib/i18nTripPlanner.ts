@@ -28,6 +28,8 @@ export const tripPlannerEn = {
   "tp.route.about": "When a traveller sends a trip from your planner, the lead goes here.",
   "tp.route.crm": "Leads go to your CRM (Inbox). This is automatic while your agency has the CRM.",
   "tp.route.fallback": "Without the CRM, leads would go to:",
+  // AA-1160: the CRM add-on is on, but the agency's CRM is not taking leads (not set up yet, or no longer active).
+  "tp.route.noAgency": "Your CRM is not taking planner leads right now (not set up yet, or no longer active), so leads go to the route below.",
   "tp.route.now": "Now: {channel}",
   "tp.channel.crm": "CRM",
   "tp.channel.email": "E-mail",
@@ -137,6 +139,7 @@ export const tripPlannerVi: Record<keyof typeof tripPlannerEn, string> = {
   "tp.route.about": "Khi khách gửi chuyến đi từ planner của bạn, thông tin sẽ được gửi đến đây.",
   "tp.route.crm": "Khách tiềm năng vào CRM (Hộp thư đến). Việc này tự động khi đại lý có CRM.",
   "tp.route.fallback": "Nếu không có CRM, khách tiềm năng sẽ được gửi đến:",
+  "tp.route.noAgency": "CRM của bạn hiện không nhận khách tiềm năng từ planner (chưa thiết lập, hoặc không còn hoạt động), nên khách tiềm năng đi theo đường dưới đây.",
   "tp.route.now": "Hiện tại: {channel}",
   "tp.channel.crm": "CRM",
   "tp.channel.email": "E-mail",

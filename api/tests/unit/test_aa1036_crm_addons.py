@@ -29,8 +29,8 @@ from tests.unit.test_tenancy import FakeDatabase
 DOCS = Path(__file__).resolve().parents[3] / "docs" / "contracts"
 SPEC = DOCS / "tenant.addons.v1.openapi.yaml"
 SAMPLES = DOCS / "samples" / "tenant.addons.v1"
-# sha256 of the root file docs/contracts/tenant.addons.v1.openapi.yaml (1.1, AA-1036 R3 + AA-1139).
-ROOT_CONTRACT_SHA256 = "b84ab4e2ad2829c877447dd3aacc0b2ba11ebdcbd7375d380fbd5d4718b13532"
+# sha256 of the root file docs/contracts/tenant.addons.v1.openapi.yaml (1.2, AA-1036 R3 + AA-1139 + AA-1160).
+ROOT_CONTRACT_SHA256 = "c88b057f843bd0c2e42b9e36fc49daf68cc1311fe5219bafe62f2dacbe3fde31"
 
 TENANT = uuid.UUID("00000000-0000-4000-8000-0000000010a1")
 MEMBER = uuid.UUID("00000000-0000-4000-8000-0000000010b1")
