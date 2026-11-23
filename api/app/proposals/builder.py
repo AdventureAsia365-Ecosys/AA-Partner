@@ -496,7 +496,8 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
             "prices": pricing.rows_out(s["prices"].get(str(o["option_id"]), []), sees_margin=margin),
             "price_rules": pricing.parse_applied(o.get("price_rules")),
         }
-        suggestion = _suggestion(o, party=party, rctx=rctx, service_date=dates.get(str(o["option_id"])))
+        suggestion = _suggestion(o, party=party, rctx=rctx, service_date=dates.get(str(o["option_id"])),
+                                 payers=counts["adult"] + counts["child"])  # fmt: skip
         shown = suggestion is not None and (suggestion[1] != retail.BASIS_MARKUP or margin)
         grid_total = suggestion[0] if shown and suggestion is not None else Decimal(o["sell_amount"])
         item["suggested_prices"] = pricing.rows_out(pricing.grid(grid_total, counts), sees_margin=False)
@@ -684,11 +685,21 @@ async def _retail_ctx(ctx: AnyContext, s: dict[str, Any], currency: str) -> dict
     }
 
 
+def _payers(row: Any, bands: pricing.Settings) -> int:
+    """AA-1152: the travellers who pay a share of a party price (adults and children by the agency's bands; infants
+    start at 0 in the per-traveller grid, :func:`app.proposals.pricing.grid`)."""
+    counts = pricing.party_counts(_jsonb(row["room_config"]), int(row["party_adults"]), row["party_child_ages"] or [],
+                                  bands)  # fmt: skip
+    return counts["adult"] + counts["child"]
+
+
 def _suggestion(
-    o: Any, *, party: int, rctx: dict[str, Any], service_date: dt.date | None
+    o: Any, *, party: int, rctx: dict[str, Any], service_date: dt.date | None, payers: int | None = None
 ) -> tuple[Decimal, str, list[dict[str, str]]] | None:
     """``(sell, basis, rules used)`` of an AA option: the AA-1030 suggestion (agency markup, else AA's RRP), then the
-    agency's price rules (AA-1066); None for an agency item or when AA-1030 has nothing to suggest."""
+    agency's price rules (AA-1066); None for an agency item or when AA-1030 has nothing to suggest. AA-1152: rounded
+    up per paying traveller (``payers``, the per-traveller grid's head count; else the party) then times them, so the
+    grid's price per traveller is on the agency's step too."""
     if o["source"] != "aa":
         return None
     base = retail.suggest(
@@ -702,7 +713,8 @@ def _suggestion(
         return None
     pct, used = pricing.adjustment(rctx["rules"], kind=o["aa_component_kind"], tour_source_id=o["aa_tour_source_id"],
                                    service_date=service_date, pax=party, today=rctx["today"])  # fmt: skip
-    return rounding.suggested_total(pricing.adjusted(base[0], pct), party, rctx.get("round_step")), base[1], used
+    total = rounding.suggested_total(pricing.adjusted(base[0], pct), payers or party, rctx.get("round_step"))
+    return total, base[1], used
 
 
 def _option_dates(row: Any, s: dict[str, Any]) -> dict[str, dt.date | None]:
@@ -1461,7 +1473,8 @@ async def update_option(
     if changes.get("use_suggested"):
         # AA-1066: the suggestion (AA-1030 markup or RRP, then the agency's price rules), with the rules used kept.
         suggested = _suggestion(o, party=_party(row), rctx=await _retail_ctx(ctx, s, row["currency"]),
-                                service_date=_option_dates(row, s).get(str(option_id)))  # fmt: skip
+                                service_date=_option_dates(row, s).get(str(option_id)),
+                                payers=_payers(row, await pricing.settings(ctx)))  # fmt: skip
         if suggested is None:
             raise Conflict("no_suggestion", "AA suggests no price for this item; type the sell")
         changes = {**changes, "sell_amount": suggested[0]}
@@ -1511,12 +1524,12 @@ async def set_option_prices(
         return await _done(ctx, vault, proposal_id, "option_prices")
     applied: list[dict[str, str]] | None = None
     if use_suggested:
-        party = _party(row)
-        suggested = _suggestion(o, party=party, rctx=await _retail_ctx(ctx, s, row["currency"]),
-                                service_date=_option_dates(row, s).get(str(option_id)))  # fmt: skip
-        total = suggested[0] if suggested is not None else Decimal(o["sell_amount"])
         counts = pricing.party_counts(_jsonb(row["room_config"]), int(row["party_adults"]),
                                       row["party_child_ages"] or [], await pricing.settings(ctx))  # fmt: skip
+        suggested = _suggestion(o, party=_party(row), rctx=await _retail_ctx(ctx, s, row["currency"]),
+                                service_date=_option_dates(row, s).get(str(option_id)),
+                                payers=counts["adult"] + counts["child"])  # fmt: skip
+        total = suggested[0] if suggested is not None else Decimal(o["sell_amount"])
         prices = pricing.grid(total, counts)
         applied = suggested[2] if suggested is not None else None
     clean = pricing.check_rows(prices, aa=aa)
@@ -1620,7 +1633,8 @@ async def add_aa_option(
         }  # fmt: skip
         rctx = await _retail_ctx(ctx, {"options": [new]}, plan["currency"])  # AA-1152: rounded like every suggestion
         date = dt.date.fromisoformat(plan["service_date"]) if plan.get("service_date") else None
-        suggested = _suggestion(new, party=plan["party"], rctx=rctx, service_date=date)
+        suggested = _suggestion(new, party=plan["party"], rctx=rctx, service_date=date,
+                                payers=_payers(row, await pricing.settings(ctx)))  # fmt: skip
         if suggested is not None:
             sell, applied = suggested[0], suggested[2]
     below = None
@@ -1665,6 +1679,9 @@ async def aa_refresh_plan(ctx: TenantContext, proposal_id: uuid.UUID, seq: int) 
             "departure_id": o["aa_departure_id"], "nights": o["aa_nights"],
             "service_date": date.isoformat() if date else None, "pax": pax, "party": _party(row),
             "sell": str(o["sell_amount"]), "seq": seq,
+            # AA-1152: an add-on's RRP (its "from" price) is kept when Booking gives none again (only a tour's
+            # comes from price parity).
+            "from_price": _amount(o["aa_from_price"]),
         })  # fmt: skip
     return out
 
@@ -1680,13 +1697,16 @@ async def apply_refresh(
             await ctx.conn.execute(SOLD_OUT_SQL, uuid.UUID(plan["option_id"]))
             continue
         sell = Decimal(plan["sell"])
+        from_price = quote.from_price
+        if from_price is None and plan["component_kind"] != "trip_plan" and plan.get("from_price") is not None:
+            from_price = Decimal(plan["from_price"])  # AA-1152: an add-on keeps its RRP (the suggestion's fallback)
         below = None
-        if quote.from_price is not None and plan["component_kind"] == "trip_plan" and plan["party"] >= 1 and sell > 0:
-            below = sell / plan["party"] < quote.from_price
+        if from_price is not None and plan["component_kind"] == "trip_plan" and plan["party"] >= 1 and sell > 0:
+            below = sell / plan["party"] < from_price
         await ctx.conn.execute(
             QUOTE_UPDATE_SQL, uuid.UUID(plan["option_id"]), rules.money(quote.b2b_price),
             AVAILABILITY_FROM_QUOTE[quote.availability], quote.quote_id, quote.valid_until,
-            rules.money(quote.from_price) if quote.from_price is not None else None, below,
+            rules.money(from_price) if from_price is not None else None, below,
         )  # fmt: skip
     return await _done(ctx, vault, proposal_id, "aa_refresh")
 

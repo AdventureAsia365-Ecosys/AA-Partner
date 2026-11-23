@@ -404,3 +404,159 @@ def test_ticked_add_ons_reach_the_agent_with_their_code() -> None:
 
 def test_planner_refusal_type_is_shared() -> None:
     assert planner.PlannerRefused(404, "unknown_tenant").code == "unknown_tenant"
+
+
+# ── Review fixes: hidden lists, the add-on RRP on refresh, rounding per paying traveller ─────────────────────────────
+
+
+def _publish_fakes(monkeypatch: pytest.MonkeyPatch, *, routed: bool) -> None:
+    from contextlib import asynccontextmanager
+
+    class Ctx:
+        conn = ScriptedConn()
+
+    @asynccontextmanager
+    async def tx(*_: Any, **__: Any) -> Any:
+        yield Ctx()
+
+    async def is_routed(ctx: Any) -> bool:
+        return routed
+
+    async def settings(ctx: Any) -> rounding.PriceSettings:
+        return rounding.PriceSettings({}, True, "VND")
+
+    async def markups(ctx: Any) -> dict[str, D]:
+        return {}
+
+    monkeypatch.setattr(prices, "system_tx", tx)
+    monkeypatch.setattr(prices.leads, "routed_here", is_routed)
+    monkeypatch.setattr(prices.rounding, "settings", settings)
+    monkeypatch.setattr(prices.retail, "markups", markups)
+
+
+class RefusingBooking(FakeBooking):
+    def __init__(self, code: str) -> None:
+        super().__init__(_page())
+        self.code = code
+
+    async def tariff(self, tenant_id: uuid.UUID, *, currency: str, source_id: str | None = None) -> dict[str, Any]:
+        from app.booking.client import BookingRefusal
+
+        raise BookingRefusal(403, self.code)
+
+
+@pytest.mark.asyncio
+async def test_an_agency_no_longer_served_gets_a_hidden_list_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    now = dt.datetime(2027, 2, 1, tzinfo=dt.UTC)
+    hidden_body = {"show_prices": False, "currency": "VND", "computed_at": now.isoformat(), "tours": [], "addons": []}
+    _publish_fakes(monkeypatch, routed=False)
+    tp, hidden = FakeTripPlanner(), set()
+    booking = FakeBooking(_page())
+    assert await prices.publish_agency(object(), booking, tp, TENANT, now, hidden) == "hidden_not_routed"  # type: ignore[arg-type]
+    assert [b for _, _, b in tp.sent] == [hidden_body] and hidden == {TENANT}
+    assert await prices.publish_agency(object(), booking, tp, TENANT, now, hidden) == "skipped_hidden"  # type: ignore[arg-type]
+    assert len(tp.sent) == 1  # the hourly sweep does not call TripPlanner again
+    # No planner at TripPlanner (unknown_tenant): nothing to hide, marked so the sweep stops asking.
+    nobody, none_hidden = FakeTripPlanner(404), set()
+    assert await prices.publish_agency(object(), booking, nobody, TENANT, now, none_hidden) == "skipped_no_planner"  # type: ignore[arg-type]
+    assert none_hidden == {TENANT}
+    # AA stopped selling to the agency: Booking refuses, the list is hidden; another refusal is an error.
+    _publish_fakes(monkeypatch, routed=True)
+    tp2, hidden2 = FakeTripPlanner(), set()
+    out = await prices.publish_agency(object(), RefusingBooking("unknown_partner"), tp2, TENANT, now, hidden2)  # type: ignore[arg-type]
+    assert out == "hidden_not_partner" and [b for _, _, b in tp2.sent] == [hidden_body]
+    from app.booking.client import BookingRefusal
+
+    with pytest.raises(BookingRefusal):
+        await prices.publish_agency(object(), RefusingBooking("invalid"), FakeTripPlanner(), TENANT, now, set())  # type: ignore[arg-type]
+    # Routed and priced again: published, and the mark is cleared so a later stop hides it again.
+    tariff = {"currency": "VND", "priced_on": "2027-02-01", "basis": "x", "tier_code": "T1", "fx": {}, "items": [],
+              "truncated": False}  # fmt: skip
+    monkeypatch.setattr(prices.contract, "tariff", lambda data, currency: contract.Tariff(
+        "VND", DAY, "x", "T1", D("1"), DAY, False, ()))  # fmt: skip
+    again = await prices.publish_agency(object(), FakeBooking(_page(currency="VND"), tariff), tp2, TENANT, now, hidden2)  # type: ignore[arg-type]
+    assert again == "published" and TENANT not in hidden2
+
+
+@pytest.mark.asyncio
+async def test_a_locked_or_deleted_crm_agency_is_hidden_by_the_sweep(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.errors import Forbidden
+
+    async def gone(*_: Any, **__: Any) -> str:
+        raise Forbidden("agency_locked")
+
+    monkeypatch.setattr(prices, "publish_agency", gone)
+    tp = FakeTripPlanner()
+    now = dt.datetime(2027, 2, 1, tzinfo=dt.UTC)
+    handler = prices.PricePublish(tp, FakeBooking(_page()), now=lambda: now)  # type: ignore[arg-type]
+    job = Job("j1", prices.TP_PRICE_PUBLISH, {"tenant_id": str(TENANT)}, 1, 1)
+    out = await handler(object(), job)  # type: ignore[arg-type]
+    assert out["hidden_agency_gone_count"] == 1 and tp.sent[0][2]["show_prices"] is False
+    assert (await handler(object(), job))["skipped_hidden_count"] == 1 and len(tp.sent) == 1  # type: ignore[arg-type]
+    down = prices.PricePublish(FakeTripPlanner(503), FakeBooking(_page()), now=lambda: now)  # type: ignore[arg-type]
+    assert (await down(object(), job))["skipped_agency_count"] == 1  # type: ignore[arg-type]
+
+
+def _refresh_plan(**over: Any) -> dict[str, Any]:
+    plan = {"option_id": str(uuid.uuid4()), "component_id": SV, "component_kind": "activity", "currency": "USD",
+            "party": 2, "service_date": DAY.isoformat(), "from_price": "45.00", "sell": "90.00"}  # fmt: skip
+    plan.update(over)
+    return plan
+
+
+def _answer(from_price: D | None = None, quote_id: str | None = "q2") -> Any:
+    return aa_addons.aa_options.AaQuote(quote_id, D("68.48"), "on_request", dt.datetime(2027, 1, 1, tzinfo=dt.UTC),
+                                        from_price)  # fmt: skip
+
+
+@pytest.mark.asyncio
+async def test_refresh_keeps_an_add_on_s_rrp_and_follows_aa_s_new_one() -> None:
+    addon, tour = _refresh_plan(), _refresh_plan(component_kind="trip_plan", component_id="tp:1", from_price=None)
+    gone = _refresh_plan(component_id=SV2)
+    client = FakeBooking(_page(_addon_json(rrp_per_person={"amount": "48.00", "currency": "USD"})))
+    out = await aa_addons.refresh_rrp(client, TENANT, [(addon, _answer()), (tour, _answer()), (gone, _answer())])  # type: ignore[arg-type]
+    assert [a.from_price for _, a in out] == [D("48.00"), None, None]
+    assert len(client.asked) == 1  # one add-on list per day and party
+    down = FakeBooking(contract.ContractError("bad"))
+    kept = await aa_addons.refresh_rrp(down, TENANT, [(addon, _answer())])  # type: ignore[arg-type]
+    assert kept[0][1].from_price is None  # Booking failed: the stored RRP is kept by apply_refresh (below)
+
+
+@pytest.mark.asyncio
+async def test_apply_refresh_keeps_the_stored_rrp_of_an_add_on() -> None:
+    from app.proposals import builder
+    from tests.unit.slice_fakes import FakeVault
+    from tests.unit.test_builder_service import P, _conn
+
+    addon, tour = _refresh_plan(), _refresh_plan(component_kind="trip_plan", component_id="tp:1", from_price="200.00")
+    conn = _conn()
+    await builder.apply_refresh(tenant_ctx(conn, role="agent"), FakeVault(), P, 5,  # type: ignore[arg-type]
+                                [(addon, _answer()), (tour, _answer())])  # fmt: skip
+    rows = conn.sql("UPDATE crm.option SET net_amount = $2, availability = $3")
+    assert rows[0][5] == D("45.00")  # the add-on keeps its RRP (Booking gave none again)
+    assert rows[1][5] is None  # a tour's "from" price comes from price parity only (none answered here)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("currency", "rrp", "unit", "sell"),
+    [("USD", "35.00", "53.00", "106.00"), ("VND", "350000.00", "530000.00", "1060000.00")],
+)
+async def test_the_suggested_grid_with_an_infant_is_on_the_step(currency: str, rrp: str, unit: str, sell: str) -> None:
+    from app.proposals import builder
+    from tests.unit.test_builder_service import O2, P, _conn, _options, _proposal, _run
+
+    options = _options()
+    options[1] = {**options[1], "aa_from_price": D(rrp)}
+    proposal = _proposal(currency=currency, party_child_ages=[1],
+                         room_config='[{"type": "double", "adults": 2, "children": 1}]')  # fmt: skip
+    # RRP x party of 3 (the infant counted, AA's RRP rule) = 105 / 1,050,000; shared by the 2 paying travellers and
+    # rounded up per traveller to the step (USD 1, VND 10,000), then times them.
+    conn = _conn(proposal=proposal, options=options)
+    conn.on("SELECT p.discount_pct FROM crm.proposal p", None)
+    conn.on("FROM crm.option_price WHERE proposal_id", [])
+    await _run(builder.set_option_prices, P, 5, O2, None, use_suggested=True, conn=conn)
+    rows = [(a[2], a[3], a[5]) for a in conn.sql("INSERT INTO crm.option_price")]
+    assert (str(rows[0][0]), str(rows[0][1]), rows[0][2]) == ("adult", unit, 2)
+    assert (str(rows[1][0]), rows[1][1], rows[1][2]) == ("infant", D("0.00"), 1)
+    assert conn.sql("UPDATE crm.option SET sell_amount = $2")[0][1] == D(sell)

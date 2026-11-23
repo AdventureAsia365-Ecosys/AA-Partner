@@ -20,6 +20,13 @@ When: once per hour slot for every agency whose TripPlanner leads come to this C
 routed_here`: the agency has a planner and the CRM add-on), and once at once for one agency after its owner changes the
 markups, the rounding steps or the switch (:func:`enqueue_agency`). A run logs one summary line (counts and error
 classes only) and never fails for one agency; Booking or TripPlanner down is counted and retried by the next slot.
+
+Never an out-of-date price (contract rule "never a guess"): an agency this CRM no longer serves on its planner (its
+leads not routed here, its CRM locked or deleted) or that Booking refuses (``unknown_partner`` / ``forbidden``: AA
+stopped selling to it) gets an empty hidden list (``show_prices`` false), once per worker process (the handler keeps
+the agencies it hid; a later publish clears the mark). An agency TripPlanner does not know (``unknown_tenant``: no
+planner) is marked the same way, so the hourly sweep does not call TripPlanner for it again. TripPlanner also hides a
+list older than its own window (setting ``tripplanner.prices.agency_stale_hours``) for a CRM that cannot publish at all.
 """
 
 from __future__ import annotations
@@ -103,30 +110,58 @@ def price_list(
     return body
 
 
-async def _agency_inputs(ctx: SystemContext) -> tuple[rounding.PriceSettings, dict[str, Decimal]] | None:
-    """The agency's settings and markups, or None when its TripPlanner leads do not come to this CRM."""
-    if not await leads.routed_here(ctx):
-        return None
-    return await rounding.settings(ctx), await retail.markups(ctx)
+def hidden_list(currency: str, now: dt.datetime) -> dict[str, Any]:
+    """The contract body that hides every price of an agency (switch off, empty lists)."""
+    return {"show_prices": False, "currency": currency, "computed_at": now.isoformat(), "tours": [], "addons": []}
+
+
+async def _agency_inputs(ctx: SystemContext) -> tuple[bool, rounding.PriceSettings, dict[str, Decimal]]:
+    """Whether the agency's TripPlanner leads come to this CRM, its settings and its markups."""
+    return await leads.routed_here(ctx), await rounding.settings(ctx), await retail.markups(ctx)
+
+
+async def _hide(config: Any, tenant_id: uuid.UUID, currency: str, now: dt.datetime, hidden: set[uuid.UUID],
+                outcome: str) -> str:  # fmt: skip
+    """Hide every price of the agency on its planner, once per process (``hidden``). An agency without a planner
+    (``unknown_tenant``) shows nothing already: marked, not an error."""
+    if tenant_id in hidden:
+        return "skipped_hidden"
+    try:
+        await planner._call(config, "PUT", tenant_id, "prices", hidden_list(currency, now))  # noqa: SLF001
+    except planner.PlannerRefused as exc:
+        if exc.code != "unknown_tenant":
+            raise
+        outcome = "skipped_no_planner"
+    hidden.add(tenant_id)
+    return outcome
 
 
 async def publish_agency(
-    pool: asyncpg.Pool, client: BookingClient, config: Any, tenant_id: uuid.UUID, now: dt.datetime
-) -> str:
-    """One agency: ``published`` or ``skipped_not_routed``. Raises the Booking / TripPlanner errors."""
+    pool: asyncpg.Pool, client: BookingClient, config: Any, tenant_id: uuid.UUID, now: dt.datetime,
+    hidden: set[uuid.UUID] | None = None,
+) -> str:  # fmt: skip
+    """One agency: ``published``, ``hidden_not_routed`` / ``hidden_not_partner`` (an empty hidden list sent), or
+    ``skipped_hidden`` / ``skipped_no_planner``. ``hidden``: the agencies already hidden by this process. Raises the
+    Booking / TripPlanner errors (a Booking refusal other than unknown_partner / forbidden included)."""
+    hidden = set() if hidden is None else hidden
     async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
-        inputs = await _agency_inputs(ctx)
-    if inputs is None:
-        return "skipped_not_routed"
-    settings, markups = inputs
+        routed, settings, markups = await _agency_inputs(ctx)
+    currency = settings.base_currency
+    if not routed:
+        return await _hide(config, tenant_id, currency, now, hidden, "hidden_not_routed")
     tours: dict[str, tuple[Decimal | None, Decimal | None]] = {}
     addons: list[booking_addons.Addon] = []
     if settings.show_planner_prices:
-        currency = settings.base_currency
-        tours = tour_bases(contract.tariff(await client.tariff(tenant_id, currency=currency), currency))
-        addons = await booking_addons.load(client, tenant_id, currency=currency, pax=TWO)
+        try:
+            tours = tour_bases(contract.tariff(await client.tariff(tenant_id, currency=currency), currency))
+            addons = await booking_addons.load(client, tenant_id, currency=currency, pax=TWO)
+        except BookingRefusal as exc:
+            if exc.code not in ("unknown_partner", "forbidden"):
+                raise
+            return await _hide(config, tenant_id, currency, now, hidden, "hidden_not_partner")
     body = price_list(settings, markups, tours, addons, now)
     await planner._call(config, "PUT", tenant_id, "prices", body)  # noqa: SLF001 — the planner module's M2M call
+    hidden.discard(tenant_id)
     return "published"
 
 
@@ -143,6 +178,12 @@ class PricePublish:
         self._config = config
         self._client = client
         self._now = now
+        self._hidden: set[uuid.UUID] = set()  # the agencies whose prices this process hid (one PUT each)
+
+    async def _hide_gone(self, tenant_id: uuid.UUID) -> str:
+        """A locked or deleted CRM agency: hide its prices (base currency unknown: USD, the lists are empty)."""
+        hide = _hide(self._config, tenant_id, "USD", self._now(), self._hidden, "hidden_agency_gone")
+        return await _never_raises(hide, "skipped_agency")
 
     async def __call__(self, pool: asyncpg.Pool, job: Job) -> dict[str, Any]:
         if self._config is None or self._client is None:
@@ -154,9 +195,10 @@ class PricePublish:
         errors: Counter[str] = Counter()
         for tenant_id in tenants:
             try:
-                counts[await publish_agency(pool, self._client, self._config, tenant_id, self._now())] += 1
-            except (Forbidden, NotFound):
-                counts["skipped_agency"] += 1
+                counts[await publish_agency(pool, self._client, self._config, tenant_id, self._now(),
+                                            self._hidden)] += 1  # fmt: skip
+            except (Forbidden, NotFound):  # the agency's CRM is locked or deleted: its prices must not stay up
+                counts[await self._hide_gone(tenant_id)] += 1
             except planner.PlannerRefused as exc:
                 counts[f"refused_{exc.code}"] += 1
             except (planner.PlannerUnavailable, BookingUnavailable) as exc:
@@ -175,6 +217,13 @@ class PricePublish:
             "error_count": sum(errors.values()),
             "reason_code": errors.most_common(1)[0][0][:64] if errors else None,
         }
+
+
+async def _never_raises(coro: Any, fallback: str) -> str:
+    try:
+        return await coro
+    except Exception:  # noqa: BLE001 — a failed hide is counted; the next slot or TripPlanner's window hides it
+        return fallback
 
 
 async def enqueue_agency(conn: Any, tenant_id: uuid.UUID) -> None:

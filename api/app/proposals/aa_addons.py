@@ -14,6 +14,9 @@ browser's) and its RRP as the option's "from" price. An AA option belongs to an 
 tour key): the add-on takes the AA tour of the same day, else the proposal's first AA tour; a proposal without an AA
 tour is refused (409 ``aa_addon_needs_tour``: add the AA tour first). An add-on Booking does not sell that day is 409
 ``aa_addon_not_offered``.
+
+"Refresh AA prices" (:func:`refresh_rrp`) reads AA's RRP of each add-on option again (one add-on list per day), so the
+suggestion's RRP fallback follows AA's price; an add-on Booking no longer lists (or a failed list) keeps its last RRP.
 """
 
 from __future__ import annotations
@@ -160,6 +163,31 @@ async def quote(
         raise Conflict("aa_addon_not_offered", "AA does not sell this add-on on that day")
     answer = await aa_options.quote(client, tenant_id, the_plan)
     return {**the_plan, "title": found.title}, dataclasses.replace(answer, from_price=found.rrp_per_person)
+
+
+async def refresh_rrp(
+    client: BookingClient, tenant_id: uuid.UUID, answers: list[tuple[dict[str, Any], aa_options.AaQuote]]
+) -> list[tuple[dict[str, Any], aa_options.AaQuote]]:
+    """The refresh answers with AA's current RRP on each add-on option (an AA item other than a tour that carries a
+    "from" price: only add-ons do). One add-on list per day and party; the RRP is a suggestion only, so a list Booking
+    refuses or cannot give keeps the stored RRP (never fails the refresh)."""
+    lists: dict[tuple[str, int], dict[str, booking_addons.Addon] | None] = {}
+    out = []
+    for the_plan, answer in answers:
+        if the_plan["component_kind"] == "trip_plan" or the_plan.get("from_price") is None or answer.quote_id is None:
+            out.append((the_plan, answer))
+            continue
+        key = (the_plan["service_date"], int(the_plan["party"]))
+        if key not in lists:
+            day = {"currency": the_plan["currency"], "party": key[1], "date": dt.date.fromisoformat(key[0])}
+            try:
+                lists[key] = {a.component_id: a for a in await offered(client, tenant_id, day)}
+            except (Conflict, Invalid, Unavailable):
+                lists[key] = None
+        found = (lists[key] or {}).get(the_plan["component_id"])
+        rrp = found.rrp_per_person if found is not None else None
+        out.append((the_plan, dataclasses.replace(answer, from_price=rrp) if rrp is not None else answer))
+    return out
 
 
 async def add(

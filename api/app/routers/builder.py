@@ -563,6 +563,7 @@ async def post_aa_refresh(
     async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
         plans = await builder.aa_refresh_plan(ctx, proposal_id, body.seq)
     answers, failed = await aa_options.refresh(client, tenant_id, plans)
+    answers = await aa_addons.refresh_rrp(client, tenant_id, answers)  # AA-1152: an add-on keeps AA's RRP
     async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
         out = await builder.apply_refresh(ctx, Vault(keys, ctx), proposal_id, body.seq, answers)
     skipped = sum(1 for f in failed if f["code"] == "refresh_limit")
