@@ -100,9 +100,10 @@ def per_person(total: Decimal, party: int, step: Decimal) -> Decimal:
     return round_up(total / max(party, 1), step)
 
 
-def suggested_total(total: Decimal, party: int, step: Decimal) -> Decimal:
-    """The rounded suggestion of a party price: per traveller up to the step, then times the party."""
-    return (per_person(total, party, step) * max(party, 1)).quantize(CENT)
+def suggested_total(total: Decimal, party: int, step: Decimal | None) -> Decimal:
+    """The rounded suggestion of a party price: per traveller up to the step (None = 1 whole unit), then times the
+    party."""
+    return (per_person(total, party, step or ONE) * max(party, 1)).quantize(CENT)
 
 
 HUNDRED = Decimal("100")

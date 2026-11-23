@@ -61,6 +61,20 @@ function AddonRow({
   );
 }
 
+/** Why nothing can be added yet: no AA tour on the proposal, no day 1 date, or no add-on that day. */
+function AddonNotes({ list, tr }: { list: AaAddonList; tr: (key: string) => string }) {
+  const keys = [list.needs_tour && "addon.needsTour", !list.date && "addon.noDate", list.items.length === 0 && "addon.none"];
+  return (
+    <>
+      {keys.filter((k): k is string => Boolean(k)).map((k) => (
+        <p key={k} style={note}>
+          {tr(k)}
+        </p>
+      ))}
+    </>
+  );
+}
+
 export function BuilderAddonTab({
   view,
   blockId,
@@ -114,9 +128,7 @@ export function BuilderAddonTab({
           {error}
         </p>
       )}
-      {list && list.needs_tour && <p style={note}>{tr("addon.needsTour")}</p>}
-      {list && !list.date && <p style={note}>{tr("addon.noDate")}</p>}
-      {list && list.items.length === 0 && <p style={note}>{tr("addon.none")}</p>}
+      {list && <AddonNotes list={list} tr={tr} />}
       {list && list.items.length > 0 && (
         <ul style={{ listStyle: "none", margin: 0, padding: 0 }} aria-label={tr("builder.drawer.addon")}>
           {list.items.map((a) => (

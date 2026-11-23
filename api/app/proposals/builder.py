@@ -702,8 +702,7 @@ def _suggestion(
         return None
     pct, used = pricing.adjustment(rctx["rules"], kind=o["aa_component_kind"], tour_source_id=o["aa_tour_source_id"],
                                    service_date=service_date, pax=party, today=rctx["today"])  # fmt: skip
-    step = rctx.get("round_step", rounding.ONE)  # AA-1152 (B2 option C): per traveller up to the agency's step, once
-    return rounding.suggested_total(pricing.adjusted(base[0], pct), party, step), base[1], used
+    return rounding.suggested_total(pricing.adjusted(base[0], pct), party, rctx.get("round_step")), base[1], used
 
 
 def _option_dates(row: Any, s: dict[str, Any]) -> dict[str, dt.date | None]:

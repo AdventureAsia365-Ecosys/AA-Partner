@@ -14,7 +14,7 @@ import { PlannerPricesForm } from "@/components/settings/PlannerPricesForm";
 import { ScheduleTemplateForm } from "@/components/settings/ScheduleTemplateForm";
 import { OnlineBookingForm, type OnlineBookingView } from "@/components/settings/OnlineBookingForm";
 import { OnlinePaymentForm, type GatewayStatus } from "@/components/settings/OnlinePaymentForm";
-import { crmCall } from "@/lib/crmApi";
+import { crmCall, type ApiResult } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { t, type MessageKey } from "@/lib/i18n";
 import type { PlannerPricesView } from "@/lib/aaAddons";
@@ -24,6 +24,15 @@ import type { ScheduleSettings } from "@/lib/retailPayments";
 import { serverContext } from "@/lib/serverContext";
 
 export const dynamic = "force-dynamic";
+
+// AA-1152: Settings > Payments "Prices on my planner and rounding" (its own function: the page's complexity stays).
+function plannerPanel(
+  r: ApiResult<PlannerPricesView>,
+  lang: Parameters<typeof PlannerPricesForm>[0]["lang"],
+  unavailable: (title: MessageKey, testId: string) => React.ReactNode,
+) {
+  return r.ok ? <PlannerPricesForm view={r.data} lang={lang} /> : unavailable("plannerPrices.title", "planner-prices");
+}
 
 export default async function PaymentsSettingsPage() {
   const ctx = await crmContext();
@@ -91,7 +100,7 @@ export default async function PaymentsSettingsPage() {
         unavailable("invoice.settings.title", "invoice-settings")
       )}
       {markup.ok ? <RetailMarkupForm view={markup.data} lang={ctx.lang} /> : unavailable("markup.title", "retail-markup")}
-      {planner.ok ? <PlannerPricesForm view={planner.data} lang={ctx.lang} /> : unavailable("plannerPrices.title", "planner-prices")}
+      {plannerPanel(planner, ctx.lang, unavailable)}
       {schedule.ok ? <ScheduleTemplateForm view={schedule.data} lang={ctx.lang} /> : unavailable("schedule.settings.title", "schedule-template")}
     </div>
   );
