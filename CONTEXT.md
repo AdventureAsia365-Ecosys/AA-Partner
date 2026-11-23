@@ -102,7 +102,13 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   (section "AA Academy host"), with the learner's WORKFORCE `academy-web` token.
 - **Publishes** `crm.ops.v1` under `/crm/ops/v1` to the CIS admin (L1 platform console); since 1.5 (AA-966) it also
   carries the AA insights read `GET /insights` (spec module 17, design S-03), instead of a separate `crm.insights.v1`;
-  since 1.6 (AA-964) the CRM ledger rows `GET /llm/calls` for the CIS Calls tab (section "CRM-33a" below).
+  since 1.6 (AA-964) the CRM ledger rows `GET /llm/calls` for the CIS Calls tab (section "CRM-33a" below); since 1.18
+  (AA-1174) `GET /privacy-evidence` (`app/routers/ops_privacy_evidence.py`, any full OPS reader): counts across every
+  agency for the last `days` days (1-365, CIS setting `cis.compliance.campaign_consent_window_days`) of marketing sends
+  the gate let through, the sends to a contact whose latest marketing consent at send time was not a yes or whose
+  address was suppressed then (expected 0; erased contacts are counted apart, not as violations), and the consent
+  decisions recorded with the newest one's time. Each agency is read inside `platform_tx` (RLS FORCE, `app/ops/privacy_evidence.py`); counts and one
+  timestamp only, so no agency audit event. CIS Platform › Compliance reads it on Refresh evidence (source `crm_ops`).
 - **Never** grants another app's role anything on `crm`, never reads another app's schema (no cross-schema grants in
   either direction: the isolation probe asserts 42501 both ways), never writes content (ADR 0002), never owns prices
   (ADR 0005: Booking does).

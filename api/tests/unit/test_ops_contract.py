@@ -35,6 +35,7 @@ from app.ops.serializer import SETTING_VALUE_FIELDS, OpsAllowListRoute, OpsSetti
 from app.routers import ops as ops_router
 from app.routers import ops_checks as ops_checks_router
 from app.routers import ops_connection_shares as ops_connection_shares_router
+from app.routers import ops_privacy_evidence as ops_privacy_evidence_router
 from app.routers import ops_settings as ops_settings_router
 from app.vault.wrapping import LocalKeyWrapper
 from tests.tokens import LocalPools
@@ -310,6 +311,7 @@ def ops_app(pools: LocalPools, monkeypatch: pytest.MonkeyPatch) -> Iterator[tupl
     monkeypatch.setattr(ops_settings_router, "request_pool", pool)  # AA-1096 L4: /settings
     monkeypatch.setattr(ops_connection_shares_router, "request_pool", pool)  # AA-1143: /llm/connection-shares
     monkeypatch.setattr(ops_checks_router, "request_pool", pool)  # AA-1171: /ops-checks
+    monkeypatch.setattr(ops_privacy_evidence_router, "request_pool", pool)  # AA-1174: /privacy-evidence
     monkeypatch.setattr(console, "Vault", lambda keys, ctx: FakeVault())
     with TestClient(app) as client:
         state["app"] = app
@@ -340,6 +342,13 @@ SCENARIOS: list[tuple[str, str, str, Any, Any, str, int, str | None]] = [
     # crm.ops.v1 1.17 (AA-1171): the in-app check registry the CIS alerts catalogue reads (any full reader).
     ("GET", "/ops-checks", f"{PREFIX}/ops-checks", None,
      lambda c: c.on("split_part(idempotency_key", [{"check_key": "jobs_stuck", "last_at": NOW}]), "reader", 200, None),
+    # crm.ops.v1 1.18 (AA-1174): consent capture and campaign sends to opted-in contacts, counts only (any full reader).
+    ("GET", "/privacy-evidence", f"{PREFIX}/privacy-evidence?days=30", None,
+     lambda c: (c.on("AS violations", {"sent": 4, "uncertain": 0, "erased": 1, "violations": 0}),
+                c.on("AS recorded, max(at)", {"recorded": 2, "last_at": NOW})), "reader", 200, None),
+    ("GET", "/privacy-evidence", f"{PREFIX}/privacy-evidence?days=0", None, None, "reader", 422, "invalid_request"),
+    ("GET", "/privacy-evidence", f"{PREFIX}/privacy-evidence?days=366", None, None, "reader", 422,
+     "invalid_request"),
     # crm.ops.v1 1.16 (AA-1143): the CRM's copy of its connection budget shares; the CIS admin writes it whole.
     ("GET", "/llm/connection-shares", f"{PREFIX}/llm/connection-shares",
      None, lambda c: c.on("to_regclass('crm.llm_connection_share')", True).on(
