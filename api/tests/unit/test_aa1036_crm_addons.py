@@ -30,7 +30,7 @@ DOCS = Path(__file__).resolve().parents[3] / "docs" / "contracts"
 SPEC = DOCS / "tenant.addons.v1.openapi.yaml"
 SAMPLES = DOCS / "samples" / "tenant.addons.v1"
 # sha256 of the root file docs/contracts/tenant.addons.v1.openapi.yaml (1.2, AA-1036 R3 + AA-1139 + AA-1160).
-ROOT_CONTRACT_SHA256 = "9a0c3af17972d39bc4c1d70b83ac3ac089c1c2a9a8a59b0f622a3e1548260b8a"
+ROOT_CONTRACT_SHA256 = "c88b057f843bd0c2e42b9e36fc49daf68cc1311fe5219bafe62f2dacbe3fde31"
 
 TENANT = uuid.UUID("00000000-0000-4000-8000-0000000010a1")
 MEMBER = uuid.UUID("00000000-0000-4000-8000-0000000010b1")
