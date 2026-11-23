@@ -411,6 +411,8 @@ export const auditLogEn = {
   "field.public_booking_enabled": "online booking",
   "field.public_price_per_minute": "price per minute",
   "field.retail_markup_pct": "retail markup",
+  "field.price_round_step": "price rounding step",
+  "field.show_planner_prices": "prices on the trip planner",
   "field.retired_at": "retired date",
   "field.role": "role",
   "field.rooming": "rooming list",

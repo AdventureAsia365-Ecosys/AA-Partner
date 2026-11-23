@@ -110,6 +110,7 @@ def test_worker_runs_for_the_app_lifetime_when_enabled() -> None:
         "crm_entitlement_pull",  # AA-1028 R1 slice 2
         "crm_pilot_backup",  # AA-969 d16
         "crm_tp_lead_pull",  # AA-1038 R5 slice 3
+        "crm_tp_price_publish",  # AA-1152: the agencies' planner prices
         "crm_pdf_render",  # AA-1070
         "crm_tour_retired_fanout",  # AA-1093
         "crm_tenant_erase",  # AA-1093 stage 2
@@ -142,6 +143,7 @@ def test_worker_runs_for_the_app_lifetime_when_enabled() -> None:
         "EntitlementPullSchedule",  # AA-1028 R1 slice 2
         "DailyPilotBackupSchedule",  # AA-969 d16
         "LeadPullSchedule",  # AA-1038 R5 slice 3
+        "PricePublishSchedule",  # AA-1152
         "TenantEraseSchedule",  # AA-1093 stage 2
         "HourlyCampaignTick",  # AA-968
     ]

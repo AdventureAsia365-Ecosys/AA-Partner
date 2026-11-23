@@ -26,11 +26,11 @@ export function bundledValue(checked: boolean, category: string | null | undefin
 /** The builder blocks an agency item may sit on. */
 export const AGENCY_BLOCK_TYPES: readonly BlockType[] = ["other"];
 
-export type DrawerTab = "aa" | "agency" | "catalogue" | "ai";
+export type DrawerTab = "aa" | "addon" | "agency" | "catalogue" | "ai";
 
 /** The builder drawer's sources for a block: the agency's own items only on an Other block. */
 export function drawerTabs(blockType: BlockType): readonly DrawerTab[] {
-  return AGENCY_BLOCK_TYPES.includes(blockType) ? ["aa", "agency", "catalogue", "ai"] : ["aa", "ai"];
+  return AGENCY_BLOCK_TYPES.includes(blockType) ? ["aa", "addon", "agency", "catalogue", "ai"] : ["aa", "addon", "ai"];
 }
 
 /** A lodging block is where a client's wish for nights before or after the tour turns into a request to AA (B11). */

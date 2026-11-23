@@ -8,11 +8,13 @@
 // AA-1069: a third source, "From catalogue": a service of the agency's own catalogue, priced for the party (a copy).
 // AA-1086: a whole AA tour fills the empty day titles and places from the tour's days (the hint says so; editable).
 // AA-965 (R40): a fourth source, "AI ideas": AA options for the block's day from the trip's notes (closed list only).
+// AA-1152: a fifth, "AA add-on": the optional activities AA sells on the block's day (BuilderAddonTab).
 import Link from "next/link";
 import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
 import { BuilderCatalogueTab } from "@/components/catalogue/BuilderCatalogueTab";
 import { AgencyBlockNote } from "@/components/proposals/AgencyBlockNote";
+import { BuilderAddonTab } from "@/components/proposals/BuilderAddonTab";
 import { BuilderAiIdeasTab } from "@/components/proposals/BuilderAiIdeasTab";
 import { type AaProduct, type CatalogTour } from "@/lib/aa";
 import { AGENCY_ITEM_CATEGORIES, bundledValue, canBundle, drawerTabs, type AgencyItemCategory } from "@/lib/agencyItems";
@@ -85,7 +87,7 @@ export function BuilderAaDrawer({
 }) {
   const hydrated = useHydrated();
   const tr = (key: string) => t(lang, key as MessageKey);
-  const [tab, setTab] = useState<"aa" | "agency" | "catalogue" | "ai">("aa");
+  const [tab, setTab] = useState<"aa" | "addon" | "agency" | "catalogue" | "ai">("aa");
   const [query, setQuery] = useState("");
   const [tours, setTours] = useState<CatalogTour[] | null>(null);
   const [tour, setTour] = useState<CatalogTour | null>(null);
@@ -400,6 +402,7 @@ function BuilderMoreTab({
   onClose: () => void;
 }) {
   if (tab === "ai") return <BuilderAiIdeasTab view={view} blockId={blockId} lang={lang} write={write} onAdded={onClose} />;
+  if (tab === "addon") return <BuilderAddonTab view={view} blockId={blockId} lang={lang} locale={locale} write={write} onAdded={onClose} />;
   if (tab !== "catalogue") return null;
   const dayDate = dayOfBlock(view, blockId)?.date ?? null;
   return <BuilderCatalogueTab view={view} blockId={blockId} dayDate={dayDate} canMargin={canMoney} lang={lang} locale={locale} write={write} onClose={onClose} />;

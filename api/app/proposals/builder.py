@@ -57,7 +57,7 @@ from app.intake import completeness, stage2
 from app.ledger import agency_items
 from app.margin import sees_margin
 from app.payments import schedule_plan
-from app.proposals import aa_days, discount, inclusions, option_fields, prep_packs, pricing, retail, rules
+from app.proposals import aa_days, discount, inclusions, option_fields, prep_packs, pricing, retail, rounding, rules
 from app.proposals.option_fields import rules_json as _rules_json
 from app.proposals.service import (
     ACCEPTED_EXISTS_SQL,
@@ -467,7 +467,7 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
     now = dt.datetime.now(dt.UTC)
     # AA-1030: the suggested sell of each AA option (the agency markup, else AA's RRP for a tour); AA-1066: then the
     # agency's price rules, and a per-traveller grid from the agency's age bands.
-    rctx, party = await _retail_ctx(ctx, s), _party(row)
+    rctx, party = await _retail_ctx(ctx, s, row["currency"]), _party(row)
     bands = await pricing.settings(ctx)
     counts = pricing.party_counts(_jsonb(row["room_config"]), int(row["party_adults"]), row["party_child_ages"] or [],
                                   bands)  # fmt: skip
@@ -671,13 +671,14 @@ def _quote_expired(o: Any, now: dt.datetime) -> bool:
     )
 
 
-async def _retail_ctx(ctx: AnyContext, s: dict[str, Any]) -> dict[str, Any]:
-    """What an AA option's suggestion needs (AA-1030 markups, AA-1066 rules and the agency's today); read only when
-    the version has an AA option."""
+async def _retail_ctx(ctx: AnyContext, s: dict[str, Any], currency: str) -> dict[str, Any]:
+    """What an AA option's suggestion needs (AA-1030 markups, AA-1066 rules, the agency's today, AA-1152 its rounding
+    step of ``currency``); read only when the version has an AA option."""
     if not any(o["source"] == "aa" for o in s["options"]):
         return {"markups": {}, "rules": [], "today": dt.datetime.now(dt.UTC).date()}
     return {
         "markups": await retail.markups(ctx),
+        "round_step": (await rounding.settings(ctx)).step(currency),
         "rules": await pricing.rules_of(ctx),
         "today": pricing.today_in(await ctx.conn.fetchval(AGENCY_TZ_SQL)),
     }
@@ -701,7 +702,8 @@ def _suggestion(
         return None
     pct, used = pricing.adjustment(rctx["rules"], kind=o["aa_component_kind"], tour_source_id=o["aa_tour_source_id"],
                                    service_date=service_date, pax=party, today=rctx["today"])  # fmt: skip
-    return pricing.adjusted(base[0], pct), base[1], used
+    step = rctx.get("round_step", rounding.ONE)  # AA-1152 (B2 option C): per traveller up to the agency's step, once
+    return rounding.suggested_total(pricing.adjusted(base[0], pct), party, step), base[1], used
 
 
 def _option_dates(row: Any, s: dict[str, Any]) -> dict[str, dt.date | None]:
@@ -1459,7 +1461,7 @@ async def update_option(
     applied = o.get("price_rules")
     if changes.get("use_suggested"):
         # AA-1066: the suggestion (AA-1030 markup or RRP, then the agency's price rules), with the rules used kept.
-        suggested = _suggestion(o, party=_party(row), rctx=await _retail_ctx(ctx, s),
+        suggested = _suggestion(o, party=_party(row), rctx=await _retail_ctx(ctx, s, row["currency"]),
                                 service_date=_option_dates(row, s).get(str(option_id)))  # fmt: skip
         if suggested is None:
             raise Conflict("no_suggestion", "AA suggests no price for this item; type the sell")
@@ -1511,7 +1513,7 @@ async def set_option_prices(
     applied: list[dict[str, str]] | None = None
     if use_suggested:
         party = _party(row)
-        suggested = _suggestion(o, party=party, rctx=await _retail_ctx(ctx, s),
+        suggested = _suggestion(o, party=party, rctx=await _retail_ctx(ctx, s, row["currency"]),
                                 service_date=_option_dates(row, s).get(str(option_id)))  # fmt: skip
         total = suggested[0] if suggested is not None else Decimal(o["sell_amount"])
         counts = pricing.party_counts(_jsonb(row["room_config"]), int(row["party_adults"]),
@@ -1617,8 +1619,7 @@ async def add_aa_option(
             "net_amount": rules.money(quote.b2b_price),
             "aa_from_price": rules.money(quote.from_price) if quote.from_price is not None else None,
         }  # fmt: skip
-        rctx = {"markups": await retail.markups(ctx), "rules": await pricing.rules_of(ctx),
-                "today": pricing.today_in(await ctx.conn.fetchval(AGENCY_TZ_SQL))}  # fmt: skip
+        rctx = await _retail_ctx(ctx, {"options": [new]}, plan["currency"])  # AA-1152: rounded like every suggestion
         date = dt.date.fromisoformat(plan["service_date"]) if plan.get("service_date") else None
         suggested = _suggestion(new, party=plan["party"], rctx=rctx, service_date=date)
         if suggested is not None:

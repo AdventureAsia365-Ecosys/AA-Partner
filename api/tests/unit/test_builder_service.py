@@ -147,7 +147,7 @@ async def test_the_view_builds_margin_for_owner_and_agent_only() -> None:
     assert seen["days"][1]["blocks"][0]["options"][1]["aa"]["suggested_sell"] == "400.00"  # public AA data
     marked = _conn().on("SELECT retail_markup_pct FROM crm.tenant_settings", {"trip_plan": 10})
     agent = (await _run(builder.view, P, conn=marked))["days"][1]["blocks"][0]["options"][1]["aa"]
-    assert (agent["suggested_sell"], agent["suggested_basis"]) == ("165.00", "agency_markup")  # B2B 150 x 1.10
+    assert (agent["suggested_sell"], agent["suggested_basis"]) == ("166.00", "agency_markup")  # B2B 150 x 1.10 = 82.50 a traveller, up to 83 (AA-1152 step 1) x 2
     marked = _conn().on("SELECT retail_markup_pct FROM crm.tenant_settings", {"trip_plan": 10})
     hidden = (await _run(builder.view, P, conn=marked, role="assistant"))["days"][1]["blocks"][0]["options"][1]["aa"]
     assert hidden["suggested_sell"] is None  # derived from the B2B price: not for the assistant

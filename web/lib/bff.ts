@@ -218,6 +218,9 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "POST", pattern: new RegExp(`^proposals/${UUID}/days/${UUID}/blocks$`), tenant: true, card: "AA-949" },
   { method: "POST", pattern: new RegExp(`^proposals/${UUID}/blocks/${UUID}/(options|aa-options)$`), tenant: true, card: "AA-949" },
   { method: "POST", pattern: new RegExp(`^proposals/${UUID}/blocks/${UUID}/catalogue-options$`), tenant: true, card: "AA-1069" },
+  // AA-1152: the builder's "AA add-on" drawer tab (the day's AA add-ons from Booking; add one with a live quote).
+  { method: "GET", pattern: new RegExp(`^proposals/${UUID}/blocks/${UUID}/aa-addons$`), tenant: true, card: "AA-1152" },
+  { method: "POST", pattern: new RegExp(`^proposals/${UUID}/blocks/${UUID}/aa-addons$`), tenant: true, card: "AA-1152" },
   // AA-1066: the price per traveller type of an option, the discount request and the owner's decision.
   { method: "PUT", pattern: new RegExp(`^proposals/${UUID}/options/${UUID}/prices$`), tenant: true, card: "AA-1066" },
   { method: "POST", pattern: new RegExp(`^proposals/${UUID}/discount-approval(/${UUID})?$`), tenant: true, card: "AA-1066" },
@@ -303,6 +306,9 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   // AA-1030: the agency default retail markup per AA product type (owner only, API Action.PAYMENT_SETTINGS).
   { method: "GET", pattern: /^settings\/retail-markup$/, tenant: true, card: "AA-1030" },
   { method: "PUT", pattern: /^settings\/retail-markup$/, tenant: true, card: "AA-1030" },
+  // AA-1152 (crm-086): the rounding step per currency and the "Show prices on my planner" switch (owner only).
+  { method: "GET", pattern: /^settings\/planner-prices$/, tenant: true, card: "AA-1152" },
+  { method: "PUT", pattern: /^settings\/planner-prices$/, tenant: true, card: "AA-1152" },
   // AA-1066: Settings > Pricing (owner only, API Action.PAYMENT_SETTINGS): age bands, discount limit, price rules.
   { method: "GET", pattern: /^settings\/pricing$/, tenant: true, card: "AA-1066" },
   { method: "PUT", pattern: /^settings\/pricing$/, tenant: true, card: "AA-1066" },

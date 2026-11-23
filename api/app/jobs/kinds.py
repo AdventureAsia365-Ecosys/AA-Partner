@@ -108,6 +108,11 @@ PILOT_BACKUP = "crm_pilot_backup"
 # (app.tripplanner.leads), queued due-now once per minute slot by a maintenance hook. Not deploy-gate or DB Migrate
 # exempt: a row exists only while due or running (seconds).
 TP_LEAD_PULL = "crm_tp_lead_pull"
+# AA-1152 (S285 B2 option C, contract tripplanner.agency_prices.v1): publish each agency's own "from" prices to its
+# TripPlanner pages (app.tripplanner.prices), queued due-now once per hour slot by a maintenance hook, plus one row for
+# one agency after its owner changes its markups, rounding steps or switch. Not deploy-gate or DB Migrate exempt: a row
+# exists only while due or running (seconds).
+TP_PRICE_PUBLISH = "crm_tp_price_publish"
 # AA-1070: one server-side PDF of a trip (confirmation, invoice, proposal, voucher; app.documents.pdf_job), queued by
 # a member's request. Not deploy-gate exempt (exists only while queued / running, seconds).
 PDF_RENDER = "crm_pdf_render"
@@ -172,6 +177,7 @@ EXPECTED_SECONDS: dict[str, int] = {
     ENTITLEMENT_PULL: 60,
     PILOT_BACKUP: 60,
     TP_LEAD_PULL: 120,
+    TP_PRICE_PUBLISH: 300,
     PDF_RENDER: 60,
     TOUR_RETIRED_FANOUT: 120,
     TENANT_ERASE: 600,

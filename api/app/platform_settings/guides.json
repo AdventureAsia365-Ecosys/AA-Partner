@@ -896,6 +896,38 @@
     "when": "Giảm khi CRM chạm trần mà gần như không được báo trước; tăng khi những ngày bận bình thường gây cảnh báo.",
     "example": "Với mặc định 80 % và ngân sách 5 USD mỗi ngày, cảnh báo được gửi khi đã chi 4 USD."
    }
+  },
+  "crm.agency_defaults.price_round_step": {
+   "en": {
+    "what": "The rounding step per currency of every price the CRM suggests to an agency (an AA item's sell in a proposal, the agency's own \"from\" prices on its planner) when the agency chose no step of its own in Settings > Payments. Prices are always rounded up, per traveller.",
+    "raise": "Suggested prices become rounder numbers (45 instead of 42); the agency earns a little more on each suggestion, and its prices look less precise.",
+    "lower": "Suggested prices stay closer to the computed price; a step below the currency's usual unit brings odd amounts back.",
+    "when": "Change it when most agencies of a market quote in coarser or finer steps; an agency that wants another step picks it itself.",
+    "example": "With the default USD 1 and VND 10,000, a computed 41.09 USD suggests 42 USD and 1,038,000 VND suggests 1,040,000 VND per traveller."
+   },
+   "vi": {
+    "what": "Bước làm tròn theo tiền tệ của mọi giá CRM gợi ý cho đại lý (giá bán một mục AA trong báo giá, giá \"từ\" của chính đại lý trên trang lập lịch trình) khi đại lý chưa tự chọn bước ở Settings > Payments. Giá luôn được làm tròn lên, theo từng khách.",
+    "raise": "Giá gợi ý tròn hơn (45 thay vì 42); đại lý được thêm chút lãi mỗi lần gợi ý, nhưng giá trông kém chính xác hơn.",
+    "lower": "Giá gợi ý sát giá tính được hơn; bước nhỏ hơn đơn vị thường dùng của tiền tệ sẽ làm số lẻ quay lại.",
+    "when": "Đổi khi phần lớn đại lý của một thị trường báo giá theo bước lớn hơn hoặc nhỏ hơn; đại lý muốn bước khác thì tự chọn.",
+    "example": "Với mặc định USD 1 và VND 10.000, giá tính được 41,09 USD gợi ý 42 USD và 1.038.000 đ gợi ý 1.040.000 đ mỗi khách."
+   }
+  },
+  "crm.agency_defaults.price_round_steps": {
+   "en": {
+    "what": "The rounding steps an agency owner may choose per currency in Settings > Payments for its suggested prices. A currency not listed offers its default step only.",
+    "raise": "Adding a larger step lets agencies show rounder prices (for example 50 USD steps for long tours).",
+    "lower": "Removing a step: agencies that chose it keep it until they save the panel again, then must pick one of the list.",
+    "when": "Add a step when agencies of a market ask for it; remove one nobody uses.",
+    "example": "With the default, an owner picks USD 1, 5 or 10 and VND 10,000, 50,000 or 100,000."
+   },
+   "vi": {
+    "what": "Các bước làm tròn chủ đại lý được chọn theo tiền tệ ở Settings > Payments cho giá gợi ý của mình. Tiền tệ không có trong danh sách chỉ có bước mặc định.",
+    "raise": "Thêm bước lớn hơn để đại lý hiện giá tròn hơn (ví dụ bước 50 USD cho tour dài).",
+    "lower": "Bỏ một bước: đại lý đã chọn bước đó giữ nguyên tới lần lưu bảng kế tiếp, khi đó phải chọn một bước trong danh sách.",
+    "when": "Thêm bước khi đại lý của một thị trường cần; bỏ bước không ai dùng.",
+    "example": "Với mặc định, chủ đại lý chọn USD 1, 5 hoặc 10 và VND 10.000, 50.000 hoặc 100.000."
+   }
   }
  }
 }

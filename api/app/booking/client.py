@@ -274,6 +274,11 @@ class BookingClient:
             query["after"] = after
         return await self._call("GET", "/events", READ, tenant_id, query=query)
 
+    async def addons(self, tenant_id: uuid.UUID, query: dict[str, str]) -> dict[str, Any]:
+        """AA-1152 (contract 1.11 ``GET /add-ons``): the AA add-ons the agency can quote (read with
+        :func:`app.booking.addons.page`); ``query``: ``date``, ``pax``, ``currency``, ``destination_id``."""
+        return await self._call("GET", "/add-ons", READ, tenant_id, query=query)
+
     # ── writes ───────────────────────────────────────────────────────────────────────────────────
 
     async def quote(self, tenant_id: uuid.UUID, body: dict[str, Any]) -> dict[str, Any]:

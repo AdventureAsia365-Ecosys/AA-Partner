@@ -19,6 +19,11 @@ Route                                              What                         
                                                                                                   net: owner, agent)
 ``POST   /proposals/{id}/blocks/{block}/aa-options`` add an AA item (live Booking quote)          every role (sell:
                                                                                                   owner, agent)
+``GET    /proposals/{id}/blocks/{block}/aa-addons``     AA-1152: the AA add-ons of the day (Booking), every role (B2B
+                                                   the day's place first, the agency's price       per traveller:
+                                                   per traveller rounded to its step               owner, agent)
+``POST   /proposals/{id}/blocks/{block}/aa-addons``     AA-1152: add an AA add-on (live quote, on the  every role (sell:
+                                                   trip's AA tour)                                 owner, agent)
 ``POST   /proposals/{id}/blocks/{block}/catalogue-options``  AA-1069: add a service of the agency's       every role
                                                    catalogue (a snapshot; quantity from the party,
                                                    rooms and nights unless typed)
@@ -60,7 +65,7 @@ from app.auth.route_guard import Caller, class_router, current_caller
 from app.db import request_pool
 from app.errors import ServiceError, Unavailable
 from app.permissions import Action, require
-from app.proposals import aa_options, builder
+from app.proposals import aa_addons, aa_options, builder
 from app.routers.agency import tenant_header
 from app.tenancy import TenantContext, tenant_tx
 from app.vault import Vault
@@ -189,6 +194,16 @@ class AaOptionIn(_Body):
     component_kind: ComponentKind
     departure_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9:_.-]{1,64}$")
     nights: int | None = Field(default=None, ge=1, le=60)  # required for a hotel_room (422 invalid_nights)
+    tier: Tier | None = None
+    sell_amount: Money | None = None
+
+
+class AaAddonIn(_Body):
+    """AA-1152: an AA add-on of the block's day (``GET .../aa-addons``), quoted live on the trip's AA tour."""
+
+    seq: Seq
+    component_id: str = Field(pattern=r"^sv:[0-9a-f-]{36}$")
+    component_kind: Literal["transfer", "guide", "activity", "entrance", "meal"]
     tier: Tier | None = None
     sell_amount: Money | None = None
 
@@ -415,6 +430,33 @@ async def post_aa_option(
     quote = await aa_options.quote(client, tenant_id, plan)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
         return await builder.add_aa_option(ctx, Vault(keys, ctx), plan, quote, _changes(body))
+
+
+@router.get("/proposals/{proposal_id}/blocks/{block_id}/aa-addons")
+async def get_aa_addons(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, proposal_id: uuid.UUID, block_id: uuid.UUID
+) -> dict[str, Any]:
+    client = _client(request)
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
+        day = await aa_addons.day_of(ctx, proposal_id, block_id)
+    return aa_addons.listing(await aa_addons.offered(client, tenant_id, day), day)
+
+
+@router.post("/proposals/{proposal_id}/blocks/{block_id}/aa-addons", status_code=201)
+async def post_aa_addon(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, proposal_id: uuid.UUID, block_id: uuid.UUID,
+    body: AaAddonIn,
+) -> dict[str, Any]:  # fmt: skip
+    client = _client(request)
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
+        _money_check(ctx, body, ("sell_amount",), proposal_id)
+        plan = await aa_addons.plan(ctx, proposal_id, body.seq, block_id, body.component_id, body.component_kind)
+    plan, quote = await aa_addons.quote(client, tenant_id, plan)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
+        return await aa_addons.add(ctx, Vault(keys, ctx), plan, quote, _changes(body))
 
 
 @router.patch("/proposals/{proposal_id}/options/{option_id}")
