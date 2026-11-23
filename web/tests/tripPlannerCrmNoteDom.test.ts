@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // AA-1160, in the browser: "Where leads go" says the CRM only when leads really go there. With the CRM add-on but no
 // CRM agency yet (S285: crm.core, no agency, leads skipped), CIS answers effective_channel = the stored route, and the
-// section says the CRM is not set up yet instead of "Leads go to your CRM". Invented names only.
+// section says the CRM is not taking planner leads instead of "Leads go to your CRM". Invented names only.
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
