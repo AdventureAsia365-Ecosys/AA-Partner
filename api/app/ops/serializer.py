@@ -278,6 +278,7 @@ OPS_ALLOWED_KEYS: frozenset[str] = frozenset(
         "window_days",
         "tenants",
         "marketing_sent",
+        "marketing_uncertain",
         "violations",
         "excluded_erased",
         "consents_recorded",

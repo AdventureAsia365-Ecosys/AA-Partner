@@ -50,8 +50,8 @@ def _patch(monkeypatch: pytest.MonkeyPatch, conns: dict[uuid.UUID, Conn], opened
 
 def test_counts_across_agencies_only(monkeypatch: pytest.MonkeyPatch) -> None:
     conns = {
-        A: Conn({"sent": 5, "erased": 1, "violations": 0}, {"recorded": 3, "last_at": LAST}),
-        B: Conn({"sent": 2, "erased": 0, "violations": 1}, {"recorded": 0, "last_at": None}),
+        A: Conn({"sent": 5, "uncertain": 1, "erased": 1, "violations": 0}, {"recorded": 3, "last_at": LAST}),
+        B: Conn({"sent": 2, "uncertain": 0, "erased": 0, "violations": 1}, {"recorded": 0, "last_at": None}),
     }
     opened: list[tuple[uuid.UUID, str]] = []
     _patch(monkeypatch, conns, opened)
@@ -60,6 +60,7 @@ def test_counts_across_agencies_only(monkeypatch: pytest.MonkeyPatch) -> None:
         "window_days": 30,
         "tenants": 2,
         "marketing_sent": 7,
+        "marketing_uncertain": 1,
         "violations": 1,
         "excluded_erased": 1,
         "consents_recorded": 3,
@@ -72,7 +73,11 @@ def test_counts_across_agencies_only(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_sql_reads_consent_and_suppression_at_send_time_and_skips_erased() -> None:
     sql = " ".join(console.PRIVACY_SENDS_SQL.split())
-    assert "d.purpose = 'marketing' AND d.status = 'sent' AND d.gate_result = 'sent'" in sql
+    assert (
+        "d.purpose = 'marketing' AND ((d.status = 'sent' AND d.gate_result = 'sent') "
+        "OR (d.status = 'held' AND d.gate_result = 'send_uncertain'))"
+    ) in sql
+    assert "FILTER (WHERE d.gate_result = 'send_uncertain')" in sql  # possibly delivered: sent, and reported apart
     assert "c.at <= d.decided_at" in sql and "s.created_at <= d.decided_at" in sql
     assert "t.traveler_id IS NOT NULL AND (c.value IS DISTINCT FROM true OR s.hit)" in sql
     assert "FILTER (WHERE t.traveler_id IS NULL)" in sql
@@ -86,6 +91,7 @@ def test_window_is_capped_and_the_model_has_counts_only() -> None:
         "window_days",
         "tenants",
         "marketing_sent",
+        "marketing_uncertain",
         "violations",
         "excluded_erased",
         "consents_recorded",

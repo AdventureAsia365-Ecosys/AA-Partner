@@ -30,6 +30,7 @@ class PrivacyEvidence(_Out):
     window_days: int
     tenants: int
     marketing_sent: int
+    marketing_uncertain: int
     violations: int
     excluded_erased: int
     consents_recorded: int

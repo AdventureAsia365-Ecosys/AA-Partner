@@ -112,6 +112,13 @@ async def _seed_agency_a(pool: asyncpg.Pool) -> dict[str, Any]:
         )
         await _send(conn, suppressed, 1)  # on the do-not-mail list at send time: violation
 
+        uncertain_no = await _traveller(conn)
+        # held send_uncertain (the provider may have delivered it) with no consent: sent and a violation
+        await _send(conn, uncertain_no, 1, status="held", gate="send_uncertain")
+        uncertain_yes = await _traveller(conn)
+        await _consent(conn, uncertain_yes, True, 2)
+        await _send(conn, uncertain_yes, 1, status="held", gate="send_uncertain")  # with a yes: sent, no violation
+
         erased = await _traveller(conn)
         await _consent(conn, erased, True, 5)
         await _send(conn, erased, 1)
@@ -143,17 +150,26 @@ async def test_privacy_evidence_counts_sends_against_consent_at_send_time(app_po
     seeded = await platform_privacy_evidence(app_pool, staff_sub=STAFF, days=DAYS)
 
     def delta(answer: dict[str, Any]) -> dict[str, int]:
-        keys = ("tenants", "marketing_sent", "violations", "excluded_erased", "consents_recorded")
+        keys = (
+            "tenants",
+            "marketing_sent",
+            "marketing_uncertain",
+            "violations",
+            "excluded_erased",
+            "consents_recorded",
+        )
         return {k: answer[k] - before[k] for k in keys}
 
-    # A: yes, said_no, withdrew_later, suppressed, erased (5 sends); B: one send. Consents in the window: A 1+2+2+1+1+1,
-    # B 1. RLS FORCE under platform_tx: a missing agency context would read 0 of them.
+    # A: yes, said_no, withdrew_later, suppressed, uncertain_no, uncertain_yes, erased (7 sends, 2 held send_uncertain);
+    # B: one send. Consents in the window: A 1+2+2+1+1+1+1, B 1. RLS FORCE under platform_tx: a missing agency context
+    # would read 0 of them.
     assert delta(seeded) == {
         "tenants": 2,
-        "marketing_sent": 6,
-        "violations": 2,
+        "marketing_sent": 8,
+        "marketing_uncertain": 2,
+        "violations": 3,
         "excluded_erased": 0,
-        "consents_recorded": 9,
+        "consents_recorded": 10,
     }
     assert seeded["window_days"] == DAYS and seeded["last_consent_at"] is not None
     assert not ({"names", "emails", "tenant_ids"} & set(seeded))  # counts only
@@ -164,8 +180,9 @@ async def test_privacy_evidence_counts_sends_against_consent_at_send_time(app_po
     erased = await platform_privacy_evidence(app_pool, staff_sub=STAFF, days=DAYS)
     assert delta(erased) == {
         "tenants": 2,
-        "marketing_sent": 5,
-        "violations": 2,
+        "marketing_sent": 7,
+        "marketing_uncertain": 2,
+        "violations": 3,
         "excluded_erased": 0,
-        "consents_recorded": 8,
+        "consents_recorded": 9,
     }

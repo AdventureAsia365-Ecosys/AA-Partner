@@ -344,7 +344,7 @@ SCENARIOS: list[tuple[str, str, str, Any, Any, str, int, str | None]] = [
      lambda c: c.on("split_part(idempotency_key", [{"check_key": "jobs_stuck", "last_at": NOW}]), "reader", 200, None),
     # crm.ops.v1 1.18 (AA-1174): consent capture and campaign sends to opted-in contacts, counts only (any full reader).
     ("GET", "/privacy-evidence", f"{PREFIX}/privacy-evidence?days=30", None,
-     lambda c: (c.on("AS violations", {"sent": 4, "erased": 1, "violations": 0}),
+     lambda c: (c.on("AS violations", {"sent": 4, "uncertain": 0, "erased": 1, "violations": 0}),
                 c.on("AS recorded, max(at)", {"recorded": 2, "last_at": NOW})), "reader", 200, None),
     ("GET", "/privacy-evidence", f"{PREFIX}/privacy-evidence?days=0", None, None, "reader", 422, "invalid_request"),
     ("GET", "/privacy-evidence", f"{PREFIX}/privacy-evidence?days=366", None, None, "reader", 422,

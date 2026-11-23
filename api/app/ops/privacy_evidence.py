@@ -3,11 +3,13 @@
 Like :func:`app.ops.console.platform_coverage`: platform-wide counts only (no agency id or name, no contact, no
 address), so no per-agency audit event; one log line per call. Each agency is read inside ``platform_tx`` (RLS FORCE: a
 bare ``crm_app`` count would read 0 rows, lesson S269), read-only. A marketing send is a dispatch row (purpose
-marketing) the gate let through (status and gate_result ``sent``) in the window; it is a violation when the contact's
-latest marketing consent at or before the send was not a yes, or the address was on the agency's suppression list at
-send time. A send whose contact was erased since (no traveller row) is left out and counted apart: erasure removes the
-consent too, so it would read as a false violation. This module opens ``platform_tx`` (listed in the code rules'
-PLATFORM_MODULES) for reads only.
+marketing) decided in the window that the gate let through (status and gate_result ``sent``) or that is held
+``send_uncertain`` (a run stopped after calling the provider: the message may have been delivered, so it counts as sent
+and is also reported apart as ``marketing_uncertain``); it is a violation when the contact's latest marketing consent
+at or before the send was not a yes, or the address was on the agency's suppression list at send time. A send whose
+contact was erased since (no traveller row) is left out and counted apart: erasure removes the consent too, so it would
+read as a false violation. Agencies counted: every agency that is not trashed (any status). This module opens
+``platform_tx`` (listed in the code rules' PLATFORM_MODULES) for reads only.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ log = logging.getLogger(__name__)
 
 PRIVACY_SENDS_SQL = """
 SELECT count(*)                                                                                   AS sent,
+       count(*) FILTER (WHERE d.gate_result = 'send_uncertain')                                    AS uncertain,
        count(*) FILTER (WHERE t.traveler_id IS NULL)                                               AS erased,
        count(*) FILTER (WHERE t.traveler_id IS NOT NULL AND (c.value IS DISTINCT FROM true OR s.hit)) AS violations
   FROM crm.dispatch_queue d
@@ -37,7 +40,8 @@ SELECT count(*)                                                                 
   LEFT JOIN LATERAL (SELECT true AS hit FROM crm.campaign_suppression s
                       WHERE s.email_bidx = t.email_bidx AND s.created_at <= d.decided_at
                         AND (s.deleted_at IS NULL OR s.deleted_at > d.decided_at) LIMIT 1) s ON true
- WHERE d.purpose = 'marketing' AND d.status = 'sent' AND d.gate_result = 'sent'
+ WHERE d.purpose = 'marketing'
+   AND ((d.status = 'sent' AND d.gate_result = 'sent') OR (d.status = 'held' AND d.gate_result = 'send_uncertain'))
    AND d.decided_at >= now() - make_interval(days => $1)
 """
 PRIVACY_CONSENT_SQL = """
@@ -49,7 +53,14 @@ SELECT count(*) FILTER (WHERE at >= now() - make_interval(days => $1)) AS record
 async def platform_privacy_evidence(pool: asyncpg.Pool, *, staff_sub: str, days: int) -> dict[str, Any]:
     """Counts across every agency for the last ``days`` days (the CIS setting
     cis.compliance.campaign_consent_window_days, capped by the route)."""
-    out = {"tenants": 0, "marketing_sent": 0, "violations": 0, "excluded_erased": 0, "consents_recorded": 0}
+    out = {
+        "tenants": 0,
+        "marketing_sent": 0,
+        "marketing_uncertain": 0,
+        "violations": 0,
+        "excluded_erased": 0,
+        "consents_recorded": 0,
+    }
     last: dt.datetime | None = None
     for agency in await registry.agencies(pool):
         try:
@@ -59,9 +70,10 @@ async def platform_privacy_evidence(pool: asyncpg.Pool, *, staff_sub: str, days:
                 sends = await ctx.conn.fetchrow(PRIVACY_SENDS_SQL, days)
                 consent = await ctx.conn.fetchrow(PRIVACY_CONSENT_SQL, days)
         except NotFound:
-            continue  # registered but trashed: not an agency
+            continue  # registered but trashed: not an agency (every other status is counted)
         out["tenants"] += 1
         out["marketing_sent"] += int(sends["sent"] or 0)
+        out["marketing_uncertain"] += int(sends["uncertain"] or 0)
         out["excluded_erased"] += int(sends["erased"] or 0)
         out["violations"] += int(sends["violations"] or 0)
         out["consents_recorded"] += int(consent["recorded"] or 0)
