@@ -274,6 +274,14 @@ OPS_ALLOWED_KEYS: frozenset[str] = frozenset(
         "lower",
         "when",
         "example",
+        # 1.18 (AA-1174): GET /privacy-evidence, consent capture and campaign sends to opted-in contacts (counts only)
+        "window_days",
+        "tenants",
+        "marketing_sent",
+        "violations",
+        "excluded_erased",
+        "consents_recorded",
+        "last_consent_at",
     }
 )
 

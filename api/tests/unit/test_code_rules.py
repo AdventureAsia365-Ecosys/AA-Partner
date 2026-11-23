@@ -79,7 +79,8 @@ DB_MODULES = frozenset(
 PROVISIONING_MODULES = frozenset({"app/agencies.py", "app/seed/__init__.py"})
 # AA-939: AA staff in one agency (actor platform:<staff sub>; may remove the last owner, complete a recovery).
 # AA-941: the L1 console's agency operations (app/ops/console.py) open it too.
-PLATFORM_MODULES = frozenset({"app/members/recovery.py", "app/ops/console.py"})
+# AA-1174: app/ops/privacy_evidence.py opens platform_tx for read-only counts (crm.ops.v1 1.18 /privacy-evidence).
+PLATFORM_MODULES = frozenset({"app/members/recovery.py", "app/ops/console.py", "app/ops/privacy_evidence.py"})
 # ... and the only module that calls the platform side of app.members.recovery and app.ops.console: the /crm/ops/v1
 # router, whose write routes require the WORKFORCE group crm-platform-admin.
 PLATFORM_CALLERS = frozenset({"app/routers/ops.py"})
