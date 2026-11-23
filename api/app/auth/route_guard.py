@@ -13,7 +13,8 @@ The guard, in order:
 4. the class needs a group and the token holds none of them -> **403** ``missing_group``;
 5. AA-1019 (root ADR 0006a A10c): the Dev-only CRM staff E2E identity outside ``dev`` / ``test`` / ``local`` ->
    **403** ``e2e_read_only`` (the token cannot exist elsewhere: this is the second lock); AA-1035 (A10d) the Dev-only
-   CIS customer_success E2E identity likewise;
+   CIS customer_success E2E identity likewise; AA-1176 (A10h) the Dev-only E2E owner likewise, and also with any group
+   set other than exactly ``cis-admin`` + ``booking-admin`` or a non-ASCII look-alike address;
 5a. AA-1111 (root ADR 0006c, :mod:`app.auth.admin_mfa`): a WORKFORCE session holding an operations group
    (``crm-platform-admin``, ``crm-ops``, ``cis-admin``) whose token's ``amr`` lacks ``otp`` (no authenticator code) ->
    **403** ``mfa_required`` while ``crm.platform.admin_mfa_required`` is on; off, it is only logged;
@@ -119,15 +120,9 @@ def guard_for(route_class: RouteClass) -> Callable[..., Awaitable[Caller]]:
         if route_class.groups_any and not route_class.groups_any.intersection(principal.groups):
             log.warning("route_guard_missing_group class=%s client=%s", route_class.name, client_kind)
             raise HTTPException(status_code=403, detail="missing_group")
-        e2e_crm_staff = issuer_kind == WORKFORCE and e2e_staff.is_e2e_crm_staff(principal.email)
-        if e2e_crm_staff and _environment(request) not in DEV_ONLY_ENVIRONMENTS:
-            log.warning("route_guard_e2e_crm_staff_refused class=%s", route_class.name)
-            raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
-        e2e_cis_cs = issuer_kind == WORKFORCE and e2e_staff.is_e2e_cis_cs(principal.email)
-        if e2e_cis_cs and _environment(request) not in DEV_ONLY_ENVIRONMENTS:
-            log.warning("route_guard_e2e_cis_cs_refused class=%s", route_class.name)
-            raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
-        e2e_cis_admin = issuer_kind == WORKFORCE and e2e_staff.is_e2e_cis_admin(principal.email)
+        e2e_crm_staff, e2e_cis_cs, e2e_cis_admin, e2e_owner = _e2e_identities(
+            request, route_class, issuer_kind, principal
+        )
         # AA-1111 (root ADR 0006c): an operations staff session without an authenticator code, 403 mfa_required while
         # crm.platform.admin_mfa_required is on (logged only while it is off).
         admin_mfa.check(
@@ -136,7 +131,7 @@ def guard_for(route_class: RouteClass) -> Callable[..., Awaitable[Caller]]:
             principal.sub,
             principal.groups,
             credentials.credentials,
-            e2e=e2e_crm_staff or e2e_cis_cs or e2e_cis_admin,
+            e2e=e2e_crm_staff or e2e_cis_cs or e2e_cis_admin or e2e_owner,
         )
         caller = Caller(
             route_class=route_class.name,
@@ -156,6 +151,33 @@ def guard_for(route_class: RouteClass) -> Callable[..., Awaitable[Caller]]:
 
     guard.route_class = route_class  # type: ignore[attr-defined] — read by the route-coverage test
     return guard
+
+
+def _e2e_identities(
+    request: Request, route_class: RouteClass, issuer_kind: str | None, principal: Any
+) -> tuple[bool, bool, bool, bool]:
+    """Which Dev-only E2E identity a WORKFORCE token is (A10c CRM staff, A10d CIS customer_success, A10b CIS admin,
+    A10h E2E owner). 403 ``e2e_read_only`` for A10c / A10d / A10h outside ``dev`` / ``test`` / ``local``, and for A10h
+    with any group set other than exactly ``cis-admin`` + ``booking-admin`` or a non-ASCII address (AA-1176)."""
+    workforce = issuer_kind == WORKFORCE
+    crm_staff = workforce and e2e_staff.is_e2e_crm_staff(principal.email)
+    cis_cs = workforce and e2e_staff.is_e2e_cis_cs(principal.email)
+    cis_admin = workforce and e2e_staff.is_e2e_cis_admin(principal.email)
+    owner = workforce and e2e_staff.is_e2e_owner_like(principal.email)
+    dev = _environment(request) in DEV_ONLY_ENVIRONMENTS
+    for flagged, event, refused in (
+        (crm_staff, "route_guard_e2e_crm_staff_refused", not dev),
+        (cis_cs, "route_guard_e2e_cis_cs_refused", not dev),
+        (
+            owner,
+            "route_guard_e2e_owner_refused",
+            not dev or not e2e_staff.e2e_owner_allowed(principal.email, principal.groups),
+        ),
+    ):
+        if flagged and refused:
+            log.warning("%s class=%s", event, route_class.name)
+            raise HTTPException(status_code=403, detail=e2e_staff.E2E_READ_ONLY)
+    return crm_staff, cis_cs, cis_admin, owner
 
 
 def _member_rate_limit(request: Request, caller: Caller) -> None:

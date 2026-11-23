@@ -29,6 +29,15 @@ token outside ``dev`` / ``test`` / ``local``, :func:`app.auth.route_guard.requir
 ``/crm/ops/v1`` write a ``cis-customer_success`` token reaches, the studio invitation relay, refuses it with 403
 ``e2e_read_only`` before any check. Its desk reads stay scoped by CIS (``tenant.membership.v1`` staff-scope). Same
 removal as A10b.
+
+AA-1176 (root ADR 0006a A10h): a fourth Dev-only WORKFORCE E2E identity, the **E2E owner** :data:`E2E_OWNER_EMAIL`,
+issued with exactly ``cis-admin`` + ``booking-admin`` by the same trigger map and only on Dev: an administrator "like
+the tech lead" in CIS and Booking. In the CRM it is a plain ``cis-admin`` operations reader (CIS relays its token for
+the Compliance Refresh evidence, ``crm.ops.v1``); it holds no ``crm-platform-admin``, so every CRM write that needs that
+group refuses it as for any CIS admin. The guard refuses its token outside ``dev`` / ``test`` / ``local``, with any
+other group set or a non-ASCII look-alike address (403 ``e2e_read_only``), and exempts it from the administrator MFA
+switch like the other Dev-only E2E identities (its code is readable only by the MFA admin role). It is never a studio
+invitee (:func:`is_e2e_mailbox_address`). Same removal as A10b.
 """
 
 from __future__ import annotations
@@ -45,6 +54,11 @@ E2E_CRM_STAFF_EMAIL = "e2e-crm-staff@e2e-mail.lumiguides.it.com"
 # AA-1035 (A10d): the Dev-only CIS customer_success E2E address (cis-customer_success; no CRM write at all). Same
 # address as AA-CIS-App api/core/e2e_staff.E2E_CIS_CS_TEST_STAFF_EMAIL and AA-CIS-Infra workforce.py.
 E2E_CIS_CS_EMAIL = "e2e-cis-cs@e2e-mail.lumiguides.it.com"
+# AA-1176 (A10h): the Dev-only E2E owner (cis-admin + booking-admin; a cis-admin reader here). Same address as
+# AA-CIS-App api/core/e2e_staff.E2E_OWNER_TEST_STAFF_EMAIL, AA-Booking app/auth/e2e_owner.E2E_OWNER_EMAIL and
+# AA-CIS-Infra workforce.py E2E_OWNER_TEST_STAFF_EMAIL.
+E2E_OWNER_EMAIL = "e2e-owner@e2e-mail.lumiguides.it.com"
+E2E_OWNER_GROUPS = frozenset({"cis-admin", "booking-admin"})
 # The 403 detail when that identity reaches an agency that is not synthetic.
 E2E_SYNTHETIC_ONLY = "e2e_synthetic_only"
 # The 403 detail of every refusal (the same string CIS answers, so the BFF and the E2E helpers need no new one).
@@ -70,15 +84,26 @@ def is_e2e_cis_cs(email: Any) -> bool:
     return _normalise(email) == E2E_CIS_CS_EMAIL
 
 
+def is_e2e_owner_like(email: Any) -> bool:
+    """True for any value that trims and lower-cases to the A10h address (a non-ASCII look-alike included)."""
+    return _normalise(email) == E2E_OWNER_EMAIL
+
+
+def e2e_owner_allowed(email: Any, groups: Any) -> bool:
+    """A10h: the raw value is ASCII (U+212A KELVIN SIGN folds to ``k`` only after lower-casing) and the groups are
+    exactly :data:`E2E_OWNER_GROUPS`."""
+    return isinstance(email, str) and email.isascii() and frozenset(groups or ()) == E2E_OWNER_GROUPS
+
+
 def is_e2e_mailbox_address(address: Any) -> bool:
     """True when ``address`` is ``<local>@`` exactly :data:`E2E_MAIL_DOMAIN` (ASCII only, one ``@``, non-empty local
-    part). The staff E2E addresses themselves (A10b, A10c, A10d) are not
+    part). The staff E2E addresses themselves (A10b, A10c, A10d, A10h) are not
     invitees. ASCII is checked BEFORE lower-casing: U+212A KELVIN SIGN
     lower-cases to ASCII ``k`` and must not alias an E2E mailbox (the trigger's rule)."""
     if not isinstance(address, str) or not address.isascii():
         return False
     value = _normalise(address)
-    if value.count("@") != 1 or value in (E2E_CIS_ADMIN_EMAIL, E2E_CRM_STAFF_EMAIL, E2E_CIS_CS_EMAIL):
+    if value.count("@") != 1 or value in (E2E_CIS_ADMIN_EMAIL, E2E_CRM_STAFF_EMAIL, E2E_CIS_CS_EMAIL, E2E_OWNER_EMAIL):
         return False
     local, domain = value.split("@")
     return bool(local) and domain == E2E_MAIL_DOMAIN
