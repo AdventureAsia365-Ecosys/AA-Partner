@@ -1,6 +1,6 @@
 // AA-1152: the AA add-on drawer tab and the planner prices panel helpers (invented places only).
 import { describe, expect, it } from "vitest";
-import { changedSteps, durationText, placesText, weekdaysText } from "@/lib/aaAddons";
+import { addonNoteKeys, changedSteps, durationText, placesText, weekdaysText, type AaAddonList } from "@/lib/aaAddons";
 import { drawerTabs } from "@/lib/agencyItems";
 import { builderErrorKey } from "@/lib/builder";
 import { t } from "@/lib/i18n";
@@ -33,6 +33,17 @@ describe("AA add-on drawer", () => {
   it("names the add-on refusals", () => {
     expect(t("en", builderErrorKey("aa_addon_needs_tour"))).toContain("AA tour");
     expect(t("vi", builderErrorKey("aa_addon_not_offered"))).not.toBe("");
+    // S291 follow-up: an add-on of another place than the tour day's is refused with its own words.
+    expect(t("en", builderErrorKey("aa_addon_not_on_tour"))).toContain("AA tour");
+    expect(t("vi", builderErrorKey("aa_addon_not_on_tour"))).not.toBe(t("en", builderErrorKey("aa_addon_not_on_tour")));
+  });
+
+  it("says why the tour day offers nothing", () => {
+    const base: AaAddonList = { date: "2027-03-02", party: 2, currency: "USD", place: null, needs_tour: false, items: [] };
+    expect(addonNoteKeys(base)).toEqual(["addon.none"]);
+    expect(addonNoteKeys({ ...base, needs_tour: true, date: null })).toEqual(["addon.needsTour", "addon.noDate"]);
+    expect(addonNoteKeys({ ...base, no_tour_place: true })).toEqual(["addon.noTourPlace"]);
+    expect(t("en", "addon.noTourPlace")).toContain("tour");
   });
 });
 

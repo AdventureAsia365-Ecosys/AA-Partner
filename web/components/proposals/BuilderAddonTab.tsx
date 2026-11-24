@@ -1,14 +1,14 @@
 "use client";
 // web/components/proposals/BuilderAddonTab.tsx — the builder drawer's "AA add-on" tab (AA-1152; S285 advisory PR-29
-// T6, B2 option C). The optional activities AA sells on the block's day (Booking's add-on offers, read by the API from
-// booking.b2b.v1 GET /add-ons), the ones at the day's place first, each with the agency's suggested price per traveller
+// T6, B2 option C). The optional activities AA sells on the block's day at a place of the AA tour that day (Booking's
+// add-on offers, read and filtered by the API from booking.b2b.v1 GET /add-ons), the ones at the day's place first, each with the agency's suggested price per traveller
 // (its markup on AA's price, else AA's suggested retail price, rounded up to its step) and, for owner and agent, AA's
 // price. "Add" puts it in this block through the API's add-on write (a live Booking quote on the trip's AA tour). A
 // traveller's ticked add-on arrives on the trip as its sv: code in the lead message; it is in this list on its day.
 // Calls through the BFF allow-list: GET / POST proposals/{id}/blocks/{block}/aa-addons.
 import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
-import { durationText, placesText, weekdaysText, type AaAddon, type AaAddonList } from "@/lib/aaAddons";
+import { addonNoteKeys, durationText, placesText, weekdaysText, type AaAddon, type AaAddonList } from "@/lib/aaAddons";
 import { bffSend } from "@/lib/bffClient";
 import { builderErrorKey, type BuilderView } from "@/lib/builder";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
@@ -61,12 +61,12 @@ function AddonRow({
   );
 }
 
-/** Why nothing can be added yet: no AA tour on the proposal, no day 1 date, or no add-on that day. */
+/** Why nothing can be added yet: no AA tour on the proposal, no known place of the tour that day, no day 1 date, or
+ * no add-on at the tour day's places. */
 function AddonNotes({ list, tr }: { list: AaAddonList; tr: (key: string) => string }) {
-  const keys = [list.needs_tour && "addon.needsTour", !list.date && "addon.noDate", list.items.length === 0 && "addon.none"];
   return (
     <>
-      {keys.filter((k): k is string => Boolean(k)).map((k) => (
+      {addonNoteKeys(list).map((k) => (
         <p key={k} style={note}>
           {tr(k)}
         </p>

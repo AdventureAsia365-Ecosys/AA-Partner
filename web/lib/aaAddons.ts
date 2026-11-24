@@ -32,7 +32,20 @@ export interface AaAddonList {
   currency: string;
   place: string | null;
   needs_tour: boolean;
+  /** An AA tour is there but its day has no known place yet: nothing can be offered (S291 follow-up). */
+  no_tour_place?: boolean;
+  /** Only the add-ons sold at a place of the AA tour on this day (the API filters; it refuses any other). */
   items: AaAddon[];
+}
+
+/** The notes the drawer shows above the list: why nothing (or nothing more) can be added. */
+export function addonNoteKeys(list: AaAddonList): string[] {
+  const keys: string[] = [];
+  if (list.needs_tour) keys.push("addon.needsTour");
+  else if (list.no_tour_place) keys.push("addon.noTourPlace");
+  if (!list.date) keys.push("addon.noDate");
+  if (list.items.length === 0 && !list.needs_tour && !list.no_tour_place) keys.push("addon.none");
+  return keys;
 }
 
 export interface PlannerPricesCurrency {

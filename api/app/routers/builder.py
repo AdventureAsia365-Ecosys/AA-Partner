@@ -440,7 +440,7 @@ async def get_aa_addons(
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
         day = await aa_addons.day_of(ctx, proposal_id, block_id)
-    return aa_addons.listing(await aa_addons.offered(client, tenant_id, day), day)
+    return aa_addons.listing(await aa_addons.day_offered(client, tenant_id, day), day)
 
 
 @router.post("/proposals/{proposal_id}/blocks/{block_id}/aa-addons", status_code=201)
