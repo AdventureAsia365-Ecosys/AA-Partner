@@ -5,7 +5,10 @@ drawer and its add route follow the same rule, so an agency cannot put an add-on
 
 The CRM day has free text for its place, never a CIS id, so the places come from the AA tour itself: the catalog cache
 (``crm.aa_catalog_tour.body``, CIS ``catalog.http.v1`` ``Tour.days[].places[].destination_id``, the ids Booking's
-``GET /add-ons`` answers with). For a block on proposal day *P*:
+``GET /add-ons`` answers with), plus the tour day's overnight destination (contract 1.4,
+``Tour.days[].overnight_destination_id``: where the travellers sleep, which TripPlanner's day cards list first and
+which may be none of the day's stops). A body cached before 1.4 has no overnight key and keeps its stops only. For a
+block on proposal day *P*:
 
 - every whole AA tour of the version (a live AA option of component ``trip_plan``) starts on the earliest day of a
   block that holds it (the day :mod:`app.proposals.aa_days` copies its day 1 to); its tour day on *P* is
@@ -77,7 +80,8 @@ def norm(destination_id: Any) -> str:
 
 
 def days_places(raw: Any) -> dict[int, frozenset[str]]:
-    """The served body's ``days`` as {day number: destination ids}; a malformed day or place is skipped."""
+    """The served body's ``days`` as {day number: destination ids}: the day's places and its overnight destination
+    (contract 1.4; absent or null = none); a malformed day, place or overnight id is skipped."""
     if isinstance(raw, str):
         try:
             raw = json.loads(raw)
@@ -94,6 +98,9 @@ def days_places(raw: Any) -> dict[int, frozenset[str]]:
         ids = {
             norm(p.get("destination_id")) for p in (places if isinstance(places, list) else []) if isinstance(p, dict)
         }
+        overnight = day.get("overnight_destination_id")
+        if isinstance(overnight, str):
+            ids.add(norm(overnight))
         out[number] = frozenset(i for i in ids if i)
     return out
 
