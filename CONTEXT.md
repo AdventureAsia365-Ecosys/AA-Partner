@@ -2231,12 +2231,16 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
   markup, the RRP or a supplier. Switch off = empty lists, TripPlanner hides every price of the agency.
 - **AA add-on drawer** (AA-1152; S285 advisory PR-29 T6; `app/proposals/aa_addons.py`, `app/booking/addons.py`,
   `web/components/proposals/BuilderAddonTab.tsx`): the builder's drawer tab "AA add-on" lists the optional activities
-  AA sells on the block's day (`booking.b2b.v1` 1.11 `GET /add-ons` for the day's date and party), the ones whose CIS
+  AA sells on the block's day (`booking.b2b.v1` 1.11 `GET /add-ons` for the day's date and party) at a place of the AA
+  tour on that day (S291 follow-up, the TripPlanner day cards' rule; `app/proposals/aa_addon_places.py`: the CIS
+  destination ids of the tour day that falls on the block's day in the catalog cache, the first day before the tour and
+  the last day after it, every place of a tour only there as parts; none known = nothing offered), the ones whose CIS
   place name matches the day's place first, each with the agency's suggested price per traveller (the margin rule of
   AA-1030: a markup suggestion and AA's price only for owner / agent). `POST /crm/v1/proposals/{id}/blocks/{block}/
   aa-addons` adds one as an AA option (the AA item's two steps, AA's name read again from Booking, its RRP as the "from"
-  price) on the AA tour of the same day, else the proposal's first AA tour (`crm.option` keeps the tour key); 409
-  `aa_addon_needs_tour` without one, 409 `aa_addon_not_offered` when Booking no longer sells it that day. A
+  price) on the whole AA tour nearest that day, else the proposal's first AA tour (`crm.option` keeps the tour key); 409
+  `aa_addon_needs_tour` without one, 409 `aa_addon_not_offered` when Booking no longer sells it that day, 409
+  `aa_addon_not_on_tour` when Booking sells it at none of the tour day's places (checked before the quote). A
   traveller's ticked add-ons arrive with the TripPlanner lead (`lead.submitted.v1` 1.2 `day_plan[].addons`) as
   "Day N AA add-on: <name> (sv:...)" lines of the inquiry message.
 - **Retail pricing** (AA-1066, crm-048; `app/proposals/pricing.py`, `app/proposals/discount.py`; decisions in

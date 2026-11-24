@@ -182,6 +182,7 @@ def _day(**over: Any) -> dict[str, Any]:
         "currency": "USD",
         "place": "Lantern Bay old town",
         "tour_source_id": "SYN-TOUR-0042",
+        "tour_places": frozenset({PLACE}),
         "rctx": {"markups": {"activity": D("20")}, "rules": [], "today": DAY, "round_step": D("1")},
         "sees_margin": True,
     }
@@ -206,7 +207,8 @@ def test_listing_puts_the_day_place_first_with_the_agency_price() -> None:
     rrp = aa_addons.listing([walk], _day(sees_margin=False, rctx={**_day()["rctx"], "markups": {}}))["items"][0]
     assert rrp["suggested_per_person"] == "45.00" and rrp["suggested_basis"] == "aa_rrp"
     assert aa_addons.listing([], _day(tour_source_id=None, date=None)) == {
-        "date": None, "party": 2, "currency": "USD", "place": "Lantern Bay old town", "needs_tour": True, "items": [],
+        "date": None, "party": 2, "currency": "USD", "place": "Lantern Bay old town", "needs_tour": True,
+        "no_tour_place": False, "items": [],
     }  # fmt: skip
 
 
@@ -241,9 +243,13 @@ async def test_add_on_needs_an_aa_tour_and_takes_booking_s_name(monkeypatch: pyt
                 "party": 2, "service_date": DAY.isoformat(), "tour_source_id": body["tour_source_id"]}  # fmt: skip
 
     monkeypatch.setattr(aa_addons.builder, "aa_plan", fake_plan)
-    conn = ScriptedConn().on("SELECT o.aa_tour_source_id", "SYN-TOUR-0042")
+    # A tour only there as parts (no whole tour): the add-on hangs on it, every place of its days is allowed (S291).
+    days = [{"day_no": 1, "places": [{"destination_id": PLACE.upper(), "name": "Lantern Bay"}]}]
+    conn = (
+        ScriptedConn().on("SELECT o.aa_tour_source_id", "SYN-TOUR-0042").on("SELECT body -> 'days'", json.dumps(days))
+    )
     plan = await aa_addons.plan(tenant_ctx(conn), uuid.uuid4(), 1, uuid.uuid4(), SV, "activity")
-    assert plan["addon"] is True and plan["tour_source_id"] == "SYN-TOUR-0042"
+    assert plan["addon"] is True and plan["tour_source_id"] == "SYN-TOUR-0042" and plan["tour_places"] == [PLACE]
 
     async def fake_quote(client: Any, tenant_id: Any, the_plan: Any) -> Any:
         return aa_addons.aa_options.AaQuote(

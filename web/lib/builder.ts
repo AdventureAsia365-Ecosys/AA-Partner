@@ -212,6 +212,7 @@ export function builderErrorKey(detail: string): MessageKey {
     aa_tour_not_served: "builder.err.aa_tour_not_served",
     aa_addon_needs_tour: "builder.err.aa_addon_needs_tour", // AA-1152
     aa_addon_not_offered: "builder.err.aa_addon_not_offered", // AA-1152
+    aa_addon_not_on_tour: "builder.err.aa_addon_not_on_tour", // AA-1152 follow-up (S291)
     day_has_no_date: "builder.err.day_has_no_date",
     rule_same_block: "builder.err.rule_same_block",
     rule_exists: "builder.err.rule_exists",

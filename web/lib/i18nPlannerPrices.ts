@@ -5,9 +5,10 @@
 
 export const plannerPricesEn = {
   "builder.drawer.addon": "AA add-on",
-  "addon.help": "Optional activities AA sells on this day. Pick one to add it to this block with a live AA price.",
+  "addon.help": "Optional activities AA sells on this day at the places of the AA tour. Pick one to add it to this block with a live AA price.",
   "addon.load": "Show AA add-ons",
-  "addon.none": "AA sells no add-on on this day.",
+  "addon.none": "AA sells no add-on at the AA tour's places on this day.",
+  "addon.noTourPlace": "AA has no place on record for the tour on this day yet, so no add-on can be offered.",
   "addon.noDate": "Set the date of day 1 to see the add-ons of this day and their prices.",
   "addon.needsTour": "Add the AA tour to this proposal first: AA add-ons are sold with an AA trip.",
   "addon.atPlace": "At this day's place",
@@ -23,6 +24,7 @@ export const plannerPricesEn = {
   "addon.add": "Add",
   "builder.err.aa_addon_needs_tour": "Add the AA tour first: AA add-ons are sold with an AA trip.",
   "builder.err.aa_addon_not_offered": "AA does not sell this add-on on that day any more. Reload the list.",
+  "builder.err.aa_addon_not_on_tour": "This add-on is not sold at a place of the AA tour on that day. Pick one from the day's list.",
   "plannerPrices.title": "Prices on my planner and rounding",
   "plannerPrices.help": "Every price the CRM suggests (AA items in proposals, the \"from\" prices on your trip planner) is your price: AA's price plus your markup, or AA's suggested retail price when you set no markup, rounded up per traveller to the step you pick. AA's own price is never shown to travellers.",
   "plannerPrices.show": "Show prices on my planner",
@@ -37,9 +39,10 @@ export const plannerPricesEn = {
 
 export const plannerPricesVi: Record<keyof typeof plannerPricesEn, string> = {
   "builder.drawer.addon": "Dịch vụ thêm AA",
-  "addon.help": "Các hoạt động tuỳ chọn AA bán trong ngày này. Chọn một mục để thêm vào khối này với giá AA trực tiếp.",
+  "addon.help": "Các hoạt động tuỳ chọn AA bán trong ngày này tại các điểm của tour AA. Chọn một mục để thêm vào khối này với giá AA trực tiếp.",
   "addon.load": "Xem dịch vụ thêm AA",
-  "addon.none": "AA không bán dịch vụ thêm nào trong ngày này.",
+  "addon.none": "AA không bán dịch vụ thêm nào tại các điểm của tour AA trong ngày này.",
+  "addon.noTourPlace": "AA chưa có điểm nào của tour trong ngày này, nên chưa thể gợi ý dịch vụ thêm.",
   "addon.noDate": "Đặt ngày của ngày 1 để xem dịch vụ thêm của ngày này và giá.",
   "addon.needsTour": "Thêm tour AA vào báo giá trước: dịch vụ thêm AA được bán kèm chuyến AA.",
   "addon.atPlace": "Tại điểm của ngày này",
@@ -55,6 +58,7 @@ export const plannerPricesVi: Record<keyof typeof plannerPricesEn, string> = {
   "addon.add": "Thêm",
   "builder.err.aa_addon_needs_tour": "Thêm tour AA trước: dịch vụ thêm AA được bán kèm chuyến AA.",
   "builder.err.aa_addon_not_offered": "AA không còn bán dịch vụ thêm này vào ngày đó. Tải lại danh sách.",
+  "builder.err.aa_addon_not_on_tour": "Dịch vụ thêm này không bán tại điểm nào của tour AA trong ngày đó. Chọn một mục trong danh sách của ngày.",
   "plannerPrices.title": "Giá trên trang lập lịch trình và làm tròn",
   "plannerPrices.help": "Mọi giá CRM gợi ý (mục AA trong báo giá, giá \"từ\" trên trang lập lịch trình của bạn) là giá của bạn: giá AA cộng mức cộng của bạn, hoặc giá bán lẻ gợi ý của AA khi bạn chưa đặt mức cộng, làm tròn lên theo từng khách tới bước bạn chọn. Giá của AA không bao giờ hiện cho khách.",
   "plannerPrices.show": "Hiện giá trên trang lập lịch trình của tôi",
