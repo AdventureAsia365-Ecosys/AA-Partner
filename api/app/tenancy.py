@@ -99,7 +99,7 @@ from dataclasses import dataclass, field
 
 import asyncpg
 
-from app import tenant_gate
+from app import tenant_gate, tenant_status
 from app.audit import INSERT_SQL, AuditEvent, current_request_id
 from app.auth import e2e_staff
 from app.auth.route_guard import Caller
@@ -605,7 +605,7 @@ async def _agency_tx(
     pending: Exception | None = None
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
-        status = await conn.fetchval(TENANT_SQL, tenant_id)
+        status = await tenant_status.read(conn, TENANT_SQL, tenant_id, job=statuses is None)  # S291: tenant_status.memo
         if statuses is None:
             if status is None:
                 raise Forbidden("not_a_member")

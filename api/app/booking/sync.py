@@ -62,10 +62,10 @@ from typing import Any
 
 import asyncpg
 
-from app import cancellation, stages
+from app import cancellation, stages, tenant_status
 from app.audit import MAX_OBJECT_IDS
 from app.audit_export import registry
-from app.booking import contract, proposal_lines, rehold
+from app.booking import contract, proposal_checks, proposal_lines, rehold
 from app.booking.client import BookingClient, BookingRefusal, BookingUnavailable
 from app.errors import Forbidden, NotFound
 from app.jobs.queue import Job
@@ -819,7 +819,7 @@ class BookingSync:
         counts: Counter[str] = Counter()
         for tenant_id in tenants:
             try:
-                await self.run_agency(pool, tenant_id, counts, feed=not only)
+                await tenant_status.scoped(self.run_agency(pool, tenant_id, counts, feed=not only))  # S291
             except (Forbidden, NotFound):
                 counts["skipped"] += 1  # locked, offboarding or gone
             except Exception as exc:  # noqa: BLE001 — one agency's error must not stop every later agency
@@ -918,7 +918,7 @@ class BookingSync:
 
     async def run_agency(self, pool: asyncpg.Pool, tenant_id: uuid.UUID, counts: Counter[str], *, feed: bool) -> None:
         sent = 0
-        outage: str | None = await self.proposal_sets(pool, tenant_id, counts)
+        outage = await proposal_checks.CHECKS.run(self, pool, tenant_id, counts, nudged=not feed)  # S291
         if outage is None:
             outage = await self.invoice_holds(pool, tenant_id, counts)
         while sent < MAX_REQUESTS:

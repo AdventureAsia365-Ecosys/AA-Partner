@@ -37,7 +37,7 @@ from typing import Any
 
 import asyncpg
 
-from app import agencies, entitlements
+from app import agencies, entitlements, tenant_status
 from app.audit_export import registry
 from app.catalog import store as catalog_store
 from app.cis import feed_state
@@ -363,7 +363,7 @@ async def _set_status(
                 object_ids=ticket_ids(ticket_ref),
             )  # fmt: skip
         elif current != target:
-            await ctx.conn.execute(SET_STATUS_SQL, tenant_id, target)
+            await ctx.conn.execute(SET_STATUS_SQL, tenant_status.leaving(tenant_id), target)  # S291
             ctx.audit(
                 action, "allowed", "tenant", str(tenant_id), fields=("status",), reason=reason,
                 object_ids=ticket_ids(ticket_ref),
@@ -508,6 +508,7 @@ async def delete_test_agency(
         for r in await ctx.conn.fetch(LIVE_INVITES_SQL):
             await ctx.conn.fetchval(team.REVOKE_SQL, r["invitation_id"])
             ctx.audit("invite_revoke", "allowed", "member_invitation", str(r["invitation_id"]), reason="agency_delete")
+        tenant_status.leaving(tenant_id)  # S291: no job context of this process reuses its "active" any more
         await keys.destroy(ctx)  # crypto-shred, after the checks, before the trash and the commit
         purge_after = await ctx.conn.fetchval(TRASH_TENANT_SQL, tenant_id, ctx.actor, BACKUP_PURGE_DAYS)
         if purge_after is None:
@@ -516,8 +517,7 @@ async def delete_test_agency(
             "agency_delete", "allowed", "tenant", str(tenant_id), fields=("deleted_at",),
             reason="synthetic_test_agency", object_ids=ticket_ids(ticket_ref),
         )  # fmt: skip
-        # S263 (AA-939 follow-up): the partner-pool accounts its invitation claims created and nobody signed in to
-        # are deleted by the clean-up job, queued here so it runs only if this delete commits.
+        # S263 (AA-939 follow-up): the partner-pool accounts clean-up job, queued so it runs only if this commits.
         await partner_accounts.queue_after_agency_delete(ctx)
     log.info("crm_ops_test_agency_deleted tenant_id=%s", tenant_id)
     return {"tenant_id": str(tenant_id), "status": "deleted"}

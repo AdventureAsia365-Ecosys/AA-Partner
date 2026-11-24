@@ -53,6 +53,7 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 import asyncpg
 
+from app import tenant_status
 from app.documents.store import DocumentStore
 from app.errors import Conflict, Forbidden, Invalid, NotFound, ServiceError, Unavailable
 from app.jobs import queue as jobs
@@ -306,7 +307,7 @@ async def confirm_erase(
         ctx.audit("offboarding_erase", "allowed", "erasure_request", str(request_id), reason="scheduled")
         return view(await ctx.conn.fetchrow(REQUEST_SQL, request_id)) or {}
     await ctx.conn.execute(CONFIRM_SQL, request_id, f"member:{ctx.member_id}")
-    await ctx.conn.execute(TENANT_OFFBOARDING_SQL, ctx.tenant_id)
+    await ctx.conn.execute(TENANT_OFFBOARDING_SQL, tenant_status.leaving(ctx.tenant_id))  # S291
     await jobs.enqueue(
         ctx.conn,
         OFFBOARD,
@@ -522,7 +523,7 @@ async def _erase(
                 },
             }
             await ctx.conn.execute(ERASED_SQL, request_id, backup_purge_by, json.dumps(receipt))
-            await ctx.conn.execute(TENANT_OFFBOARDED_SQL, tenant_id)
+            await ctx.conn.execute(TENANT_OFFBOARDED_SQL, tenant_status.leaving(tenant_id))  # S291
             ctx.audit("offboarding_erase", "allowed", "tenant", str(tenant_id), reason="erased")
             # Last, still before the commit: the bucket objects. A bucket error here is not a refusal (not a
             # ServiceError): the rows roll back, the agency stays offboarding and the worker retries (a missing
@@ -571,7 +572,7 @@ async def _start(pool: asyncpg.Pool, tenant_id: uuid.UUID, request_id: uuid.UUID
             if not_before is not None and not_before > dt.datetime.now(dt.UTC):
                 raise Unavailable("cool_off_running")  # queued early (clock skew): retried later
             await ctx.conn.execute(START_SQL, request_id)
-            await ctx.conn.execute(TENANT_OFFBOARDING_SQL, tenant_id)
+            await ctx.conn.execute(TENANT_OFFBOARDING_SQL, tenant_status.leaving(tenant_id))  # S291
             ctx.audit("offboarding_erase", "allowed", "erasure_request", str(request_id), reason="cool_off_ended")
     except Forbidden:
         return True  # the agency is already offboarding (a confirmation without a cool-off): the erase decides

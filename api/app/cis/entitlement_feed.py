@@ -84,6 +84,7 @@ from typing import Any
 
 import asyncpg
 
+from app import tenant_status
 from app.audit_export import registry
 from app.cis import contract, feed_state
 from app.cis.http import HttpError
@@ -372,7 +373,7 @@ async def _apply_in(ctx: SystemContext, wanted: Projection, counts: RunCounts) -
     tenant = await ctx.conn.fetchrow(TENANT_LOCK_SQL, ctx.tenant_id)
     change = status_change(wanted.in_service, tenant["status"], tenant["lock_source"])
     if change == "lock":
-        await ctx.conn.execute(SET_LOCK_SQL, ctx.tenant_id)
+        await ctx.conn.execute(SET_LOCK_SQL, tenant_status.leaving(ctx.tenant_id))  # S291
         ctx.audit("tenant_lock", "allowed", "tenant", str(ctx.tenant_id), fields=("status",), reason="cis_account")
         counts.locked += 1
     elif change == "unlock":

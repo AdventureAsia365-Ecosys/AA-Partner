@@ -16,8 +16,10 @@ Steps, in one transaction of the agency (:func:`app.tenancy.lifecycle_tx`, actor
    ``--export`` names one);
 2. the sealed object from the bucket: its SHA-256 must equal ``object_sha256``; opened under the agency ``export`` DEK;
    the ZIP's SHA-256 must equal ``content_sha256``; every file listed in ``SHA256SUMS`` must match;
-3. **restore into a throwaway schema**: every table of ``manifest.json`` becomes a temporary table (the session's own
-   ``pg_temp`` schema, ``ON COMMIT DROP``: nothing outlives the drill, no other session can see it) with the export's
+3. **restore into a throwaway schema**: every table of ``manifest.json`` becomes, in turn, the one temporary table
+   :data:`TEMP_TABLE` (the session's own ``pg_temp`` schema, dropped after each table and ``ON COMMIT DROP``: nothing
+   outlives the drill, no other session can see it; one fixed name, so the drill adds no new statement texts to
+   ``pg_stat_statements`` per table, S291 C4.3 W48 finding 5) with the export's
    columns (a column the live table has keeps its type, so a value that no longer parses fails the drill; a decrypted
    ``*_enc`` value and any other type become ``text``), loaded from ``json/<table>.json`` with
    ``jsonb_populate_recordset``;
@@ -57,6 +59,7 @@ import asyncpg
 from app.documents.store import DocumentStore
 from app.errors import NotFound, Unavailable
 from app.lifecycle import pilot
+from app.pg_connection import StableSavepointConnection
 from app.portability import tables as T
 from app.tenancy import LifecycleContext, lifecycle_tx
 from app.vault import Vault
@@ -73,6 +76,10 @@ SELECT * FROM crm.export_job
  ORDER BY completed_at DESC, export_job_id LIMIT 1
 """
 ONE_SQL = "SELECT * FROM crm.export_job WHERE export_job_id = $1 AND scope = 'tenant'"
+# S291 (C4.3 W48 finding 5): one temporary table name for every restored table (a name per table made new statement
+# texts on every drill), dropped after each table.
+TEMP_TABLE = "rd_drill"
+DROP_TEMP_SQL = f"DROP TABLE pg_temp.{TEMP_TABLE}"
 LIVE_COLUMNS_SQL = """
 SELECT a.attname::text AS name, format_type(a.atttypid, a.atttypmod) AS type
   FROM pg_catalog.pg_attribute a
@@ -223,13 +230,15 @@ async def open_export(ctx: LifecycleContext, vault: Vault, store: DocumentStore,
 
 async def restore_table(ctx: LifecycleContext, n: int, entry: dict[str, Any], rows: list[dict[str, Any]],
                         pk: tuple[str, ...]) -> TableResult:  # fmt: skip
-    """Load one table of the export into ``pg_temp.rd_<n>`` and count it (restored, live, primary keys live)."""
+    """Load one table of the export into ``pg_temp.``:data:`TEMP_TABLE` and count it (restored, live, primary keys
+    live); the temporary table is dropped before the next table reuses the name. ``n`` (the manifest position) is no
+    longer part of any statement text."""
     table = str(entry["table"])
     live = {r["name"]: r["type"] for r in await ctx.conn.fetch(LIVE_COLUMNS_SQL, table)}
     columns: list[str] = []
     for r in rows:
         columns.extend(k for k in r if k not in columns)
-    temp = f"rd_{n}"
+    temp = TEMP_TABLE
     if columns:
         spec = ", ".join(f"{ident(c)} {kept_type(live.get(c))}" for c in columns)
     else:
@@ -252,6 +261,7 @@ async def restore_table(ctx: LifecycleContext, n: int, entry: dict[str, Any], ro
                     f"(SELECT 1 FROM crm.{ident(table)} l WHERE {on})"
                 )
             )
+    await ctx.conn.execute(DROP_TEMP_SQL)
     return TableResult(table, int(entry.get("rows", -1)), restored, live_rows, matched)
 
 
@@ -349,6 +359,7 @@ async def _main(argv: list[str]) -> int:  # pragma: no cover — the container e
             max_size=2,
             command_timeout=300,
             server_settings={"application_name": "crm-restore-drill"},
+            connection_class=StableSavepointConnection,
         )
         tenant = args.tenant or await pilot_tenant(pool)
         report = await drill(pool, keys, store, tenant, args.export)

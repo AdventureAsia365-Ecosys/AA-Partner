@@ -233,6 +233,8 @@ def create_app(
                     ),
                 ),
                 recurring=job_handlers.RECURRING,
+                # S291: the recurring kinds' history DELETE at most once per this many seconds (admin setting).
+                prune_every_s=lambda: float(ps.get(ps.JOBS_HISTORY_PRUNE_EVERY_S)),
                 hooks=job_handlers.build_hooks(
                     retention_utc_hour=settings.job_retention_utc_hour,
                     ingest_store=app.state.ingest_store if settings.crm_ingest_domain else None,

@@ -67,6 +67,7 @@ from typing import TYPE_CHECKING, Any
 
 import asyncpg
 
+from app import tenant_status
 from app.cis.http import HttpError
 from app.cis.m2m import TokenError
 from app.cis.membership_feed import FeedConfig, backoff_seconds, http_error_class
@@ -432,7 +433,7 @@ class TenantErase:
                 await ctx.conn.execute(CANCEL_REQUEST_SQL, row["request_id"])
                 if row["export_object_key"]:
                     objects.append(row["export_object_key"])
-            await ctx.conn.execute(OFFBOARDING_SQL, ctx.tenant_id)
+            await ctx.conn.execute(OFFBOARDING_SQL, tenant_status.leaving(ctx.tenant_id))  # S291
             await portability_exports.withdraw(ctx, self._store, None, dry_run=False, pending=objects)
             counts = await erase.erase(ctx, "tenant", ctx.tenant_id, dry_run=False, store=self._store, pending=objects)
             assert self._keys is not None  # noqa: S101 — checked before the transaction
@@ -442,7 +443,7 @@ class TenantErase:
             if not await _canary_unreadable(vault, req.request_id, canary):
                 raise Unavailable("verify_failed", "a value sealed before the key destroy still opens")
             name = 0 if agency["display_name"] == rules.erased_name(ctx.tenant_id) else 1
-            await ctx.conn.execute(ERASED_SQL, ctx.tenant_id, rules.erased_name(ctx.tenant_id))
+            await ctx.conn.execute(ERASED_SQL, tenant_status.leaving(ctx.tenant_id), rules.erased_name(ctx.tenant_id))
         invitations = await saga_store.studio_invitations(conn, req.tenant_id, dry_run=False)
         tables = rules.plan_entries(counts, live_keys=destroyed, name_to_erase=name, invitations=invitations)
         return tables, objects

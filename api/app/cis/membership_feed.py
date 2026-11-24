@@ -60,6 +60,7 @@ from typing import Any
 import asyncpg
 
 from app import platform_settings as ps
+from app import tenant_status
 from app.cis import contract, feed_state
 from app.cis.http import DEFAULT_TIMEOUT_S, HttpError, Transport, urllib_transport
 from app.cis.m2m import TokenError, TokenProvider
@@ -245,7 +246,7 @@ async def _apply_removal(ctx: SystemContext, event_id: uuid.UUID, membership: di
         # The last owner left in CIS: recovery only (card E). A CIS lifecycle lock becomes this stricter one; an AA
         # lock stays AA's (AA decides when to unlock; a recovery is still needed for an owner).
         if tenant["status"] == "active" or (tenant["status"] == "locked" and tenant["lock_source"] == "cis_tenant"):
-            await ctx.conn.execute(SET_LOCK_SQL, ctx.tenant_id, "cis_membership")
+            await ctx.conn.execute(SET_LOCK_SQL, tenant_status.leaving(ctx.tenant_id), "cis_membership")  # S291
             ctx.audit(
                 "tenant_lock", "allowed", "tenant", str(ctx.tenant_id), fields=("status",),
                 reason="cis_last_owner_removed", object_ids=ids,
@@ -259,7 +260,7 @@ async def _apply_lifecycle(ctx: SystemContext, event_id: uuid.UUID, event_type: 
     outcome, reason, change = lifecycle_decision(event_type, tenant["status"], tenant["lock_source"])
     ids = (f"cis_event:{event_id}",)
     if change == "lock":
-        await ctx.conn.execute(SET_LOCK_SQL, ctx.tenant_id, "cis_tenant")
+        await ctx.conn.execute(SET_LOCK_SQL, tenant_status.leaving(ctx.tenant_id), "cis_tenant")  # S291
         ctx.audit(
             "tenant_lock", "allowed", "tenant", str(ctx.tenant_id), fields=("status",),
             reason=LOCK_EVENTS[event_type], object_ids=ids,

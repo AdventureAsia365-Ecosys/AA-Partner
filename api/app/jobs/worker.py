@@ -105,6 +105,7 @@ class Worker:
         lease_seconds: int = 300,
         maintenance_every: int = 15,
         clock: Callable[[], float] = time.time,
+        prune_every_s: Callable[[], float] | None = None,
     ) -> None:
         unknown = {r.kind for r in recurring} - set(handlers)
         if unknown:
@@ -120,6 +121,11 @@ class Worker:
         self._maintenance_every = maintenance_every
         self._clock = clock
         self._ticks = 0
+        # S291 (C4.3 W48 finding 4): the recurring kinds' history DELETE ran on every maintenance pass (about every 7 s
+        # with three kinds). With ``prune_every_s`` (the app passes crm.jobs.history_prune_every_s) it runs at most once
+        # per that many seconds per process; None = every pass (the ported template's behaviour).
+        self._prune_every_s = prune_every_s
+        self._last_prune: float | None = None
 
     async def maintenance(self, pool: asyncpg.Pool) -> None:
         reaped = await queue.reap(pool)
@@ -132,12 +138,23 @@ class Worker:
             delay = max(next_slot_start - self._clock(), 0.0)
             if await queue.enqueue(pool, rec.kind, {}, idempotency_key=key, delay_seconds=delay, max_attempts=3):
                 log.debug("scheduled %s in %.0fs", rec.kind, delay)
-            await queue.prune(pool, rec.kind, rec.keep_days)
+        if self._prune_due():
+            for rec in self._recurring:
+                await queue.prune(pool, rec.kind, rec.keep_days)
         for hook in self._hooks:
             try:
                 await hook(pool)
             except Exception as exc:  # noqa: BLE001 — a failing hook must not stop the queue
                 log.warning("maintenance hook %r failed (%s: %s)", hook, type(exc).__name__, exc)
+
+    def _prune_due(self) -> bool:
+        """Whether this maintenance pass prunes the recurring kinds' history (if so, the interval counts from now)."""
+        now = self._clock()
+        if self._prune_every_s is not None and self._last_prune is not None:
+            if now - self._last_prune < float(self._prune_every_s()):
+                return False
+        self._last_prune = now
+        return True
 
     async def run_once(self) -> bool:
         """One tick. Returns True when a job was run (the caller then polls again at once)."""

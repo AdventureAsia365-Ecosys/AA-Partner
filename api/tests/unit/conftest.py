@@ -34,3 +34,17 @@ def _settings_env_per_file():  # noqa: ANN202
     yield
     ps.configure_env({})
     settings_serve.reset()
+
+
+@_pytest.fixture(autouse=True)
+def _job_status_cache_per_test():  # noqa: ANN202
+    """S291: the job contexts' agency status cache (app.tenant_status) and the Booking sync's proposal-check memory
+    (app.booking.proposal_checks) are per process; every test starts without them (the tests reuse one agency id)."""
+    from app import tenant_status
+    from app.booking import proposal_checks
+
+    tenant_status.forget()
+    proposal_checks.CHECKS.forget()
+    yield
+    tenant_status.forget()
+    proposal_checks.CHECKS.forget()
