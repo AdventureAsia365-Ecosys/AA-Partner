@@ -2,9 +2,10 @@
 
 1. ``app.pg_connection``: savepoints are named by depth (``crm_sp_1``, ``crm_sp_2``), so ``pg_stat_statements`` (which
    keys a utility statement by its text on PostgreSQL 15) sees a handful of SAVEPOINT texts, not one per transaction;
-2. ``app.tenant_status`` (through ``app.tenancy.system_tx``): a job context keeps an ``active`` status for
-   ``crm.jobs.tenant_status_cache_s`` seconds, never any other status (fail-closed), and the platform context always
-   reads it;
+2. ``app.tenant_status`` (through ``app.tenancy.system_tx``): inside one Booking sync run of one agency (a
+   ``memo`` scope) job contexts reuse an ``active`` status, never any other status (fail-closed); a writer of this
+   process (lock, offboarding, erase, trash) reaches an open scope at once; outside a scope and in the platform context
+   the status is read every time;
 3. ``app.booking.proposal_checks`` (``app.booking.sync``): the minute run re-checks an agency's accepted proposals only
    when its last check left work or ``crm.jobs.booking_proposal_check_every_s`` has passed; a nudge run always checks;
 4. ``app.jobs.worker``: the recurring kinds' history DELETE at most once per ``crm.jobs.history_prune_every_s``;
@@ -16,8 +17,11 @@ The PostgreSQL side (rollback semantics of the depth names, the drill on a real 
 
 from __future__ import annotations
 
+import ast
+import re
 import uuid
 from collections import Counter
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -160,7 +164,180 @@ def test_both_crm_pools_use_the_connection_class() -> None:
     assert "connection_class=StableSavepointConnection" in inspect.getsource(rd._main)
 
 
-# ── 2. the job contexts' status cache ───────────────────────────────────────────────────────────────────────────────
+# ── 2. the job contexts' status memo (one Booking sync run of one agency) ──────────────────────────────────────────
+
+
+async def _open(conn: ScriptedConn, tenant: uuid.UUID = TENANT, actor: str = "job:crm_booking_sync") -> None:
+    async with tenancy.system_tx(conn, tenant, actor=actor):  # type: ignore[arg-type]
+        pass
+
+
+@pytest.mark.asyncio
+async def test_outside_a_scope_every_job_context_reads_the_status() -> None:
+    """Intake, campaigns, imports, dispatch, mail import: no scope, so a lock is seen by the very next context."""
+    conn = ScriptedConn().on(STATUS_SQL, "active")
+    await _open(conn, actor="job:crm_intake_process")
+    await _open(conn, actor="job:crm_intake_process")
+    conn.on(STATUS_SQL, "locked")
+    with pytest.raises(Forbidden):
+        await _open(conn, actor="job:crm_intake_process")
+    assert len(conn.sql(STATUS_SQL)) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_scope_reads_each_agency_once_and_a_new_scope_reads_again() -> None:
+    conn = ScriptedConn().on(STATUS_SQL, "active")
+    with tenant_status.memo():
+        for tenant in (TENANT, TENANT, OTHER, TENANT, OTHER):
+            await _open(conn, tenant)
+    assert len(conn.sql(STATUS_SQL)) == 2  # one read per agency
+    conn.on(STATUS_SQL, "locked")  # changed by another process after the scope ended
+    with tenant_status.memo(), pytest.raises(Forbidden):
+        await _open(conn)
+    assert len(conn.sql(STATUS_SQL)) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["locked", "offboarding", "offboarded", None])
+async def test_no_other_status_is_ever_remembered(status: str | None) -> None:
+    conn = ScriptedConn().on(STATUS_SQL, status)
+    with tenant_status.memo():
+        for _ in range(3):
+            with pytest.raises(Forbidden):
+                await _open(conn)
+    assert len(conn.sql(STATUS_SQL)) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_writer_of_this_process_reaches_an_open_scope_at_once() -> None:
+    """The reviewer's case: a run remembered "active", then a lock / offboarding / erase / trash in this process (the
+    writer calls tenant_status.leaving): the run's next context reads the status again and is refused."""
+    conn = ScriptedConn().on(STATUS_SQL, "active")
+    with tenant_status.memo():
+        await _open(conn)
+        await _open(conn)
+        assert tenant_status.leaving(TENANT) == TENANT  # inside the writer's transaction, not yet committed
+        await _open(conn)  # reads again: still the committed "active" (as before S291)
+        conn.on(STATUS_SQL, "offboarded")  # the writer commits
+        with pytest.raises(Forbidden):
+            await _open(conn)
+    assert len(conn.sql(STATUS_SQL)) == 3
+    # This process never remembers the agency again, even when it is active again (an unlock).
+    conn.on(STATUS_SQL, "active")
+    with tenant_status.memo():
+        await _open(conn)
+        await _open(conn)
+    assert len(conn.sql(STATUS_SQL)) == 5
+
+
+@pytest.mark.asyncio
+async def test_a_writer_during_an_in_flight_read_wins() -> None:
+    """leaving() runs while a context's status read is in flight (it returns the old "active"): not remembered."""
+
+    def answer(*_: Any) -> str:
+        tenant_status.leaving(TENANT)
+        return "active"
+
+    conn = ScriptedConn().on(STATUS_SQL, answer)
+    with tenant_status.memo():
+        await _open(conn)
+        await _open(conn)
+    assert len(conn.sql(STATUS_SQL)) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_platform_context_always_reads_the_status() -> None:
+    conn = ScriptedConn().on(STATUS_SQL, "active")
+    with tenant_status.memo():
+        await _open(conn)  # remembered for job contexts of this scope
+        conn.on(STATUS_SQL, "locked")
+        with pytest.raises(Conflict):
+            async with tenancy.platform_tx(conn, TENANT, actor="platform:staff-1"):  # type: ignore[arg-type]
+                pass
+
+
+@pytest.mark.asyncio
+async def test_the_booking_sync_runs_each_agency_in_its_own_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BookingSync.__call__: every system_tx of one agency's run shares one status read; the next agency, the next
+    run and code outside the run read again; a lock between two runs refuses the second (counted ``skipped``)."""
+    conn = ScriptedConn().on(STATUS_SQL, "active")
+
+    async def run_agency(_self: Any, pool: Any, tenant: uuid.UUID, _counts: Any, *, feed: bool) -> None:
+        for _ in range(4):
+            await _open(pool, tenant)
+
+    async def agencies(_pool: Any) -> list[Any]:
+        return [type("Agency", (), {"tenant_id": t})() for t in (TENANT, OTHER)]
+
+    monkeypatch.setattr(BookingSync, "run_agency", run_agency)
+    monkeypatch.setattr(sync.registry, "agencies", agencies)
+    handler = BookingSync(object())  # type: ignore[arg-type]
+    job = type("Job", (), {"payload": {}})()
+    assert (await handler(conn, job))["status"] == "ok"  # type: ignore[arg-type]
+    assert len(conn.sql(STATUS_SQL)) == 2  # one per agency run, not eight
+    await _open(conn)  # outside the run: reads
+    assert len(conn.sql(STATUS_SQL)) == 3
+    conn.on(STATUS_SQL, lambda t: "locked" if t == TENANT else "active")
+    result = await handler(conn, job)  # type: ignore[arg-type]
+    assert result["skipped_count"] == 1 and len(conn.sql(STATUS_SQL)) == 5
+
+
+# Every writer that moves an agency away from "active" (lock, offboarding, erase, trash) calls tenant_status.leaving in
+# the function that runs its SQL (the reviewer's finding on the S291 cache). New writers are caught here.
+LEAVING_SQL = re.compile(
+    r"UPDATE\s+crm\.tenant\s+SET\b(?:(?!\bWHERE\b)[^;])*?(\bstatus\s*=\s*('(locked|offboarding|offboarded)'|\$\d)|\bdeleted_at\s*=)",
+    re.I | re.S,
+)
+KNOWN_WRITERS = {
+    ("app/cis/entitlement_feed.py", "SET_LOCK_SQL"),
+    ("app/cis/membership_feed.py", "SET_LOCK_SQL"),
+    ("app/lifecycle/offboarding.py", "TENANT_OFFBOARDING_SQL"),
+    ("app/lifecycle/offboarding.py", "TENANT_OFFBOARDED_SQL"),
+    ("app/lifecycle/tenant_erase.py", "OFFBOARDING_SQL"),
+    ("app/lifecycle/tenant_erase.py", "ERASED_SQL"),
+    ("app/ops/console.py", "SET_STATUS_SQL"),
+    ("app/ops/console.py", "TRASH_TENANT_SQL"),
+}
+
+
+def _calls_leaving(fn: ast.AST) -> bool:
+    return any(
+        isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "leaving"
+        and isinstance(n.func.value, ast.Name)
+        and n.func.value.id == "tenant_status"
+        for n in ast.walk(fn)
+    )
+
+
+def test_every_writer_that_leaves_active_tells_the_status_memo() -> None:
+    root = Path(__file__).resolve().parents[2]
+    found: set[tuple[str, str]] = set()
+    missing: list[str] = []
+    for path in sorted((root / "app").rglob("*.py")):
+        rel = path.relative_to(root).as_posix()
+        tree = ast.parse(path.read_text())
+        names = {
+            t.id
+            for node in tree.body
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str) and LEAVING_SQL.search(node.value.value)
+            for t in node.targets
+            if isinstance(t, ast.Name)
+        }  # fmt: skip
+        found |= {(rel, n) for n in names}
+        for fn in ast.walk(tree):
+            if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            used = {n.id for n in ast.walk(fn) if isinstance(n, ast.Name) and n.id in names}
+            if used and not _calls_leaving(fn):
+                missing.append(f"{rel}::{fn.name} runs {sorted(used)} without tenant_status.leaving(...)")
+    assert found >= KNOWN_WRITERS, sorted(KNOWN_WRITERS - found)  # the pattern still sees every known writer
+    assert not missing, missing
+
+
+# ── 3. the Booking sync's accepted-proposal check ───────────────────────────────────────────────────────────────────
 
 
 class Clock:
@@ -169,86 +346,6 @@ class Clock:
 
     def __call__(self) -> float:
         return self.now
-
-
-@pytest.fixture
-def clock(monkeypatch: pytest.MonkeyPatch) -> Clock:
-    c = Clock()
-    monkeypatch.setattr(tenant_status, "_clock", c)
-    return c
-
-
-async def _open(conn: ScriptedConn, tenant: uuid.UUID = TENANT) -> None:
-    async with tenancy.system_tx(conn, tenant, actor="job:crm_booking_sync"):  # type: ignore[arg-type]
-        pass
-
-
-@pytest.mark.asyncio
-async def test_a_job_context_keeps_active_for_the_window_then_reads_again(clock: Clock) -> None:
-    assert ps.get(ps.JOBS_TENANT_STATUS_CACHE_S) == 10  # the seeded default (crm-088)
-    conn = ScriptedConn().on(STATUS_SQL, "active")
-    await _open(conn)
-    clock.now += 9.9
-    await _open(conn)
-    assert len(conn.sql(STATUS_SQL)) == 1  # one read for both contexts
-    # The agency is locked meanwhile: refused once the window has passed (the documented bound).
-    conn.on(STATUS_SQL, "locked")
-    clock.now += 0.1
-    with pytest.raises(Forbidden):
-        await _open(conn)
-    # A refusal is never kept: an unlock is seen at the next context, a lock again at the one after.
-    conn.on(STATUS_SQL, "active")
-    await _open(conn)
-    assert len(conn.sql(STATUS_SQL)) == 3
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("status", ["locked", "offboarding", "offboarded", None])
-async def test_no_other_status_is_ever_cached(clock: Clock, status: str | None) -> None:
-    conn = ScriptedConn().on(STATUS_SQL, status)
-    for _ in range(3):
-        with pytest.raises(Forbidden):
-            await _open(conn)
-    assert len(conn.sql(STATUS_SQL)) == 3 and tenant_status._SEEN == {}
-
-
-@pytest.mark.asyncio
-async def test_zero_turns_the_cache_off_and_the_cache_is_per_agency(clock: Clock) -> None:
-    conn = ScriptedConn().on(STATUS_SQL, "active")
-    await _open(conn, TENANT)
-    await _open(conn, OTHER)
-    assert len(conn.sql(STATUS_SQL)) == 2  # each agency is read once
-    settings_serve.serve({ps.JOBS_TENANT_STATUS_CACHE_S: 0})
-    try:
-        await _open(conn, TENANT)
-        await _open(conn, TENANT)
-    finally:
-        settings_serve.reset()
-    assert len(conn.sql(STATUS_SQL)) == 4 and TENANT not in tenant_status._SEEN
-    tenant_status.forget(OTHER)
-    assert tenant_status._SEEN == {}
-
-
-@pytest.mark.asyncio
-async def test_the_cache_is_bounded(clock: Clock, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tenant_status, "CACHE_MAX", 2)
-    conn = ScriptedConn().on(STATUS_SQL, "active")
-    for tenant in (TENANT, OTHER, uuid.UUID("00000000-0000-4000-8000-0000000000a3")):
-        await _open(conn, tenant)
-    assert len(tenant_status._SEEN) == 2 and TENANT not in tenant_status._SEEN
-
-
-@pytest.mark.asyncio
-async def test_the_platform_context_always_reads_the_status(clock: Clock) -> None:
-    conn = ScriptedConn().on(STATUS_SQL, "active")
-    await _open(conn)  # cached for job contexts
-    conn.on(STATUS_SQL, "locked")
-    with pytest.raises(Conflict):
-        async with tenancy.platform_tx(conn, TENANT, actor="platform:staff-1"):  # type: ignore[arg-type]
-            pass
-
-
-# ── 3. the Booking sync's accepted-proposal check ───────────────────────────────────────────────────────────────────
 
 
 class ProposalStep:

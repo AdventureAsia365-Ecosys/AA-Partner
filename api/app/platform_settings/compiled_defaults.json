@@ -639,26 +639,6 @@
    "enforced": true
   },
   {
-   "key": "crm.jobs.tenant_status_cache_s",
-   "app": "crm",
-   "area": "jobs",
-   "label": "Job context: agency status trusted for (seconds)",
-   "description": "A background job's context in one agency (system_tx) trusts the agency's last read status of active for this many seconds before reading it again (0 = read it every time). Only active is cached: a locked, offboarding, offboarded or trashed agency is never cached, so a lock or offboarding reaches every job at most this many seconds after it commits. Member requests and AA staff actions always read the status. Read by app/tenant_status.py.",
-   "value_type": "int",
-   "unit": "seconds",
-   "min_value": 0,
-   "max_value": 60,
-   "allowed_values": null,
-   "default_value": 10,
-   "scope_kind": "platform",
-   "impact": "high",
-   "approval": "single",
-   "evidence_required": false,
-   "env_override": null,
-   "cache_s": 30,
-   "enforced": true
-  },
-  {
    "key": "crm.members.default_limit",
    "app": "crm",
    "area": "members",

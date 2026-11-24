@@ -278,10 +278,13 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 - **`system_tx(pool, tenant_id, actor="job:<kind>")`** (AA-936) is a job's context in one agency (no member):
   `app.tenant_id` from the job payload, the agency must be active, the same audit queue as `tenant_tx()` with
   `actor_kind = system`. Actors `job:` / `seed:` only. Only the job handler modules (`app/intake/process.py`) and the
-  seeder may open it. S291 (AA-838, `app/tenant_status.py`): the agency's status read is cached per process for job
-  contexts only: an `active` answer is trusted for `crm.jobs.tenant_status_cache_s` (default 10 s, 0 = off), any other
-  answer is never cached, so a lock, offboarding or trash reaches every job context at most that long after it
-  commits; `tenant_tx()`, `platform_tx()`, the feeds and the public contexts read the status every time.
+  seeder may open it. S291 (AA-838, `app/tenant_status.py`): inside one Booking sync run of one agency (a `memo`
+  scope, `BookingSync.__call__`) the job contexts reuse the first `active` status read; any other answer is never
+  kept, and every writer that moves an agency away from `active` (CIS feed locks, AA lock / trash in
+  `app/ops/console.py`, offboarding, tenant erase) calls `tenant_status.leaving()` in its transaction, which drops the
+  agency from every open scope of the process at once (a unit test refuses a writer without it). A change made in
+  another process reaches a run at its end at the latest. Every other job (intake, campaigns, imports, dispatch, mail
+  import), `tenant_tx()`, `platform_tx()`, the feeds and the public contexts read the status every time.
 - **`platform_tx(pool, tenant_id, actor="platform:<staff sub>", statuses={"active"})`** (AA-939, AA-941) is AA staff
   in one agency (L1 console, `/crm/ops/v1`, audit kind `aa_ops`): the crm-008 guards let this actor remove the last
   owner, open / complete an owner recovery and write entitlements. `statuses` = the agency statuses the call may meet
@@ -433,7 +436,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-084` | `api/migrations/084_crm_agency_lines_settings.sql` | AA-1147 (**contract**: two `crm.setting_definition` INSERTs, shipped with their readers `app/ledger/agency_extras.py` like crm-082; readiness does not wait for it, the readers serve the compiled defaults): `crm.agency_lines.due_lead_days` (int days, default 3, 0..60) and `crm.agency_lines.disclaimer` (json `{en, vi}`), both platform+tenant |
 | `crm-086` | `api/migrations/086_crm_planner_prices.sql` | AA-1152 (**contract**: ALTER of `crm.tenant_settings`, so MIG-4, its own migration-only PR): `tenant_settings.price_round_step` (JSONB, default `{}`, CHECK an object of at most 512 bytes: the agency's rounding step per currency) and `show_planner_prices` (boolean, default true: its "Show prices on my planner" switch) |
 | `crm-087` | `api/migrations/087_crm_price_round_settings.sql` | AA-1152 (**contract**: two `crm.setting_definition` rows, shipped with their readers in the code PR like crm-084): `crm.agency_defaults.price_round_step` (json, default `{"USD": "1", "VND": "10000"}`) and `crm.agency_defaults.price_round_steps` (json, the steps an owner may choose: USD 1 / 5 / 10, VND 10,000 / 50,000 / 100,000); readers `app/proposals/rounding.py` |
-| `crm-088` | `api/migrations/088_crm_job_load_settings.sql` | AA-838 S291 (**contract**: three `crm.setting_definition` rows, shipped with their readers in the code PR like crm-087; C4.3 W48 findings 4 and 5): `crm.jobs.booking_proposal_check_every_s` (int, default 300, 60-3600; `app/booking/proposal_checks.py`), `crm.jobs.tenant_status_cache_s` (int, default 10, 0-60; `app/tenant_status.py`), `crm.jobs.history_prune_every_s` (int, default 60, 60-3600; `app/jobs/worker.py`, wired in `app/main.py`) |
+| `crm-088` | `api/migrations/088_crm_job_load_settings.sql` | AA-838 S291 (**contract**: two `crm.setting_definition` rows, shipped with their readers in the code PR like crm-087; C4.3 W48 findings 4 and 5): `crm.jobs.booking_proposal_check_every_s` (int, default 300, 60-3600; `app/booking/proposal_checks.py`), `crm.jobs.history_prune_every_s` (int, default 60, 60-3600; `app/jobs/worker.py`, wired in `app/main.py`) |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`

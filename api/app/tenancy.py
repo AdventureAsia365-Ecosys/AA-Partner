@@ -605,7 +605,7 @@ async def _agency_tx(
     pending: Exception | None = None
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
-        status = await tenant_status.read(conn, TENANT_SQL, tenant_id, job=statuses is None)  # S291: jobs cached
+        status = await tenant_status.read(conn, TENANT_SQL, tenant_id, job=statuses is None)  # S291: tenant_status.memo
         if statuses is None:
             if status is None:
                 raise Forbidden("not_a_member")

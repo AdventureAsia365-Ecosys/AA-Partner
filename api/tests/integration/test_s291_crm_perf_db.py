@@ -1,8 +1,8 @@
-"""S291 (AA-838, crm-088; C4.3 W48 findings 4 and 5) on PostgreSQL with the RDS role shape: the three crm.jobs.*
+"""S291 (AA-838, crm-088; C4.3 W48 findings 4 and 5) on PostgreSQL with the RDS role shape: the two crm.jobs.*
 settings are defined exactly as compiled, a value outside the bounds is refused, crm-088 is registered; the
-depth-named savepoints of the API pool roll back exactly what asyncpg's unique names did; a cached ``active`` status
-still meets a lock within the window; the history prune keeps its retention rules. Rolled back where it writes;
-invented values only."""
+depth-named savepoints of the API pool roll back exactly what asyncpg's unique names did; a Booking sync run's
+remembered ``active`` status meets a lock made in this process at once; the history prune keeps its retention rules.
+Rolled back where it writes; invented values only."""
 
 from __future__ import annotations
 
@@ -16,10 +16,12 @@ from app import platform_settings as ps
 from app import tenancy, tenant_status
 from app.errors import Forbidden
 from app.jobs import queue
+from app.ops import console
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
-KEYS = (ps.JOBS_PROPOSAL_CHECK_EVERY_S, ps.JOBS_TENANT_STATUS_CACHE_S, ps.JOBS_HISTORY_PRUNE_EVERY_S)
+KEYS = (ps.JOBS_PROPOSAL_CHECK_EVERY_S, ps.JOBS_HISTORY_PRUNE_EVERY_S)
+STAFF_SUB = "staff-zz-perf"
 STAFF = "platform:zz-staff-1"
 REASON = "zz test reason long enough for the check"
 PROPOSE = (
@@ -50,12 +52,11 @@ async def test_a_value_outside_the_bounds_is_refused(app_pool: asyncpg.Pool) -> 
         await tx.start()
         try:
             await c.execute("SELECT set_config('app.actor', $1, true)", STAFF)
-            for key, bad in ((ps.JOBS_PROPOSAL_CHECK_EVERY_S, "30"), (ps.JOBS_TENANT_STATUS_CACHE_S, "61"),
-                             (ps.JOBS_HISTORY_PRUNE_EVERY_S, "10")):  # fmt: skip
+            for key, bad in ((ps.JOBS_PROPOSAL_CHECK_EVERY_S, "30"), (ps.JOBS_HISTORY_PRUNE_EVERY_S, "10")):
                 with pytest.raises(asyncpg.PostgresError):
                     async with c.transaction():
                         await c.fetchval(PROPOSE, key, bad, 1, STAFF, REASON)
-            assert await c.fetchval(PROPOSE, ps.JOBS_TENANT_STATUS_CACHE_S, "0", 1, STAFF, REASON) is not None
+            assert await c.fetchval(PROPOSE, ps.JOBS_HISTORY_PRUNE_EVERY_S, "120", 1, STAFF, REASON) is not None
         finally:
             await tx.rollback()
 
@@ -99,24 +100,42 @@ async def _as_owner(admin: asyncpg.Connection, tenant: uuid.UUID, sql: str) -> N
         await admin.execute(sql, tenant)
 
 
-async def test_a_lock_reaches_a_cached_job_context_within_the_window(
-    admin: asyncpg.Connection, app_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
+async def test_a_lock_or_offboarding_in_this_process_reaches_an_open_booking_run_at_once(
+    admin: asyncpg.Connection, app_pool: asyncpg.Pool
 ) -> None:
-    now = [5000.0]
-    monkeypatch.setattr(tenant_status, "_clock", lambda: now[0])
+    """The review case on PostgreSQL: one agency's Booking sync run (a memo scope) opened a context; the agency is then
+    locked by AA staff in this process (app.ops.console), or moved to offboarding by a writer that calls
+    tenant_status.leaving: the run's next job context is refused. Without the writer hook (another process), the run
+    keeps its "active" to its end and the next run is refused."""
     tenant = uuid.uuid4()
-    await _as_owner(admin, tenant, "INSERT INTO crm.tenant (tenant_id) VALUES ($1)")
-    async with tenancy.system_tx(app_pool, tenant, actor="job:crm_booking_sync") as ctx:
-        assert ctx.status == "active"
-    await _as_owner(admin, tenant, "UPDATE crm.tenant SET status = 'locked' WHERE tenant_id = $1")
-    now[0] += 5  # inside the 10 s window: the cached active still opens a job context
-    async with tenancy.system_tx(app_pool, tenant, actor="job:crm_booking_sync"):
-        pass
-    now[0] += 5  # the window has passed: refused, and the refusal is never cached
-    for _ in range(2):
-        with pytest.raises(Forbidden):
+    await console.create_agency(
+        app_pool, tenant_id=tenant, agency_name="Zz Perf Travel", is_synthetic=True, default_locale="en-AU",
+        environment="test", staff_sub=STAFF_SUB, ticket_ref="SUP-291",
+    )  # fmt: skip
+    with tenant_status.memo():
+        async with tenancy.system_tx(app_pool, tenant, actor="job:crm_booking_sync") as ctx:
+            assert ctx.status == "active"
+        await console.lock_agency(app_pool, tenant, staff_sub=STAFF_SUB, reason_code="test", ticket_ref="SUP-292")
+        for _ in range(2):
+            with pytest.raises(Forbidden):
+                async with tenancy.system_tx(app_pool, tenant, actor="job:crm_booking_sync"):
+                    pass
+    await console.unlock_agency(app_pool, tenant, staff_sub=STAFF_SUB, ticket_ref="SUP-293")
+    tenant_status.forget()  # a fresh process: the agency may be remembered again
+    with tenant_status.memo():
+        async with tenancy.system_tx(app_pool, tenant, actor="job:crm_booking_sync"):
+            pass
+        # Another process offboards it (no hook here): this run keeps its "active" to its end (the documented bound).
+        await _as_owner(admin, tenant, "UPDATE crm.tenant SET status = 'offboarding' WHERE tenant_id = $1")
+        async with tenancy.system_tx(app_pool, tenant, actor="job:crm_booking_sync"):
+            pass
+    for _ in range(2):  # the next run, and any job outside a run, read it again
+        with tenant_status.memo(), pytest.raises(Forbidden):
             async with tenancy.system_tx(app_pool, tenant, actor="job:crm_booking_sync"):
                 pass
+    with pytest.raises(Forbidden):
+        async with tenancy.system_tx(app_pool, tenant, actor="job:crm_intake_process"):
+            pass
 
 
 async def test_the_history_prune_keeps_its_retention_rules(app_pool: asyncpg.Pool) -> None:

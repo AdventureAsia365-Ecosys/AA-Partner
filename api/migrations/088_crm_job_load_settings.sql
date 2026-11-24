@@ -1,13 +1,14 @@
 -- Migration crm-088: AA-838 (S291 lane f-crm-perf; C4.3 W48 database review, findings 4 and 5; tech lead S279 "a
--- threshold is a setting") — the three cadences behind the CRM job worker's database load, as CRM settings the tech
--- lead edits on the CIS Platform > Settings page (CRM tab).
+-- threshold is a setting") — the two cadences behind the CRM job worker's database load, as CRM settings the tech
+-- lead edits on the CIS Platform > Settings page (CRM tab). The job contexts' agency status reuse (app/tenant_status.py)
+-- has no setting: it lasts one Booking sync run of one agency, no time window.
 --
 -- Owner: AA-Partner (api/migrations/088_crm_job_load_settings.sql). AA-CIS-Infra db/migrations/crm/ holds the byte copy
 -- Migration Apply runs. Key crm-088 (owner main max crm-087 + 1); if the numbers move, renumber: file name, this
 -- header, Guard 0 and the registration below, and the tests that name it (git grep '088_' and 'crm-088').
 --
 -- What:
---   1. Three crm.setting_definition rows, area "jobs" (settings-seed block, read by api/scripts/gen_settings_defaults.py
+--   1. Two crm.setting_definition rows, area "jobs" (settings-seed block, read by api/scripts/gen_settings_defaults.py
 --      into app/platform_settings/compiled_defaults.json; guides in app/platform_settings/guides.json; readers shipped
 --      in this PR):
 --        crm.jobs.booking_proposal_check_every_s  int seconds, default 300 (60-3600): the minute Booking sync re-checks
@@ -15,9 +16,6 @@
 --                                                 nothing nudged it and its last check left no work
 --                                                 (app/booking/proposal_checks.py; it was every run, about one read a
 --                                                 second);
---        crm.jobs.tenant_status_cache_s           int seconds, default 10 (0-60, 0 = off): how long a job context trusts
---                                                 an agency's last "active" status read (app/tenant_status.py; any other
---                                                 status is never cached, so a lock reaches every job within it);
 --        crm.jobs.history_prune_every_s           int seconds, default 60 (60-3600): the recurring kinds' history DELETE
 --                                                 at most once per this many seconds per process (app/jobs/worker.py,
 --                                                 wired in app/main.py; it ran on every maintenance pass, about every
@@ -68,7 +66,6 @@ SELECT s.key, s.app, s.area, s.label, s.description, s.value_type, s.unit, s.min
   FROM jsonb_to_recordset($seed$
 [
 {"key": "crm.jobs.booking_proposal_check_every_s", "app": "crm", "area": "jobs", "label": "Booking sync: accepted proposals re-checked every (seconds)", "description": "The minute run of the Booking sync (crm_booking_sync) re-checks an agency's accepted proposals (their AA lines and the confirm of a paid deposit) only this often when nothing nudged it and its last check left no work; an accept, a paid deposit, a claim or a re-hold nudges the agency's sync at once, and an agency with work due or a retry is checked every run. It was every run (about one read a second on Dev, C4.3 W48). Read by app/booking/proposal_checks.py.", "value_type": "int", "unit": "seconds", "min_value": 60, "max_value": 3600, "allowed_values": null, "default_value": 300, "scope_kind": "platform", "impact": "medium", "approval": "single", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
-{"key": "crm.jobs.tenant_status_cache_s", "app": "crm", "area": "jobs", "label": "Job context: agency status trusted for (seconds)", "description": "A background job's context in one agency (system_tx) trusts the agency's last read status of active for this many seconds before reading it again (0 = read it every time). Only active is cached: a locked, offboarding, offboarded or trashed agency is never cached, so a lock or offboarding reaches every job at most this many seconds after it commits. Member requests and AA staff actions always read the status. Read by app/tenant_status.py.", "value_type": "int", "unit": "seconds", "min_value": 0, "max_value": 60, "allowed_values": null, "default_value": 10, "scope_kind": "platform", "impact": "high", "approval": "single", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true},
 {"key": "crm.jobs.history_prune_every_s", "app": "crm", "area": "jobs", "label": "Job queue: recurring job history pruned every (seconds)", "description": "The job worker deletes the finished runs of its recurring kinds (heartbeat, CIS membership feed, Booking sync) older than each kind's own keep days at most once per this many seconds per worker; it was on every maintenance pass (about every 7 s, C4.3 W48). The keep days themselves are unchanged. Read by app/jobs/worker.py (wired in app/main.py).", "value_type": "int", "unit": "seconds", "min_value": 60, "max_value": 3600, "allowed_values": null, "default_value": 60, "scope_kind": "platform", "impact": "low", "approval": "single", "evidence_required": false, "env_override": null, "cache_s": 30, "enforced": true}
 ]
 $seed$::jsonb) AS s (key text, app text, area text, label text, description text, value_type text, unit text,
@@ -81,13 +78,13 @@ ON CONFLICT (key) DO NOTHING;
 -- ── Post-check ────────────────────────────────────────────────────────────────────────────────────
 DO $$
 BEGIN
-    IF (SELECT count(*) FROM crm.setting_definition WHERE key LIKE 'crm.jobs.%') < 3 THEN
+    IF (SELECT count(*) FROM crm.setting_definition WHERE key LIKE 'crm.jobs.%') < 2 THEN
         RAISE EXCEPTION 'crm-088: the job load settings are not defined';
     END IF;
 END $$;
 
 INSERT INTO shared.schema_versions (version, applied_at, description)
-VALUES ('crm-088', now(), 'AA-838 job load settings: crm.jobs.* (Booking sync proposal re-check interval, job context agency status cache, recurring job history prune interval)')
+VALUES ('crm-088', now(), 'AA-838 job load settings: crm.jobs.* (Booking sync proposal re-check interval, recurring job history prune interval)')
 ON CONFLICT (version) DO NOTHING;
 
 COMMIT;

@@ -62,7 +62,7 @@ from typing import Any
 
 import asyncpg
 
-from app import cancellation, stages
+from app import cancellation, stages, tenant_status
 from app.audit import MAX_OBJECT_IDS
 from app.audit_export import registry
 from app.booking import contract, proposal_checks, proposal_lines, rehold
@@ -819,7 +819,7 @@ class BookingSync:
         counts: Counter[str] = Counter()
         for tenant_id in tenants:
             try:
-                await self.run_agency(pool, tenant_id, counts, feed=not only)
+                await tenant_status.scoped(self.run_agency(pool, tenant_id, counts, feed=not only))  # S291
             except (Forbidden, NotFound):
                 counts["skipped"] += 1  # locked, offboarding or gone
             except Exception as exc:  # noqa: BLE001 — one agency's error must not stop every later agency

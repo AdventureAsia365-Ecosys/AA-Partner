@@ -15,14 +15,31 @@ Source: root `docs/audits/2026-11-24-S290-session/c43-w48/README.md` (findings 4
   re-checks an agency only when its last check left work (a set due, a confirm queued or failed, an outage) or after
   `crm.jobs.booking_proposal_check_every_s` (default 300 s, the backstop for a nudge that never ran). No migration
   other than the settings seed.
-- **Tenant status cache in job contexts only** (`system_tx` -> `_agency_tx` with `statuses=None`). The 6.4 reads a
-  second are the Booking sync's ~6 `system_tx` per agency and minute run. Only `active` is cached, for
-  `crm.jobs.tenant_status_cache_s` (default 10 s, 0 = off) from the read that saw it; any other status (and an unknown
-  agency) is never cached and drops the entry. Bound: an agency locked / offboarded / trashed in any process is refused
-  by every job context of this process at most that many seconds after the change commits (plus the length of a job
-  transaction already open, as before). `tenant_tx()` (members), `platform_tx()` (AA staff), the feeds and the public
-  contexts are unchanged (they read every time). No invalidation hooks were added to the lock / offboarding writers
-  (the lane scope: no change to tenant / entitlement code beyond the cache); the TTL is the bound.
+- **Tenant status memo, one Booking sync run of one agency** (fix pass after review). The 6.4 reads a second are the
+  Booking sync's ~6 `system_tx` per agency and minute run, so the reuse is scoped to exactly that:
+  `BookingSync.__call__` runs each agency through `tenant_status.scoped(...)` (a `memo` scope, a context variable);
+  inside it the first job context reads the status and the later ones reuse an `active` answer; any other answer is
+  never kept. No time window and no setting. Outside a scope (intake, campaigns, imports, dispatch, mail import, every
+  other job) and in `tenant_tx()` / `platform_tx()` / feeds / public contexts the status is read every time, as before.
+  - The first version (a per-process 10 s TTL cache for every job context, setting `crm.jobs.tenant_status_cache_s`)
+    was rejected in review: nothing cleared it on a status change, so an intake / import job could write personal rows
+    into an agency erased a few seconds earlier, and a campaign could still send after a lock. The setting is gone from
+    crm-088, the compiled defaults and the guides.
+  - **Writer hook**: every writer that moves an agency away from `active` calls `tenant_status.leaving(tenant_id)` in
+    its transaction: CIS entitlement feed lock, CIS membership feed locks (2), AA lock / unlock (`console._set_status`)
+    and AA trash (`console.delete_test_agency`), offboarding (confirm, erase start, erased), tenant erase (offboarding,
+    erased). It drops the agency from every open scope of the process and the process never remembers it again (a
+    set, one entry per agency that left active while the process runs), so before the commit a context reads the old
+    `active` (as before S291) and after it is refused. The memo re-checks `_LEFT` after its read, so a writer that runs
+    while a read is in flight wins. `leaving()` returns the id so `console.py` (at its size baseline) passes it
+    straight to its UPDATE.
+  - Guard: `tests/unit/test_s291_crm_perf.py::test_every_writer_that_leaves_active_tells_the_status_memo` finds every
+    `UPDATE crm.tenant SET status = 'locked'|'offboarding'|'offboarded'|$n` or `SET deleted_at` constant in app/ and
+    refuses a function that runs one without `tenant_status.leaving(...)`.
+  - Bound left: a change made in **another** process (a second API task) reaches a run of this process at the end of
+    that agency's run (a few transactions and Booking calls), the next run reads again. Before S291 the bound was one
+    job transaction. The Booking sync writes booking lines, AA requests and inbox events, not traveller profiles; the
+    tenant erase saga re-checks (`rows_left_after_offboarding`) and retries.
 - **Prune cadence**: `Worker(prune_every_s=...)` (None = the ported template's "every pass"); the app passes
   `crm.jobs.history_prune_every_s` (default 60 s, minimum 60). The DELETE and each kind's `keep_days` are unchanged.
 - **Finding 5 root cause = asyncpg savepoint names.** asyncpg names every nested `conn.transaction()` savepoint after
@@ -48,13 +65,15 @@ Source: root `docs/audits/2026-11-24-S290-session/c43-w48/README.md` (findings 4
   `CHECKS`; a check is clean when no `proposal_lines_*` counter, `confirms_queued` or `confirms_error` moved and no
   outage came back; skipped runs count `proposal_check_skipped` in the job result. `api/app/booking/sync.py`:
   `run_agency` calls `CHECKS.run(..., nudged=not feed)` (one line; the file is at its code-health size baseline).
-- `api/app/tenant_status.py` (new): `read`, `forget`; `api/app/tenancy.py` `_agency_tx` reads the status through it
-  (`job=statuses is None`; one line, same reason). `tests/unit/test_code_rules.py` lists it as a DB module (it runs
+- `api/app/tenant_status.py` (new): `memo`, `scoped`, `read`, `leaving`, `forget` (tests); `api/app/tenancy.py`
+  `_agency_tx` reads the status through it (`job=statuses is None`; one line, same reason); `api/app/booking/sync.py`
+  `__call__` runs each agency through `tenant_status.scoped` (one line); `leaving()` in `app/cis/entitlement_feed.py`,
+  `app/cis/membership_feed.py`, `app/ops/console.py`, `app/lifecycle/offboarding.py`, `app/lifecycle/tenant_erase.py`. `tests/unit/test_code_rules.py` lists it as a DB module (it runs
   the status read on the context's own connection).
 - `api/app/jobs/worker.py` + `api/app/main.py`: `prune_every_s`.
 - `api/app/pg_connection.py` (new), `api/app/db.py` and the restore drill pool use it; `api/app/portability/restore_drill.py`
   fixed temp name.
-- `api/migrations/088_crm_job_load_settings.sql` (contract, settings seed), compiled defaults, guides (EN + VI).
+- `api/migrations/088_crm_job_load_settings.sql` (contract, settings seed: two keys), compiled defaults, guides (EN + VI).
 - Tests: `tests/unit/test_s291_crm_perf.py`, `tests/integration/test_s291_crm_perf_db.py`; the unit and integration
   conftests clear the status cache per test; the integration `app_pool` uses the new connection class (every
   integration test runs with depth-named savepoints); `test_slice1_routes.py` moves its clock past the cache window.
@@ -64,7 +83,8 @@ Source: root `docs/audits/2026-11-24-S290-session/c43-w48/README.md` (findings 4
 
 - The proposal backstop means a nudge that is lost (its job row failed three times) waits up to 300 s instead of
   60 s; a Booking outage during a nudge run keeps the agency "not clean", so the next minute run retries as before.
-- The status cache lets a job context run up to 10 s after a lock. Member and staff paths are unaffected.
+- The status memo lets a Booking sync run finish one agency after a lock made in another process (a lock in this
+  process stops it at once). Every other job, member and staff path reads the status every time.
 - The connection class relies on two asyncpg internals (`Transaction.start` calling
   `Connection._get_unique_id("savepoint")` and `Transaction._state`); asyncpg is pinned (0.31.0) and the unit tests
   fail if a bump changes either.
@@ -81,6 +101,9 @@ maintenance pass every 6 s, `main` code vs this branch, counts from `pg_stat_sta
 | job prune DELETE calls (one process) | 300 | 30 | 30 -> 3 a minute (3 kinds, once a minute) |
 | SAVEPOINT / RELEASE entries | 4,750 (capped by `pg_stat_statements.max` 5,000 locally) | 2 | |
 | `crm_app` entries in total | 4,772 | 24 | |
+
+The status reads were measured with the first version (10 s cache); the run-scoped memo gives the same one read per
+agency run by construction (unit test `test_the_booking_sync_runs_each_agency_in_its_own_scope`).
 
 A separate check: 200 nested transactions made 400 distinct entries with asyncpg's names and 2 with depth names
 (PostgreSQL 16.15 does not normalise savepoint names either).
