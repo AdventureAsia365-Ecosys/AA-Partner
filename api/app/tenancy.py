@@ -92,7 +92,6 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import re
-import time
 import uuid
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -100,8 +99,7 @@ from dataclasses import dataclass, field
 
 import asyncpg
 
-from app import platform_settings as ps
-from app import tenant_gate
+from app import tenant_gate, tenant_status
 from app.audit import INSERT_SQL, AuditEvent, current_request_id
 from app.auth import e2e_staff
 from app.auth.route_guard import Caller
@@ -116,48 +114,6 @@ READER_ROLES = frozenset({"crm_ai_reader", "crm_insights", "crm_support_reader",
 MEMBER_ROLES = frozenset({"owner", "agent", "assistant"})
 
 TENANT_SQL = "SELECT status FROM crm.tenant WHERE tenant_id = $1 AND deleted_at IS NULL"
-
-# S291 (C4.3 W48 finding 4): a job context's status check, cached per process. The scheduled Booking sync alone opened
-# about six job contexts per agency and minute (one status read each, about 6.4 reads a second on Dev). Only an
-# ``active`` answer is kept, for at most ``crm.jobs.tenant_status_cache_s`` seconds after the read that saw it (0 = no
-# cache); any other answer (locked, offboarding, offboarded, trashed or unknown) is never kept and drops the entry, so
-# the check stays fail-closed: an agency locked, offboarded or trashed in any process is refused by every job context
-# of this process at most that many seconds after the change commits. Member requests (:func:`tenant_tx`), the AA staff
-# context (:func:`platform_tx`), the feeds and the public contexts read the status every time, as before.
-_JOB_STATUS_SEEN: dict[uuid.UUID, float] = {}
-_JOB_STATUS_CACHE_MAX = 5000  # technical-constant: per-process memory bound of the cache (oldest entry dropped)
-_status_clock: Callable[[], float] = time.monotonic
-
-
-async def _job_tenant_status(conn: asyncpg.Connection, tenant_id: uuid.UUID) -> str | None:
-    """The agency's status for a job context: ``active`` from the cache while fresh, else the database (see above)."""
-    ttl = float(ps.get(ps.JOBS_TENANT_STATUS_CACHE_S))
-    now = _status_clock()
-    seen = _JOB_STATUS_SEEN.get(tenant_id)
-    if seen is not None and now - seen < ttl:
-        return "active"
-    status = await conn.fetchval(TENANT_SQL, tenant_id)
-    _JOB_STATUS_SEEN.pop(tenant_id, None)
-    if status == "active" and ttl > 0:
-        if len(_JOB_STATUS_SEEN) >= _JOB_STATUS_CACHE_MAX:
-            _JOB_STATUS_SEEN.pop(next(iter(_JOB_STATUS_SEEN)))
-        _JOB_STATUS_SEEN[tenant_id] = now
-    return status
-
-
-async def _agency_status(conn: asyncpg.Connection, tenant_id: uuid.UUID, *, job: bool) -> str | None:
-    """A job context (:func:`system_tx`) reads through the cache; the platform context always reads the database."""
-    return await (_job_tenant_status(conn, tenant_id) if job else conn.fetchval(TENANT_SQL, tenant_id))
-
-
-def forget_job_status(tenant_id: uuid.UUID | None = None) -> None:
-    """Drop the cached status of one agency, or of every agency (tests; a status change in this process may call it)."""
-    if tenant_id is None:
-        _JOB_STATUS_SEEN.clear()
-    else:
-        _JOB_STATUS_SEEN.pop(tenant_id, None)
-
-
 MEMBER_SQL = """
 SELECT member_id, role FROM crm.member
  WHERE tenant_id = $1 AND cognito_iss = $2 AND cognito_sub = $3 AND status = 'active' AND deleted_at IS NULL
@@ -649,7 +605,7 @@ async def _agency_tx(
     pending: Exception | None = None
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
-        status = await _agency_status(conn, tenant_id, job=statuses is None)
+        status = await tenant_status.read(conn, TENANT_SQL, tenant_id, job=statuses is None)  # S291: jobs cached
         if statuses is None:
             if status is None:
                 raise Forbidden("not_a_member")

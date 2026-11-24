@@ -46,6 +46,7 @@ DB_MODULES = frozenset(
     {
         "app/db.py",  # readiness probe
         "app/tenancy.py",  # tenant_tx() itself
+        "app/tenant_status.py",  # S291: the agency status read of tenancy._agency_tx, on that context's connection
         "app/jobs/queue.py",  # crm.job state machine (platform table, no tenant rows)
         "app/jobs/metrics.py",  # crm.job backlog sampler
         "app/jobs/handlers.py",  # crm.job retention (platform table)

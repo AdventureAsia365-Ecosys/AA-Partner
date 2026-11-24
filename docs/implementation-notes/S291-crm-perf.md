@@ -44,9 +44,13 @@ Source: root `docs/audits/2026-11-24-S290-session/c43-w48/README.md` (findings 4
 
 ## Changed
 
-- `api/app/booking/sync.py`: `BookingSync.proposals_due`, `checked_proposal_sets`, counters `proposal_sets_due` and
-  `proposal_check_skipped` in the job result; `run_agency` calls the checked step (`nudged = not feed`).
-- `api/app/tenancy.py`: `_job_tenant_status`, `_agency_status`, `forget_job_status`; `_agency_tx` reads through them.
+- `api/app/booking/proposal_checks.py` (new): `ProposalChecks` (`due`, `run`, `forget`) and the process memory
+  `CHECKS`; a check is clean when no `proposal_lines_*` counter, `confirms_queued` or `confirms_error` moved and no
+  outage came back; skipped runs count `proposal_check_skipped` in the job result. `api/app/booking/sync.py`:
+  `run_agency` calls `CHECKS.run(..., nudged=not feed)` (one line; the file is at its code-health size baseline).
+- `api/app/tenant_status.py` (new): `read`, `forget`; `api/app/tenancy.py` `_agency_tx` reads the status through it
+  (`job=statuses is None`; one line, same reason). `tests/unit/test_code_rules.py` lists it as a DB module (it runs
+  the status read on the context's own connection).
 - `api/app/jobs/worker.py` + `api/app/main.py`: `prune_every_s`.
 - `api/app/pg_connection.py` (new), `api/app/db.py` and the restore drill pool use it; `api/app/portability/restore_drill.py`
   fixed temp name.

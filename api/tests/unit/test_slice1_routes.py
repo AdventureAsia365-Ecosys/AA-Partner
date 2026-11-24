@@ -12,7 +12,7 @@ import pytest
 from fastapi import Request
 from fastapi.testclient import TestClient
 
-from app import tenancy
+from app import tenancy, tenant_status
 from app.errors import Forbidden, NotFound, RateLimited
 from app.intake import public as intake_public
 from app.main import create_app
@@ -280,7 +280,7 @@ async def test_system_tx_checks_the_agency_and_audits(monkeypatch: pytest.Monkey
     # S291: a job context keeps an "active" answer for crm.jobs.tenant_status_cache_s (10 s by default); this test
     # checks the refusals, so every status read here is a fresh one (the clock moves past the window each time).
     clock = iter(range(0, 10_000, 100))
-    monkeypatch.setattr(tenancy, "_status_clock", lambda: float(next(clock)))
+    monkeypatch.setattr(tenant_status, "_clock", lambda: float(next(clock)))
     conn = ScriptedConn().on("SELECT status FROM crm.tenant", "active")
     async with tenancy.system_tx(conn, TENANT, actor="job:crm_intake_process") as ctx:  # type: ignore[arg-type]
         ctx.audit("intake_created", "allowed", "trip", TRIP)

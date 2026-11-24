@@ -38,10 +38,13 @@ def _settings_env_per_file():  # noqa: ANN202
 
 @_pytest.fixture(autouse=True)
 def _job_status_cache_per_test():  # noqa: ANN202
-    """S291: the job contexts' agency status cache (app.tenancy) is per process; every test starts without it, so an
-    agency one test saw active is read again by the next test (the tests reuse one agency id)."""
-    from app import tenancy
+    """S291: the job contexts' agency status cache (app.tenant_status) and the Booking sync's proposal-check memory
+    (app.booking.proposal_checks) are per process; every test starts without them (the tests reuse one agency id)."""
+    from app import tenant_status
+    from app.booking import proposal_checks
 
-    tenancy.forget_job_status()
+    tenant_status.forget()
+    proposal_checks.CHECKS.forget()
     yield
-    tenancy.forget_job_status()
+    tenant_status.forget()
+    proposal_checks.CHECKS.forget()

@@ -2,10 +2,11 @@
 
 1. ``app.pg_connection``: savepoints are named by depth (``crm_sp_1``, ``crm_sp_2``), so ``pg_stat_statements`` (which
    keys a utility statement by its text on PostgreSQL 15) sees a handful of SAVEPOINT texts, not one per transaction;
-2. ``app.tenancy``: a job context keeps an ``active`` status for ``crm.jobs.tenant_status_cache_s`` seconds, never any
-   other status (fail-closed), and the platform context always reads it;
-3. ``app.booking.sync``: the minute run re-checks an agency's accepted proposals only when its last check left work or
-   ``crm.jobs.booking_proposal_check_every_s`` has passed; a nudge run always checks;
+2. ``app.tenant_status`` (through ``app.tenancy.system_tx``): a job context keeps an ``active`` status for
+   ``crm.jobs.tenant_status_cache_s`` seconds, never any other status (fail-closed), and the platform context always
+   reads it;
+3. ``app.booking.proposal_checks`` (``app.booking.sync``): the minute run re-checks an agency's accepted proposals only
+   when its last check left work or ``crm.jobs.booking_proposal_check_every_s`` has passed; a nudge run always checks;
 4. ``app.jobs.worker``: the recurring kinds' history DELETE at most once per ``crm.jobs.history_prune_every_s``;
 5. ``app.portability.restore_drill``: one fixed temporary table name for every restored table.
 
@@ -24,7 +25,9 @@ from asyncpg.transaction import TransactionState
 
 import app.jobs.worker as worker_module
 from app import platform_settings as ps
-from app import tenancy
+from app import tenancy, tenant_status
+from app.booking import proposal_checks, sync
+from app.booking.proposal_checks import ProposalChecks
 from app.booking.sync import BookingSync
 from app.errors import Conflict, Forbidden
 from app.jobs.worker import Recurring, Worker
@@ -33,6 +36,7 @@ from app.portability import restore_drill as rd
 from app.tenancy import LifecycleContext
 from tests import settings_serve
 from tests.unit.fakes import ScriptedConn
+from tests.unit.slice_fakes import fake_tx, system_ctx
 
 TENANT = uuid.UUID("00000000-0000-4000-8000-0000000000a1")
 OTHER = uuid.UUID("00000000-0000-4000-8000-0000000000a2")
@@ -170,7 +174,7 @@ class Clock:
 @pytest.fixture
 def clock(monkeypatch: pytest.MonkeyPatch) -> Clock:
     c = Clock()
-    monkeypatch.setattr(tenancy, "_status_clock", c)
+    monkeypatch.setattr(tenant_status, "_clock", c)
     return c
 
 
@@ -205,7 +209,7 @@ async def test_no_other_status_is_ever_cached(clock: Clock, status: str | None) 
     for _ in range(3):
         with pytest.raises(Forbidden):
             await _open(conn)
-    assert len(conn.sql(STATUS_SQL)) == 3 and tenancy._JOB_STATUS_SEEN == {}
+    assert len(conn.sql(STATUS_SQL)) == 3 and tenant_status._SEEN == {}
 
 
 @pytest.mark.asyncio
@@ -220,18 +224,18 @@ async def test_zero_turns_the_cache_off_and_the_cache_is_per_agency(clock: Clock
         await _open(conn, TENANT)
     finally:
         settings_serve.reset()
-    assert len(conn.sql(STATUS_SQL)) == 4 and TENANT not in tenancy._JOB_STATUS_SEEN
-    tenancy.forget_job_status(OTHER)
-    assert tenancy._JOB_STATUS_SEEN == {}
+    assert len(conn.sql(STATUS_SQL)) == 4 and TENANT not in tenant_status._SEEN
+    tenant_status.forget(OTHER)
+    assert tenant_status._SEEN == {}
 
 
 @pytest.mark.asyncio
 async def test_the_cache_is_bounded(clock: Clock, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tenancy, "_JOB_STATUS_CACHE_MAX", 2)
+    monkeypatch.setattr(tenant_status, "CACHE_MAX", 2)
     conn = ScriptedConn().on(STATUS_SQL, "active")
     for tenant in (TENANT, OTHER, uuid.UUID("00000000-0000-4000-8000-0000000000a3")):
         await _open(conn, tenant)
-    assert len(tenancy._JOB_STATUS_SEEN) == 2 and TENANT not in tenancy._JOB_STATUS_SEEN
+    assert len(tenant_status._SEEN) == 2 and TENANT not in tenant_status._SEEN
 
 
 @pytest.mark.asyncio
@@ -248,93 +252,105 @@ async def test_the_platform_context_always_reads_the_status(clock: Clock) -> Non
 
 
 class ProposalStep:
-    """Stands in for BookingSync.proposal_sets: counts calls, moves the counters it is told to."""
+    """Stands in for BookingSync: ``proposal_sets`` counts calls and moves the counters it is told to."""
 
     def __init__(self) -> None:
         self.calls = 0
         self.moves: dict[str, int] = {}
         self.outage: str | None = None
 
-    async def __call__(self, pool: Any, tenant_id: uuid.UUID, counts: Counter[str]) -> str | None:
+    async def proposal_sets(self, pool: Any, tenant_id: uuid.UUID, counts: Counter[str]) -> str | None:
         self.calls += 1
         for k, v in self.moves.items():
             counts[k] += v
         return self.outage
 
 
-@pytest.fixture
-def step(monkeypatch: pytest.MonkeyPatch) -> ProposalStep:
-    s = ProposalStep()
-
-    async def proposal_sets(_self: Any, pool: Any, tenant_id: uuid.UUID, counts: Counter[str]) -> str | None:
-        return await s(pool, tenant_id, counts)
-
-    monkeypatch.setattr(BookingSync, "proposal_sets", proposal_sets)
-    return s
+async def _check(checks: ProposalChecks, step: Any, tenant: uuid.UUID = TENANT, *, nudged: bool = False) -> Any:
+    return await checks.run(step, object(), tenant, Counter(), nudged=nudged)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
-async def test_the_minute_run_skips_a_clean_agency_until_the_backstop_interval(step: ProposalStep) -> None:
+async def test_the_minute_run_skips_a_clean_agency_until_the_backstop_interval() -> None:
     assert ps.get(ps.JOBS_PROPOSAL_CHECK_EVERY_S) == 300  # the seeded default (crm-088)
-    clock = Clock()
-    handler = BookingSync(None, clock=clock)
+    clock, step = Clock(), ProposalStep()
+    checks = ProposalChecks(clock=clock)
     counts: Counter[str] = Counter()
-    await handler.checked_proposal_sets(object(), TENANT, counts, nudged=False)  # type: ignore[arg-type]
+    await checks.run(step, object(), TENANT, counts, nudged=False)  # type: ignore[arg-type]
     clock.now += 299
-    await handler.checked_proposal_sets(object(), TENANT, counts, nudged=False)  # type: ignore[arg-type]
+    await checks.run(step, object(), TENANT, counts, nudged=False)  # type: ignore[arg-type]
     assert step.calls == 1 and counts["proposal_check_skipped"] == 1
-    await handler.checked_proposal_sets(object(), OTHER, counts, nudged=False)  # type: ignore[arg-type]
+    await _check(checks, step, OTHER)
     assert step.calls == 2  # another agency has its own memory
     clock.now += 1
-    await handler.checked_proposal_sets(object(), TENANT, counts, nudged=False)  # type: ignore[arg-type]
+    await _check(checks, step)
     assert step.calls == 3
-    # A nudge (an accept, a paid deposit) always checks.
-    await handler.checked_proposal_sets(object(), TENANT, counts, nudged=True)  # type: ignore[arg-type]
+    await _check(checks, step, nudged=True)  # a nudge (an accept, a paid deposit) always checks
     assert step.calls == 4
     settings_serve.serve({ps.JOBS_PROPOSAL_CHECK_EVERY_S: 60})
     try:
         clock.now += 60
-        await handler.checked_proposal_sets(object(), TENANT, counts, nudged=False)  # type: ignore[arg-type]
+        await _check(checks, step)
     finally:
         settings_serve.reset()
     assert step.calls == 5
+    checks.forget()
+    await _check(checks, step)
+    assert step.calls == 6
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "moves,outage",
     [
-        ({"proposal_sets_due": 1}, None),  # a set was due (written or to retry)
+        ({"proposal_lines_held": 1}, None),  # a set was due and written
+        ({"proposal_lines_retry": 1}, None),  # a set was due, Booking to ask again
         ({"confirms_queued": 1}, None),
         ({"confirms_error": 1}, None),
         ({}, "booking_timeout"),
     ],
 )
-async def test_an_agency_with_work_left_is_checked_on_the_next_run(
-    step: ProposalStep, moves: dict[str, int], outage: str | None
-) -> None:
+async def test_an_agency_with_work_left_is_checked_on_the_next_run(moves: dict[str, int], outage: str | None) -> None:
+    step = ProposalStep()
     step.moves, step.outage = moves, outage
-    handler = BookingSync(None, clock=Clock())
+    checks = ProposalChecks(clock=Clock())
     for _ in range(2):
-        out = await handler.checked_proposal_sets(object(), TENANT, Counter(), nudged=False)  # type: ignore[arg-type]
+        out = await _check(checks, step)
     assert step.calls == 2 and out == outage
-    step.moves, step.outage = {}, None
-    await handler.checked_proposal_sets(object(), TENANT, Counter(), nudged=False)  # type: ignore[arg-type]
-    await handler.checked_proposal_sets(object(), TENANT, Counter(), nudged=False)  # type: ignore[arg-type]
+    step.moves, step.outage = {"confirms_queued": 0}, None  # nothing queued is no work
+    await _check(checks, step)
+    await _check(checks, step)
     assert step.calls == 3  # clean now: the fourth run skips
 
 
 @pytest.mark.asyncio
-async def test_a_failing_check_is_not_remembered(step: ProposalStep, monkeypatch: pytest.MonkeyPatch) -> None:
-    async def locked(*_a: Any) -> None:
-        raise Forbidden("tenant_locked")
+async def test_a_failing_check_is_not_remembered() -> None:
+    class Locked:
+        async def proposal_sets(self, *_a: Any) -> None:
+            raise Forbidden("tenant_locked")
 
-    handler = BookingSync(None, clock=Clock())
-    await handler.checked_proposal_sets(object(), TENANT, Counter(), nudged=False)  # type: ignore[arg-type]
-    monkeypatch.setattr(BookingSync, "proposal_sets", locked)
+    checks = ProposalChecks(clock=Clock())
+    await _check(checks, ProposalStep())
     with pytest.raises(Forbidden):
-        await handler.checked_proposal_sets(object(), TENANT, Counter(), nudged=True)  # type: ignore[arg-type]
-    assert TENANT not in handler._proposal_checks
+        await _check(checks, Locked(), nudged=True)
+    assert TENANT not in checks.clean_at
+
+
+@pytest.mark.asyncio
+async def test_the_scheduled_run_goes_through_the_process_memory(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BookingSync.run_agency: the minute run (feed on) is gated, a nudge run (feed off) always checks."""
+    seen: list[bool] = []
+
+    async def run(_sync: Any, _pool: Any, _tenant: Any, _counts: Any, *, nudged: bool) -> str:
+        seen.append(nudged)
+        return "booking_timeout"  # an outage: run_agency stops before the request queue
+
+    monkeypatch.setattr(proposal_checks.CHECKS, "run", run)
+    monkeypatch.setattr(sync, "system_tx", fake_tx(system_ctx()))  # the request queue: nothing claimed
+    handler = BookingSync(None)
+    for feed in (True, False):
+        await handler.run_agency(object(), TENANT, Counter(), feed=feed)  # type: ignore[arg-type]
+    assert seen == [False, True]
 
 
 # ── 4. the recurring kinds' history prune ───────────────────────────────────────────────────────────────────────────

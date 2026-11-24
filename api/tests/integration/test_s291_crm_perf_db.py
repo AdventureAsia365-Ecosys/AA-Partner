@@ -13,7 +13,7 @@ import asyncpg
 import pytest
 
 from app import platform_settings as ps
-from app import tenancy
+from app import tenancy, tenant_status
 from app.errors import Forbidden
 from app.jobs import queue
 
@@ -103,7 +103,7 @@ async def test_a_lock_reaches_a_cached_job_context_within_the_window(
     admin: asyncpg.Connection, app_pool: asyncpg.Pool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     now = [5000.0]
-    monkeypatch.setattr(tenancy, "_status_clock", lambda: now[0])
+    monkeypatch.setattr(tenant_status, "_clock", lambda: now[0])
     tenant = uuid.uuid4()
     await _as_owner(admin, tenant, "INSERT INTO crm.tenant (tenant_id) VALUES ($1)")
     async with tenancy.system_tx(app_pool, tenant, actor="job:crm_booking_sync") as ctx:

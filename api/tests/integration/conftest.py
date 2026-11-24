@@ -162,9 +162,13 @@ async def app_pool(migrated_app_dsn: str) -> AsyncIterator[asyncpg.Pool]:
 
 @pytest.fixture(autouse=True)
 def _job_status_cache_per_test() -> object:
-    """S291: the job contexts' agency status cache (app.tenancy) is per process; every test starts without it."""
-    from app import tenancy
+    """S291: the job contexts' agency status cache and the Booking sync's proposal-check memory are per process; every
+    test starts without them."""
+    from app import tenant_status
+    from app.booking import proposal_checks
 
-    tenancy.forget_job_status()
+    tenant_status.forget()
+    proposal_checks.CHECKS.forget()
     yield
-    tenancy.forget_job_status()
+    tenant_status.forget()
+    proposal_checks.CHECKS.forget()
