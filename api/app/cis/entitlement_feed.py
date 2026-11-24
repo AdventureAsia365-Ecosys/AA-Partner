@@ -22,6 +22,12 @@ DB Migrate exempt: a row exists only while it is due or running, a few seconds):
 4. A 401 / 403 / 404 / 5xx on the feed, a transport error or a malformed page records the error class and ends the run
    **successfully** (the next slot retries after the backoff); a tenant whose snapshot fails stops the run before the
    cursor moves (it is retried, never skipped). A tenant CIS answers 404 for is ignored (``unknown_tenant``).
+5. S290 follow-up: a tenant CIS answers 404 for is *gone* (the CRM still holds an agency CIS no longer lists, e.g. a
+   test agency removed in CIS): the feed logs ``crm_entitlement_tenant_gone`` once, remembers it for the life of the
+   worker and the hourly reconcile skips it (``gone_count``, no snapshot call), so it no longer asks CIS every hour.
+   The event pull never skips it: an event that names the tenant means CIS lists it again, so its snapshot is read
+   and, on a 200, the tenant leaves the gone set (``crm_entitlement_tenant_back``) and is projected as usual. A new
+   worker (a deploy or a restart) asks CIS once more for each such tenant.
 
 The projection (:func:`projection`, one :func:`app.tenancy.entitlement_feed_tx` per agency, actor
 ``platform:feed-tenant-account``; an unknown or offboarding agency is left alone):
@@ -171,6 +177,7 @@ class RunCounts:
     pilot_changed: int = 0
     reconciled: bool = False
     reconcile_failed: int = 0
+    gone: int = 0  # S290: agencies the hourly reconcile skipped because CIS answered 404 for them before
 
     def result(self, status: str, reason_code: str | None = None) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -187,6 +194,7 @@ class RunCounts:
             "pilot_changed_count": self.pilot_changed,
             "reconciled_count": int(self.reconciled),
             "reconcile_failed_count": self.reconcile_failed,
+            "gone_count": self.gone,
         }
         if reason_code is not None:
             out["reason_code"] = reason_code
@@ -420,6 +428,8 @@ class EntitlementFeed:
         self._config = config
         self._now = now
         self._warned = False
+        # S290: tenants CIS answered 404 for (point 5 of the module docstring); per worker, never persisted
+        self._gone: set[uuid.UUID] = set()
 
     async def __call__(self, pool: asyncpg.Pool, _job: Job) -> dict[str, Any]:
         counts = RunCounts()
@@ -451,7 +461,7 @@ class EntitlementFeed:
             counts.pages += 1
             for tenant_id in page_tenants(items):
                 if tenant_id not in done:
-                    await self._project(pool, tenant_id, counts)
+                    await self._project(pool, tenant_id, counts, named_by_event=True)
                     done.add(tenant_id)
             if next_cursor and next_cursor != cursor:
                 if not await feed_state.advance(pool, cursor, next_cursor, feed_state.ENTITLEMENT):
@@ -491,15 +501,26 @@ class EntitlementFeed:
         if failures >= RECONCILE_STUCK:
             log.error("crm_entitlement_feed_stuck part=reconcile error=%s failures=%d", error_class, failures)
 
-    async def _project(self, pool: asyncpg.Pool, tenant_id: uuid.UUID, counts: RunCounts) -> None:
+    async def _project(
+        self, pool: asyncpg.Pool, tenant_id: uuid.UUID, counts: RunCounts, *, named_by_event: bool = False
+    ) -> None:
         counts.tenants += 1
+        if not named_by_event and tenant_id in self._gone:
+            counts.gone += 1  # S290: CIS answered 404 before and no event has named it since: no snapshot call
+            return
         if not await held(pool, tenant_id):
             counts.ignored += 1  # most CIS tenants have no CRM agency: no snapshot call for them
             return
         account = await self._account(tenant_id)
         if account is None:
             counts.ignored += 1  # CIS has no such tenant (404)
+            if tenant_id not in self._gone:
+                self._gone.add(tenant_id)
+                log.warning("crm_entitlement_tenant_gone tenant_id=%s", tenant_id)  # once per tenant and worker
             return
+        if tenant_id in self._gone:
+            self._gone.discard(tenant_id)
+            log.info("crm_entitlement_tenant_back tenant_id=%s", tenant_id)
         try:
             await apply(pool, tenant_id, projection(account), counts)
         except asyncpg.PostgresError as exc:

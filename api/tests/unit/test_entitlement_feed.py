@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import uuid
 from collections.abc import Mapping
 from decimal import Decimal
@@ -446,6 +447,59 @@ async def test_hourly_reconcile_projects_every_agency() -> None:
     assert result["reconcile_failed_count"] == 0
     conn = pool(reconciled_at=None, agencies=[])
     assert (await make(Transport(page([], "")))(conn, JOB))["reconciled_count"] == 1  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_a_tenant_cis_answers_404_for_is_skipped_by_the_next_reconciles_until_an_event_names_it(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """S290 follow-up: the CRM holds an agency CIS no longer lists (404). The first pass logs it once; the next hourly
+    passes of the same worker skip it without a snapshot call; an event that names it again is still read, and on a 200
+    the agency is projected and leaves the gone set (the next reconcile reads it again)."""
+    caplog.set_level(logging.INFO, logger=feed.__name__)
+    transport = Transport()
+    run = make(transport)
+    due = NOW - dt.timedelta(hours=2)
+
+    def gone_logs() -> list[str]:
+        return [r.message for r in caplog.records if "tenant_gone" in r.message]
+
+    conn = pool(statuses={A: "active", B: "active"}, reconciled_at=due, agencies=[A, B])
+    transport.responses += [page([], ""), HttpResponse(404, b"{}"), ok(account(B))]
+    result = await run(conn, JOB)  # type: ignore[arg-type]
+    check_payload(result, what="result")
+    assert result["ignored_count"] == 1 and result["gone_count"] == 0 and result["reconcile_failed_count"] == 0
+    assert gone_logs() == [f"crm_entitlement_tenant_gone tenant_id={A}"]
+
+    caplog.clear()
+    transport.urls.clear()
+    conn = pool(statuses={A: "active", B: "active"}, reconciled_at=due, agencies=[A, B])
+    transport.responses += [page([], ""), ok(account(B))]
+    result = await run(conn, JOB)  # type: ignore[arg-type]
+    assert result["gone_count"] == 1 and result["reconciled_count"] == 1
+    assert transport.urls == [feed.events_url(BASE, None), feed.account_url(BASE, B)]  # no hourly repeat for A
+    assert conn.sql("SET last_reconcile_at = now(), reconcile_failures = 0") == [()]  # a clean pass
+    assert gone_logs() == []  # logged once only
+
+    # an event that names it is still read; a second 404 does not log again
+    conn = pool(statuses={A: "active"})
+    transport.responses += [page([A], ""), HttpResponse(404, b"{}")]
+    result = await run(conn, JOB)  # type: ignore[arg-type]
+    assert result["status"] == "ok" and result["ignored_count"] == 1 and result["gone_count"] == 0
+    assert gone_logs() == []
+
+    # CIS lists it again: an event names it, the snapshot answers 200, the agency is projected and is back
+    conn = pool(statuses={A: "active"})
+    transport.responses += [page([A], ""), ok(account(A))]
+    result = await run(conn, JOB)  # type: ignore[arg-type]
+    assert result["applied_count"] == 1
+    assert f"crm_entitlement_tenant_back tenant_id={A}" in [r.message for r in caplog.records]
+    transport.urls.clear()
+    conn = pool(statuses={A: "active"}, reconciled_at=due, agencies=[A])
+    transport.responses += [page([], ""), ok(account(A))]
+    result = await run(conn, JOB)  # type: ignore[arg-type]
+    assert result["gone_count"] == 0 and transport.urls[-1] == feed.account_url(BASE, A)
+    assert transport.responses == []
 
 
 @pytest.mark.asyncio
