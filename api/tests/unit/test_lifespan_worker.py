@@ -27,8 +27,10 @@ class FakeWorker:
         recurring: tuple = (),
         hooks: tuple = (),
         no_release: frozenset = frozenset(),
+        prune_every_s: Any = None,
     ) -> None:
         self.handlers, self.recurring, self.hooks, self.no_release = handlers, recurring, hooks, no_release
+        self.prune_every_s = prune_every_s
         self.started = self.stopped = False
         FakeWorker.instances.append(self)
 
@@ -79,6 +81,8 @@ def test_worker_runs_for_the_app_lifetime_when_enabled() -> None:
         assert client.get("/crm/health").status_code == 200
     (worker,) = FakeWorker.instances
     assert worker.started and worker.stopped
+    # S291: the history prune cadence is the admin setting crm.jobs.history_prune_every_s (60 s by default).
+    assert worker.prune_every_s() == 60
     assert set(worker.handlers) == {
         "crm_heartbeat",
         "crm_job_retention",
