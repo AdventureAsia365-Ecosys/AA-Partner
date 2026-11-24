@@ -128,6 +128,13 @@ OPS_AUDIT_VERIFY_LAG_H = "crm.ops.audit_verify_lag_h"
 OPS_AUDIT_PARTITION_MONTHS_AHEAD = "crm.ops.audit_partition_months_ahead"
 OPS_MEMBERSHIP_FEED_STUCK_FAILURES = "crm.ops.membership_feed_stuck_failures"
 OPS_APP_SPEND_NEAR_PCT = "crm.ops.app_spend_near_pct"
+# S291 (crm-088, C4.3 W48 findings 4 and 5): the database load of the job worker. How often the scheduled Booking sync
+# re-checks an agency's accepted proposals when nothing nudged it (app/booking/sync.py), how long a job context trusts
+# an agency's last "active" status (app/tenancy.py), and how often the worker prunes the recurring kinds' history
+# (app/jobs/worker.py, wired in app/main.py).
+JOBS_PROPOSAL_CHECK_EVERY_S = "crm.jobs.booking_proposal_check_every_s"
+JOBS_TENANT_STATUS_CACHE_S = "crm.jobs.tenant_status_cache_s"
+JOBS_HISTORY_PRUNE_EVERY_S = "crm.jobs.history_prune_every_s"
 
 # The platform ranges of the agency-owner settings: (new-agency default, lowest an owner may pick, highest). The
 # registry service refuses a change that would break min <= default <= max (422 range_inconsistent);

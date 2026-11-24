@@ -23,6 +23,8 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
+from app.pg_connection import StableSavepointConnection
+
 # The agency's default time zone (crm.tenant_settings.timezone). Views such as crm.v_schedule_status and the cancel
 # policy count days from "today" in it, so a test that builds dates must use the same day: from 17:00 to 24:00 UTC the
 # agency is already on the next calendar day and a UTC current_date or date.today() is one day short.
@@ -148,8 +150,21 @@ async def admin(migrated_admin_dsn: str) -> AsyncIterator[asyncpg.Connection]:
 
 @pytest_asyncio.fixture
 async def app_pool(migrated_app_dsn: str) -> AsyncIterator[asyncpg.Pool]:
-    pool = await asyncpg.create_pool(migrated_app_dsn, min_size=0, max_size=3)
+    # S291: the connection class of the API pool (depth-named savepoints), so every integration test runs with it.
+    pool = await asyncpg.create_pool(
+        migrated_app_dsn, min_size=0, max_size=3, connection_class=StableSavepointConnection
+    )
     try:
         yield pool
     finally:
         await pool.close()
+
+
+@pytest.fixture(autouse=True)
+def _job_status_cache_per_test() -> object:
+    """S291: the job contexts' agency status cache (app.tenancy) is per process; every test starts without it."""
+    from app import tenancy
+
+    tenancy.forget_job_status()
+    yield
+    tenancy.forget_job_status()

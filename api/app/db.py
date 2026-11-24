@@ -23,6 +23,7 @@ import asyncpg
 from fastapi import HTTPException, Request
 
 from app.cis import feed_state
+from app.pg_connection import StableSavepointConnection
 from app.settings import Settings
 
 log = logging.getLogger(__name__)
@@ -149,6 +150,9 @@ class Database:
                     max_size=3,
                     timeout=CONNECT_TIMEOUT_S,
                     command_timeout=PROBE_TIMEOUT_S,
+                    # S291 (C4.3 W48 finding 5): savepoints named by depth, not by asyncpg's counter, so
+                    # pg_stat_statements (it keys utility statements by text) keeps a handful of SAVEPOINT texts.
+                    connection_class=StableSavepointConnection,
                     # Named pool on the shared RDS (pg_stat_activity, data standards C2.2). AA-940: a transaction left
                     # idle ends after IDLE_IN_TX_TIMEOUT_MS, far below the audit export's 15-minute read lag, so an
                     # audit row is never committed after the export already read its hour (it would be missing from

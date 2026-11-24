@@ -928,6 +928,54 @@
     "when": "Thêm bước khi đại lý của một thị trường cần; bỏ bước không ai dùng.",
     "example": "Với mặc định, chủ đại lý chọn USD 1, 5 hoặc 10 và VND 10.000, 50.000 hoặc 100.000."
    }
+  },
+  "crm.jobs.booking_proposal_check_every_s": {
+   "en": {
+    "what": "How often the minute Booking sync re-checks an agency's accepted proposals (their AA lines and the confirm after a paid deposit) when nothing asked for it; an accept, a paid deposit, a claim or a re-hold asks for it at once.",
+    "raise": "Fewer database reads; an accepted proposal whose own request to the sync was lost waits longer for its AA lines or its confirm.",
+    "lower": "A lost request is caught sooner, at the cost of more database reads for every agency.",
+    "when": "Lower it if AA lines or confirms of accepted proposals are seen arriving late; raise it if the CRM's database load matters more.",
+    "example": "With the default of 300 seconds, an agency with nothing pending is re-checked about every five minutes instead of every minute."
+   },
+   "vi": {
+    "what": "Lượt đồng bộ Booking mỗi phút kiểm lại các đề xuất đã được chấp nhận của một đại lý (dòng AA của chúng và lệnh xác nhận sau khi trả cọc) bao lâu một lần khi không có gì yêu cầu; chấp nhận, trả cọc, yêu cầu gia hạn hay giữ chỗ lại đều yêu cầu ngay.",
+    "raise": "Ít lượt đọc cơ sở dữ liệu hơn; một đề xuất đã chấp nhận mà yêu cầu đồng bộ của nó bị mất sẽ chờ lâu hơn mới có dòng AA hay lệnh xác nhận.",
+    "lower": "Yêu cầu bị mất được bắt sớm hơn, đổi lại nhiều lượt đọc cơ sở dữ liệu hơn cho mọi đại lý.",
+    "when": "Giảm khi thấy dòng AA hay lệnh xác nhận của đề xuất đã chấp nhận tới trễ; tăng khi tải cơ sở dữ liệu của CRM quan trọng hơn.",
+    "example": "Với mặc định 300 giây, một đại lý không có việc chờ được kiểm lại khoảng năm phút một lần thay vì mỗi phút."
+   }
+  },
+  "crm.jobs.tenant_status_cache_s": {
+   "en": {
+    "what": "How long a background job trusts an agency's last read status of active before reading it again. Only active is remembered, so a locked or offboarded agency is refused by every job at most this long after the change.",
+    "raise": "Fewer database reads; a lock or offboarding takes a little longer to stop the background jobs of that agency.",
+    "lower": "A lock or offboarding stops the agency's background jobs sooner; 0 reads the status every time (more database reads).",
+    "when": "Lower it (or set 0) when a lock must stop background work at once; member requests and AA staff actions never use it.",
+    "example": "With the default of 10 seconds, an agency locked at 10:00:00 has no new background work after 10:00:10 at the latest."
+   },
+   "vi": {
+    "what": "Một job nền tin trạng thái đang hoạt động đọc lần trước của một đại lý trong bao lâu trước khi đọc lại. Chỉ trạng thái đang hoạt động được nhớ, nên một đại lý bị khoá hay đang offboard bị mọi job từ chối chậm nhất sau khoảng này.",
+    "raise": "Ít lượt đọc cơ sở dữ liệu hơn; lệnh khoá hay offboard mất lâu hơn một chút mới dừng các job nền của đại lý đó.",
+    "lower": "Lệnh khoá hay offboard dừng job nền của đại lý sớm hơn; 0 là đọc trạng thái mỗi lần (nhiều lượt đọc hơn).",
+    "when": "Giảm (hoặc đặt 0) khi lệnh khoá phải dừng việc nền ngay; yêu cầu của thành viên và thao tác của nhân viên AA không dùng giá trị này.",
+    "example": "Với mặc định 10 giây, một đại lý bị khoá lúc 10:00:00 không có việc nền mới nào chậm nhất từ 10:00:10."
+   }
+  },
+  "crm.jobs.history_prune_every_s": {
+   "en": {
+    "what": "How often each CRM worker deletes the old finished runs of its recurring jobs (heartbeat, membership feed, Booking sync); how many days of runs are kept does not change.",
+    "raise": "Fewer delete statements; the job table holds a few more finished rows between two deletes.",
+    "lower": "Old finished runs leave sooner, at the cost of more delete statements (60 seconds is the lowest).",
+    "when": "Leave it unless the job table grows between deletes or the deletes show up in the weekly database review.",
+    "example": "With the default of 60 seconds, the old runs are deleted about once a minute instead of every few seconds."
+   },
+   "vi": {
+    "what": "Mỗi worker CRM xoá các lượt chạy đã xong cũ của job định kỳ (heartbeat, luồng thành viên, đồng bộ Booking) bao lâu một lần; số ngày giữ lại không đổi.",
+    "raise": "Ít câu lệnh xoá hơn; bảng job giữ thêm vài dòng đã xong giữa hai lần xoá.",
+    "lower": "Các lượt chạy cũ được xoá sớm hơn, đổi lại nhiều câu lệnh xoá hơn (thấp nhất 60 giây).",
+    "when": "Để nguyên trừ khi bảng job phình ra giữa các lần xoá hoặc câu lệnh xoá nổi lên trong lần rà soát cơ sở dữ liệu hằng tuần.",
+    "example": "Với mặc định 60 giây, các lượt cũ được xoá khoảng mỗi phút một lần thay vì vài giây một lần."
+   }
   }
  }
 }

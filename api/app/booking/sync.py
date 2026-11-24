@@ -53,6 +53,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import time
 import uuid
 from collections import Counter
 from collections.abc import Callable
@@ -63,6 +64,7 @@ from typing import Any
 import asyncpg
 
 from app import cancellation, stages
+from app import platform_settings as ps
 from app.audit import MAX_OBJECT_IDS
 from app.audit_export import registry
 from app.booking import contract, proposal_lines, rehold
@@ -792,6 +794,11 @@ async def process_event(pool: asyncpg.Pool, tenant_id: uuid.UUID, item: Any, cou
     counts[f"events_{outcome}"] += 1
 
 
+# S291: the counters of the accepted-proposal step that mean "work was due or left" (a check that moves none of them
+# is clean: the next minute run may skip the agency). ``confirms_queued`` counts as work: the requests go out this run.
+_PROPOSAL_WORK = ("proposal_sets_due", "confirms_queued", "confirms_error")
+
+
 # ── the job ──────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -804,9 +811,18 @@ class _Feed:
 
 @dataclass
 class BookingSync:
+    """The handler. S291 (C4.3 W48 finding 4): the accepted-proposal step (:meth:`proposal_sets`, two reads per agency)
+    is event driven: a nudge run (an accept, a paid deposit, a claim, a re-hold: payload ``tenant_id``) always runs
+    it, and the minute run of every agency re-checks an agency only when its last check left work (due sets, a retry,
+    an outage, an error) or ``crm.jobs.booking_proposal_check_every_s`` has passed since (the backstop for a nudge that
+    never ran). The memory is per process (``_proposal_checks``: agency -> monotonic time of its last clean check);
+    a new process checks every agency on its first run."""
+
     client: BookingClient | None
     now: Callable[[], dt.datetime] = field(default=lambda: dt.datetime.now(dt.UTC))
+    clock: Callable[[], float] = time.monotonic
     _warned: bool = False
+    _proposal_checks: dict[uuid.UUID, float] = field(default_factory=dict)
 
     async def __call__(self, pool: asyncpg.Pool, job: Job) -> dict[str, Any]:
         if self.client is None:
@@ -827,11 +843,35 @@ class BookingSync:
                 log.error("crm_booking_sync_failed tenant_id=%s error_class=%s", tenant_id, type(exc).__name__)
         return {"status": "ok", **{f"{k}_count": int(v) for k, v in sorted(counts.items())}}
 
+    def proposals_due(self, tenant_id: uuid.UUID, *, nudged: bool) -> bool:
+        """Whether this run checks the agency's accepted proposals (see the class docstring)."""
+        last = self._proposal_checks.get(tenant_id)
+        if nudged or last is None:
+            return True
+        return self.clock() - last >= float(ps.get(ps.JOBS_PROPOSAL_CHECK_EVERY_S))
+
+    async def checked_proposal_sets(
+        self, pool: asyncpg.Pool, tenant_id: uuid.UUID, counts: Counter[str], *, nudged: bool
+    ) -> str | None:
+        """:meth:`proposal_sets` when :meth:`proposals_due`; remembers a clean check (nothing due, no outage, no
+        error), so the next minute run skips the agency until the backstop interval has passed."""
+        if not self.proposals_due(tenant_id, nudged=nudged):
+            counts["proposal_check_skipped"] += 1
+            return None
+        self._proposal_checks.pop(tenant_id, None)
+        before = sum(counts[k] for k in _PROPOSAL_WORK)
+        started = self.clock()
+        outage = await self.proposal_sets(pool, tenant_id, counts)
+        if outage is None and sum(counts[k] for k in _PROPOSAL_WORK) == before:
+            self._proposal_checks[tenant_id] = started
+        return outage
+
     async def proposal_sets(self, pool: asyncpg.Pool, tenant_id: uuid.UUID, counts: Counter[str]) -> str | None:
         """AA-952: the AA lines of accepted proposals (Booking's hold read outside any transaction), then the confirms
         their paid deposits are due. Returns an outage class when Booking gave no answer (the run stops asking)."""
         async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
             due = await proposal_lines.due_sets(ctx)
+        counts["proposal_sets_due"] += len(due)
         for row in due:
             held: contract.HeldSet | None
             try:
@@ -918,7 +958,8 @@ class BookingSync:
 
     async def run_agency(self, pool: asyncpg.Pool, tenant_id: uuid.UUID, counts: Counter[str], *, feed: bool) -> None:
         sent = 0
-        outage: str | None = await self.proposal_sets(pool, tenant_id, counts)
+        # S291: a nudge run (feed off) always checks the accepted proposals; the minute run only when due.
+        outage: str | None = await self.checked_proposal_sets(pool, tenant_id, counts, nudged=not feed)
         if outage is None:
             outage = await self.invoice_holds(pool, tenant_id, counts)
         while sent < MAX_REQUESTS:

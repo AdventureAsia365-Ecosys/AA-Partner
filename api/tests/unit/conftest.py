@@ -34,3 +34,14 @@ def _settings_env_per_file():  # noqa: ANN202
     yield
     ps.configure_env({})
     settings_serve.reset()
+
+
+@_pytest.fixture(autouse=True)
+def _job_status_cache_per_test():  # noqa: ANN202
+    """S291: the job contexts' agency status cache (app.tenancy) is per process; every test starts without it, so an
+    agency one test saw active is read again by the next test (the tests reuse one agency id)."""
+    from app import tenancy
+
+    tenancy.forget_job_status()
+    yield
+    tenancy.forget_job_status()
