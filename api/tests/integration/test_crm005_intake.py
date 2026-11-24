@@ -23,6 +23,7 @@ from typing import Any
 import asyncpg
 import pytest
 
+from app import tenancy
 from app.auth.route_guard import Caller
 from app.errors import Conflict, Forbidden, Invalid, NotFound
 from app.intake import forms as intake_forms
@@ -427,6 +428,8 @@ async def test_job_is_idempotent_and_refuses_a_locked_agency(app_pool: asyncpg.P
     async with app_pool.acquire() as conn, conn.transaction():
         await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant_id))
         await conn.execute("UPDATE crm.tenant SET status = 'locked'")
+    # S291: a job context trusts a cached "active" for crm.jobs.tenant_status_cache_s; here that window has passed.
+    tenancy.forget_job_status(tenant_id)
     with pytest.raises(PermanentError):
         await handler(app_pool, job)
     with pytest.raises(PermanentError):
