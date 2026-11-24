@@ -466,7 +466,9 @@ def test_deploy_calls_verify_after_deploy_and_result_needs_every_job(wf: Path) -
     spec = DEPLOYS[wf]
     text = wf.read_text()
     jobs = _block(text, "jobs:", 0)
-    assert re.findall(r"^  ([a-z][a-z-]*):$", jobs, re.M) == [*spec["jobs"], "result"]
+    # AA-1119: `rollback` and `report` (conditional, after a red verify or smoke) come before `result`, which does not
+    # wait on them.
+    assert re.findall(r"^  ([a-z][a-z-]*):$", jobs, re.M) == [*spec["jobs"], "rollback", "report", "result"]
     verify = _block(jobs, "verify:", 2)
     assert "    uses: ./.github/workflows/post-deploy-verify.yml" in verify and "    needs: deploy\n" in verify
     assert "      expected_sha: ${{ github.sha }}" in verify and "      from_deploy: true" in verify
@@ -477,7 +479,14 @@ def test_deploy_calls_verify_after_deploy_and_result_needs_every_job(wf: Path) -
         assert not re.search(r"^    if:", _block(jobs, f"{name}:", 2), re.M), name
     deploy = _block(jobs, "deploy:", 2)
     assert "Verify the running image" not in deploy and "Smoke test" not in deploy
-    assert "smoke skipped" not in text and "DESIRED_COUNT" not in text and '>> "$GITHUB_OUTPUT"' not in text
+    assert "smoke skipped" not in text and "DESIRED_COUNT" not in text
+    # No step output that could skip a job (AA-993); the only outputs are the AA-1119 rollback target and outcome.
+    outputs = [ln.strip() for ln in text.splitlines() if '>> "$GITHUB_OUTPUT"' in ln]
+    assert outputs == [
+        'python3 .github/scripts/ecs_smoke_rollback.py previous --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE"'
+        ' >> "$GITHUB_OUTPUT"',
+        'echo "outcome=$outcome" >> "$GITHUB_OUTPUT"',
+    ], outputs
     assert deploy.rstrip().endswith('aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"')
     # Public logs: task definitions as family:revision only.
     assert 'split("/") | last' in deploy and "${NEW_TD##*/}" in deploy
