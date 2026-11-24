@@ -141,6 +141,8 @@ SYSTEM_MODULES = frozenset(
         "app/catalog/retired.py",
         # AA-968: the hourly campaign send pass (one agency per transaction, actor job:crm_campaign_tick).
         "app/campaigns/send.py",
+        # AA-1152: the planner price publish (one agency per transaction, actor job:crm_tp_price_publish).
+        "app/tripplanner/prices.py",
     }
 )
 # AA-1072: the "Book now" routes of the public tour page decide the agency by the same form key.

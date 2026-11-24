@@ -17,9 +17,9 @@ test("the closed list is flight, visa, travel insurance and the agency fee, in t
 });
 
 test("the drawer offers agency items on an Other block only; a lodging block asks AA for nights", () => {
-  assert.deepEqual(drawerTabs("other"), ["aa", "agency", "catalogue", "ai"]);
+  assert.deepEqual(drawerTabs("other"), ["aa", "addon", "agency", "catalogue", "ai"]);
   for (const kind of ["lodging", "activity", "transport", "meal", "guide"] as const) {
-    assert.deepEqual(drawerTabs(kind), ["aa", "ai"], kind);
+    assert.deepEqual(drawerTabs(kind), ["aa", "addon", "ai"], kind);
   }
   assert.equal(asksAaForNights("lodging"), true);
   assert.equal(asksAaForNights("activity"), false);

@@ -26,6 +26,7 @@ import { supportEn, supportVi } from "./i18nSupport";
 import { addOnsEn, addOnsVi } from "./i18nAddOns";
 import { tripPlannerEn, tripPlannerVi } from "./i18nTripPlanner";
 import { pluralsEn, pluralsVi } from "./i18nPlurals";
+import { plannerPricesEn, plannerPricesVi } from "./i18nPlannerPrices";
 import { tripClosedEn, tripClosedVi } from "./i18nTripClosed";
 import { tripCodesEn, tripCodesVi } from "./i18nTripCodes";
 import { workflowsEn, workflowsVi } from "./i18nWorkflows";
@@ -85,6 +86,7 @@ const en = {
   ...opsReleaseEn, // AA-956: the AA ground operations panel and its log lines (lib/i18nOpsRelease.ts)
   ...offlineEn, // AA-954: the installable, offline traveller page (lib/i18nOffline.ts)
   ...commissionEn, // AA-957: A-12 Commissions, commission follow-up, the cancel dialog (lib/i18nCommission.ts)
+  ...plannerPricesEn, // AA-1152: the AA add-on drawer tab and Settings > Payments planner prices (lib/i18nPlannerPrices.ts)
   ...tripClosedEn, // AA-957 round 3: a cancelled trip on every card, lead sources (lib/i18nTripClosed.ts)
   ...pluralsEn, // AA-957 round 3: the singular of counted messages, read by plural() (lib/i18nPlurals.ts)
   ...staffEn, // AA-1019: the AA staff console, S-02 and S-04 (lib/i18nStaff.ts)
@@ -2843,6 +2845,7 @@ const vi: Record<MessageKey, string> = {
   ...opsReleaseVi,
   ...offlineVi,
   ...commissionVi,
+  ...plannerPricesVi,
   ...tripClosedVi,
   ...pluralsVi,
   ...staffVi,

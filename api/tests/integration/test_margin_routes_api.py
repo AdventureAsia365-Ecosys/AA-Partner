@@ -84,6 +84,9 @@ ASSISTANT_READS = (
 # GET /crm/v1 routes whose path parameter names an object this seed does not create, with why none of them can carry
 # margin-bearing money (a new money route must be seeded here instead).
 UNSEEDED = {
+    # AA-1152: the day's AA add-ons read live from Booking; AA's price and a markup suggestion are left out for a role
+    # without view_margin (tests/unit/test_aa1152_planner_prices.py).
+    "/crm/v1/proposals/{proposal_id}/blocks/{block_id}/aa-addons": "AA add-ons read live from Booking, margin-gated",
     "/crm/v1/conversations/{conversation_id}/messages": "mail messages: no money table behind them",
     "/crm/v1/campaigns/{campaign_id}": "agency campaign: text and counts, no money table",
     "/crm/v1/campaigns/blocks/{content_id}": "Content studio block: marketing text, no money",

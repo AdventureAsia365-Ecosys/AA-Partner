@@ -398,6 +398,8 @@ export const auditLogVi: Record<keyof typeof auditLogEn, string> = {
   "field.public_booking_enabled": "đặt trực tuyến",
   "field.public_price_per_minute": "giá mỗi phút",
   "field.retail_markup_pct": "tỷ lệ cộng giá bán lẻ",
+  "field.price_round_step": "bước làm tròn giá",
+  "field.show_planner_prices": "giá trên trang lập lịch trình",
   "field.retired_at": "ngày ngừng",
   "field.role": "vai trò",
   "field.rooming": "danh sách phòng",

@@ -86,6 +86,10 @@ INVOICE_REMINDER_EVERY_DAYS = "crm.payments.invoice_reminder_every_days"
 INVOICE_REMINDER_MAX = "crm.payments.invoice_reminder_max"
 DISCOUNT_LIMIT_DEFAULT = "crm.agency_defaults.discount_owner_limit_pct"
 MARKUP_MAX = "crm.agency_defaults.markup_max_pct"
+# AA-1152 (crm-087, S285 B2 option C): the rounding step of every suggested price per currency, and the steps an owner
+# may choose (app/proposals/rounding.py).
+PRICE_ROUND_STEP = "crm.agency_defaults.price_round_step"
+PRICE_ROUND_STEPS = "crm.agency_defaults.price_round_steps"
 PRICE_CHECKS_DEFAULT = "crm.agency_defaults.price_checks_per_minute"
 PRICE_CHECKS_MIN = "crm.agency_defaults.price_checks_per_minute_min"
 PRICE_CHECKS_MAX = "crm.agency_defaults.price_checks_per_minute_max"

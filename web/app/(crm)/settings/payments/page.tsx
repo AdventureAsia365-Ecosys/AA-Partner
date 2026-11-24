@@ -10,18 +10,29 @@ import { InvoiceSettingsForm } from "@/components/invoices/InvoiceSettingsForm";
 import { PaymentMethodsForm } from "@/components/invoices/PaymentMethodsForm";
 import { PaymentsView } from "@/components/ledger/PaymentsView";
 import { RetailMarkupForm, type RetailMarkupView } from "@/components/proposals/RetailMarkupForm";
+import { PlannerPricesForm } from "@/components/settings/PlannerPricesForm";
 import { ScheduleTemplateForm } from "@/components/settings/ScheduleTemplateForm";
 import { OnlineBookingForm, type OnlineBookingView } from "@/components/settings/OnlineBookingForm";
 import { OnlinePaymentForm, type GatewayStatus } from "@/components/settings/OnlinePaymentForm";
-import { crmCall } from "@/lib/crmApi";
+import { crmCall, type ApiResult } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
 import { t, type MessageKey } from "@/lib/i18n";
+import type { PlannerPricesView } from "@/lib/aaAddons";
 import type { InvoiceSettings, PaymentMethodsView } from "@/lib/invoices";
 import type { FxOverride, PaymentSettings } from "@/lib/ledger";
 import type { ScheduleSettings } from "@/lib/retailPayments";
 import { serverContext } from "@/lib/serverContext";
 
 export const dynamic = "force-dynamic";
+
+// AA-1152: Settings > Payments "Prices on my planner and rounding" (its own function: the page's complexity stays).
+function plannerPanel(
+  r: ApiResult<PlannerPricesView>,
+  lang: Parameters<typeof PlannerPricesForm>[0]["lang"],
+  unavailable: (title: MessageKey, testId: string) => React.ReactNode,
+) {
+  return r.ok ? <PlannerPricesForm view={r.data} lang={lang} /> : unavailable("plannerPrices.title", "planner-prices");
+}
 
 export default async function PaymentsSettingsPage() {
   const ctx = await crmContext();
@@ -44,7 +55,7 @@ export default async function PaymentsSettingsPage() {
   }
   const { session } = await serverContext();
   if (!session) return null;
-  const [settings, overrides, invoiceSettings, methods, markup, schedule, gateway, booking] = await Promise.all([
+  const [settings, overrides, invoiceSettings, methods, markup, schedule, gateway, booking, planner] = await Promise.all([
     crmCall<PaymentSettings>(ctx.cfg, session, "GET", "settings/payments"),
     crmCall<{ overrides: FxOverride[] }>(ctx.cfg, session, "GET", "fx/overrides"),
     crmCall<InvoiceSettings>(ctx.cfg, session, "GET", "settings/invoices"),
@@ -53,6 +64,7 @@ export default async function PaymentsSettingsPage() {
     crmCall<ScheduleSettings>(ctx.cfg, session, "GET", "settings/payment-schedule"),
     crmCall<GatewayStatus>(ctx.cfg, session, "GET", "settings/payment-methods/vn-gateway"),
     crmCall<OnlineBookingView>(ctx.cfg, session, "GET", "settings/online-booking"),
+    crmCall<PlannerPricesView>(ctx.cfg, session, "GET", "settings/planner-prices"), // AA-1152
   ]);
   const stubAllowed = ["dev", "test", "local"].includes(ctx.cfg.environment);
   const unavailable = (title: MessageKey, testId: string) => (
@@ -88,6 +100,7 @@ export default async function PaymentsSettingsPage() {
         unavailable("invoice.settings.title", "invoice-settings")
       )}
       {markup.ok ? <RetailMarkupForm view={markup.data} lang={ctx.lang} /> : unavailable("markup.title", "retail-markup")}
+      {plannerPanel(planner, ctx.lang, unavailable)}
       {schedule.ok ? <ScheduleTemplateForm view={schedule.data} lang={ctx.lang} /> : unavailable("schedule.settings.title", "schedule-template")}
     </div>
   );

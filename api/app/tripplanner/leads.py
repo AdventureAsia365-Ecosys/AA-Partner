@@ -227,6 +227,14 @@ def message_text(lead: dict[str, Any], *, unchecked_phone: str | None = None) ->
     catalog_lines += [
         f"Day {day.get('day')}: {', '.join(day.get('stops') or [])}" for day in trip.get("day_plan") or []
     ]
+    # AA-1152 (lead.submitted.v1 1.2): the AA add-ons the traveller ticked, with the sv: code the "AA add-on" drawer
+    # of the builder quotes (never a price: the agency quotes it).
+    catalog_lines += [
+        f"Day {day.get('day')} AA add-on: {addon.get('title')} ({addon.get('component_id')})"
+        for day in trip.get("day_plan") or []
+        for addon in (day.get("addons") or [])
+        if isinstance(addon, dict)
+    ]
     catalog = _clean("\n".join(catalog_lines))
 
     phone_cost = len(phone) + 1 if phone else 0

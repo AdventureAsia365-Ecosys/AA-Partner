@@ -80,6 +80,7 @@ from app.jobs.kinds import (
     TENANT_ERASE,
     TOUR_RETIRED_FANOUT,
     TP_LEAD_PULL,
+    TP_PRICE_PUBLISH,
     WORKFLOW_RUN,
     WORKFLOW_TICK,
 )
@@ -247,6 +248,7 @@ def build_handlers(
     from app.privacy.purge import purge_expired_maps
     from app.stages_job import date_rule
     from app.tripplanner.leads import LeadPull
+    from app.tripplanner.prices import PricePublish
     from app.workflows import digest as task_digest
     from app.workflows import runner as workflow_runner
     from app.workflows import tick as workflow_tick
@@ -285,6 +287,7 @@ def build_handlers(
         ENTITLEMENT_PULL: EntitlementFeed(entitlement_feed),
         PILOT_BACKUP: pilot_backup.build_handler(),
         TP_LEAD_PULL: LeadPull(tp_leads, keys),
+        TP_PRICE_PUBLISH: PricePublish(tp_leads, booking_client),  # AA-1152: the agency's planner prices
         PDF_RENDER: pdf_job.build_handler(keys, documents),
         TOUR_RETIRED_FANOUT: tour_retired.build_handler(keys),
         TENANT_ERASE: tenant_erase.TenantErase(
@@ -359,6 +362,7 @@ def build_hooks(
     from app.privacy.purge import HourlyPlaceholderPurge
     from app.stages_job import HourlyStageDateRule
     from app.tripplanner.leads import LeadPullSchedule
+    from app.tripplanner.prices import PricePublishSchedule
     from app.workflows.tick import HourlyWorkflowTick
 
     clock = now or (lambda: datetime.now(UTC))
@@ -380,6 +384,7 @@ def build_hooks(
         EntitlementPullSchedule(clock),  # AA-1028: the CIS account feed, every 2 minutes
         DailyPilotBackupSchedule(retention_utc_hour, clock),  # AA-969 d16: the pilot agency's nightly export
         LeadPullSchedule(clock),  # AA-1038: TripPlanner leads, every minute
+        PricePublishSchedule(clock),  # AA-1152: the agencies' planner prices, every hour
         TenantEraseSchedule(clock),  # AA-1093 stage 2: the CIS tenant erasure saga, every 2 minutes
         HourlyCampaignTick(clock),  # AA-968: the campaign send pass, every hour
     )
@@ -413,6 +418,7 @@ SCHEDULED_KINDS: frozenset[str] = frozenset(
         ENTITLEMENT_PULL,  # AA-1028: every 2-minute slot, due now
         PILOT_BACKUP,  # AA-969 d16: daily, due now
         TP_LEAD_PULL,  # AA-1038: every minute slot, due now
+        TP_PRICE_PUBLISH,  # AA-1152: every hour slot, due now (+ one row per owner change)
         TENANT_ERASE,  # AA-1093 stage 2: every 2-minute slot, due now
         CAMPAIGN_TICK,  # AA-968: hourly, due now
     }

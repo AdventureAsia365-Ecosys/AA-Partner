@@ -39,6 +39,7 @@ from app.jobs.kinds import (
     STAGE_DATE_RULE,
     TENANT_ERASE,
     TP_LEAD_PULL,
+    TP_PRICE_PUBLISH,
     WORKFLOW_TICK,
 )
 from app.jobs.payload_guard import PersonalDataInPayload
@@ -245,6 +246,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         (STAGE_DATE_RULE, True),  # AA-943: the hourly trip date rule, due now too
         (TENANT_ERASE, True),  # AA-1093: the CIS erasure feed pull, one run per 2-minute slot, due now
         (TP_LEAD_PULL, True),  # AA-1038: the TripPlanner lead pull, one run per minute slot, due now
+        (TP_PRICE_PUBLISH, True),  # AA-1152: the agencies' planner prices, one run per hour slot, due now
         (WORKFLOW_TICK, True),  # AA-959: the hourly workflow tick, due now
     ]
     # The due runs count while they wait (they would be interrupted by a deploy) ...
@@ -265,6 +267,7 @@ async def test_production_schedule_leaves_the_queue_idle_for_deploys_and_db_migr
         ENTITLEMENT_PULL: 1,
         PILOT_BACKUP: 1,
         TP_LEAD_PULL: 1,
+        TP_PRICE_PUBLISH: 1,
         TENANT_ERASE: 1,
         CAMPAIGN_TICK: 1,
     }

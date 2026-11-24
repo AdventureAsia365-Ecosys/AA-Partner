@@ -7,7 +7,8 @@ it) and publishes a suggested retail price (RRP = the agency price + 25 %, the p
 
 1. **The agency's own markup** (``crm.tenant_settings.retail_markup_pct``, per AA product type, set by the owner in
    Settings): ``sell = B2B price x (1 + markup / 100)``, rounded up to the cent;
-2. else, for a tour (``trip_plan``), **AA's RRP**: ``sell = "from" price per person x party``;
+2. else, for a tour (``trip_plan``) or, since AA-1152, an AA add-on, **AA's RRP**: ``sell = "from" price per person x
+   party``;
 3. else no suggestion (a hotel night or a transfer sold alone has no RRP).
 
 A new AA option added without a sell by a role that sees margins (owner, agent) takes the suggestion as its sell;
@@ -132,7 +133,8 @@ def suggest(
     if markup is not None and b2b_price is not None and b2b_price > 0:
         sell = (b2b_price * (1 + markup / HUNDRED)).quantize(CENT, rounding=ROUND_CEILING)
         return sell, BASIS_MARKUP
-    if kind == "trip_plan" and from_price is not None and from_price > 0 and party >= 1:
+    # AA-1152 (B2 option C): an AA add-on has AA's RRP too (its quote carries it), like a tour.
+    if from_price is not None and from_price > 0 and party >= 1:
         return (from_price * party).quantize(CENT, rounding=ROUND_CEILING), BASIS_RRP
     return None
 

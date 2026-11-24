@@ -41,6 +41,8 @@ Route                                          What                             
 ``POST   /settings/price-rules``               AA-1066: add a retail price rule               owner
 ``PATCH  /settings/price-rules/{id}``          AA-1066: edit one                              owner
 ``DELETE /settings/price-rules/{id}``          AA-1066: delete one                            owner
+``GET    /settings/planner-prices``            AA-1152: rounding steps, planner prices switch owner
+``PUT    /settings/planner-prices``            AA-1152: set them (queues a planner publish)   owner
 ``GET    /settings/payment-schedule``          AA-1067: the schedule template (or AA's)       owner
 ``PUT    /settings/payment-schedule``          AA-1067: set it (null = the AA default)        owner
 ``GET    /cancellation-policies``              AA-1067: every version + the AA table          every role
@@ -79,9 +81,10 @@ from app.ledger import fx, lines, requests, suppliers
 from app.lifecycle import trash
 from app.payments import schedule_settings
 from app.permissions import Action, require
-from app.proposals import pricing, retail
+from app.proposals import pricing, retail, rounding
 from app.routers.agency import tenant_header
 from app.tenancy import tenant_tx
+from app.tripplanner import prices
 from app.vault import Vault
 from app.vault.provider import require_keys
 
@@ -190,6 +193,18 @@ class PaymentSettings(_Body):
 
 
 MarkupPct = Annotated[Decimal, Field(ge=0, le=300, max_digits=5, decimal_places=2, allow_inf_nan=False)]
+
+
+CurrencyCode = Annotated[str, Field(pattern=r"^[A-Z]{3}$")]
+RoundStep = Annotated[str, Field(pattern=r"^\d{1,7}(\.\d{1,2})?$")]
+
+
+class PlannerPrices(_Body):
+    """AA-1152 (crm-086): the agency's rounding step per currency (null = back to the platform default) and its
+    "Show prices on my planner" switch."""
+
+    steps: dict[CurrencyCode, RoundStep | None] = Field(default_factory=dict, max_length=12)
+    show_planner_prices: bool | None = None
 
 
 class RetailMarkup(_Body):
@@ -557,7 +572,29 @@ async def put_retail_markup(
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
         _payments_owner(ctx)
-        return await retail.update(ctx, body.retail_markup_pct)
+        out = await retail.update(ctx, body.retail_markup_pct)
+        await prices.enqueue_agency(ctx.conn, ctx.tenant_id)  # AA-1152: the planner "from" prices follow the markups
+        return out
+
+
+# AA-1152 (crm-086, S285 B2 option C): the rounding step of every suggested price and the planner prices switch.
+@router.get("/settings/planner-prices")
+async def get_planner_prices(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        return await rounding.read(ctx)
+
+
+@router.put("/settings/planner-prices")
+async def put_planner_prices(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, body: PlannerPrices
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
+        _payments_owner(ctx)
+        out = await rounding.update(ctx, body.model_dump(exclude_unset=True))
+        await prices.enqueue_agency(ctx.conn, ctx.tenant_id)
+        return out
 
 
 # AA-1066 (crm-048): Settings > Pricing, owner only like Settings > Payments.

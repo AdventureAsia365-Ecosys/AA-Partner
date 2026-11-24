@@ -210,6 +210,8 @@ export function builderErrorKey(detail: string): MessageKey {
     booking_not_configured: "builder.err.booking_unavailable",
     aa_partner_not_active: "aa.error.aa_partner_not_active",
     aa_tour_not_served: "builder.err.aa_tour_not_served",
+    aa_addon_needs_tour: "builder.err.aa_addon_needs_tour", // AA-1152
+    aa_addon_not_offered: "builder.err.aa_addon_not_offered", // AA-1152
     day_has_no_date: "builder.err.day_has_no_date",
     rule_same_block: "builder.err.rule_same_block",
     rule_exists: "builder.err.rule_exists",

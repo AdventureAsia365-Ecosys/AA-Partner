@@ -94,7 +94,7 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   (the AA tour cache) through `app/catalog/`, with the same M2M client (section "CRM-19" below). AA-951: `catalog.http.v1`
   1.2 `/aa-content` (AA prep packs and starter templates, AA-977) into `crm.aa_content` (section "CRM-22" below).
   AA-1030: `booking.b2b.v1` is consumed up to **1.4** (`GET /tariff`, the agency's AA tariff; section "CRM-19",
-  "AA prices").
+  "AA prices"); AA-1152: **1.11** `GET /add-ons` (the "AA add-on" drawer and the planner prices, section "CRM-19").
   AA-1093 stage 2: `tenant.erasure.v1` 1.0 (AA-CIS-App, byte copy in `docs/contracts/`): the CIS tenant offboarding
   erasure saga's requests (`GET /tenant/v1/erasure-requests`) and the CRM's reports (`POST .../reports`), scope
   `cis.tenant/erasure` (section "CIS tenant erasure saga, stage 2" below).
@@ -428,6 +428,8 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-082` | `api/migrations/082_crm_admin_mfa_setting.sql` | AA-1111 S2 (**contract**: one `crm.setting_definition` INSERT, shipped with its reader `app/auth/admin_mfa.py` like crm-075; the reader serves the compiled default, off, until the row exists): the setting `crm.platform.admin_mfa_required` (bool, platform, maker-checker, no env override, default off); no new table, no `erase_subject` change |
 | `crm-083` | `api/migrations/083_crm_agency_extras.sql` | AA-1147 (**contract**, MIG-4: ALTERs, new and widened CHECKs, new keys, a SECURITY DEFINER function, two config rows; readiness raised by the code PR): `crm.booking_line.agency_supplier_id` NULL on an agency line ("Handled by the agency"; `booking_line_supplier_chk` keeps it on AA lines), `option_id` (the accepted item, unique per agency), `due_at`, `bundled` (`booking_line_extras_chk`: agency lines only, bundled = flight / fee); `crm.option.bundled` (`option_bundled_chk`); `crm.document.booking_line_id` / `crm.task.booking_line_id` (same-trip key, SET NULL on purge); document kind `visa_letter`; `invoice_line_amount_chk` lets an included `agency_line` row carry its price; `crm.agency_lines_from_proposal(proposal, lines)` (EXECUTE crm_app: the accept's writer); no new table, no `erase_subject` change |
 | `crm-084` | `api/migrations/084_crm_agency_lines_settings.sql` | AA-1147 (**contract**: two `crm.setting_definition` INSERTs, shipped with their readers `app/ledger/agency_extras.py` like crm-082; readiness does not wait for it, the readers serve the compiled defaults): `crm.agency_lines.due_lead_days` (int days, default 3, 0..60) and `crm.agency_lines.disclaimer` (json `{en, vi}`), both platform+tenant |
+| `crm-086` | `api/migrations/086_crm_planner_prices.sql` | AA-1152 (**contract**: ALTER of `crm.tenant_settings`, so MIG-4, its own migration-only PR): `tenant_settings.price_round_step` (JSONB, default `{}`, CHECK an object of at most 512 bytes: the agency's rounding step per currency) and `show_planner_prices` (boolean, default true: its "Show prices on my planner" switch) |
+| `crm-087` | `api/migrations/087_crm_price_round_settings.sql` | AA-1152 (**contract**: two `crm.setting_definition` rows, shipped with their readers in the code PR like crm-084): `crm.agency_defaults.price_round_step` (json, default `{"USD": "1", "VND": "10000"}`) and `crm.agency_defaults.price_round_steps` (json, the steps an owner may choose: USD 1 / 5 / 10, VND 10,000 / 50,000 / 100,000); readers `app/proposals/rounding.py` |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -2205,6 +2207,31 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
   suggestion is derived from the B2B price, so only owner / agent see it. An owner or agent who adds an AA option
   without a sell gets the suggestion as the sell (an assistant's option still waits at 0); "Use" on the option sets
   it later. The below-"from" warning applies to it like any sell.
+- **Rounded agency prices and the planner "from" prices** (AA-1152, crm-086 / crm-087; S285 decision B2 option C, root
+  ADR 0019 b5 as amended; `app/proposals/rounding.py`): every price the CRM suggests is rounded **up** per traveller to
+  the agency's step of the currency, then times the party (`rounding.suggested_total`, applied once at the end of the
+  builder's suggestion, after the price rules; 82.18 for 2 at step 1 suggests 84). The step is the owner's choice
+  (`tenant_settings.price_round_step`, `GET` / `PUT /crm/v1/settings/planner-prices`, owner only, Settings > Payments
+  "Prices on my planner and rounding") among the platform list `crm.agency_defaults.price_round_steps`, else the
+  platform default `crm.agency_defaults.price_round_step` (USD 1, VND 10,000), else 1. An AA add-on without a markup
+  takes AA's RRP like a tour (`retail.suggest`: the add-on's quote carries its RRP as `aa_from_price`).
+  The same function (`rounding.from_price`: AA's B2B price x (1 + the agency's markup of the product type), else AA's
+  RRP, then the rules with a date, one round up) makes the agency's own "from" prices on its TripPlanner pages: the job
+  `crm_tp_price_publish` (`app/tripplanner/prices.py`, one run per hour slot for every agency whose planner leads come
+  here, and one run for one agency after its owner changes markups, steps or the switch) reads `GET /tariff` (the lowest
+  per-traveller price of the bands holding 2) and `GET /add-ons` (2 adults), and `PUT`s the final numbers and the
+  switch to TripPlanner (`tripplanner.agency_prices.v1`, scope `tripplanner.leads/manage`); never AA's B2B price, the
+  markup, the RRP or a supplier. Switch off = empty lists, TripPlanner hides every price of the agency.
+- **AA add-on drawer** (AA-1152; S285 advisory PR-29 T6; `app/proposals/aa_addons.py`, `app/booking/addons.py`,
+  `web/components/proposals/BuilderAddonTab.tsx`): the builder's drawer tab "AA add-on" lists the optional activities
+  AA sells on the block's day (`booking.b2b.v1` 1.11 `GET /add-ons` for the day's date and party), the ones whose CIS
+  place name matches the day's place first, each with the agency's suggested price per traveller (the margin rule of
+  AA-1030: a markup suggestion and AA's price only for owner / agent). `POST /crm/v1/proposals/{id}/blocks/{block}/
+  aa-addons` adds one as an AA option (the AA item's two steps, AA's name read again from Booking, its RRP as the "from"
+  price) on the AA tour of the same day, else the proposal's first AA tour (`crm.option` keeps the tour key); 409
+  `aa_addon_needs_tour` without one, 409 `aa_addon_not_offered` when Booking no longer sells it that day. A
+  traveller's ticked add-ons arrive with the TripPlanner lead (`lead.submitted.v1` 1.2 `day_plan[].addons`) as
+  "Day N AA add-on: <name> (sv:...)" lines of the inquiry message.
 - **Retail pricing** (AA-1066, crm-048; `app/proposals/pricing.py`, `app/proposals/discount.py`; decisions in
   `docs/implementation-notes/AA-1066.md`):
   - *Price per traveller type*: `PUT /crm/v1/proposals/{id}/options/{option}/prices` (`MONEY_FIELDS_EDIT`: owner /

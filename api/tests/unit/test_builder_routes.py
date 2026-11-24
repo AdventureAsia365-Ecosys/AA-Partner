@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from app import margin
 from app.errors import Invalid, validation_refusal_fields
 from app.main import create_app
-from app.proposals import aa_options, builder
+from app.proposals import aa_addons, aa_options, builder
 from app.routers import builder as router
 from tests.tokens import LocalPools
 from tests.unit.fakes import ScriptedConn
@@ -71,6 +71,7 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, tuple[Any, ...], d
     monkeypatch.setattr(builder, "aa_refresh_plan", stub("aa_refresh_plan", [{"option_id": X}]))
     monkeypatch.setattr(aa_options, "quote", stub("quote", "QUOTE"))
     monkeypatch.setattr(aa_options, "refresh", stub("refresh", ([("plan", "QUOTE")], [])))
+    monkeypatch.setattr(aa_addons, "refresh_rrp", stub("refresh_rrp", [("plan", "QUOTE")]))  # AA-1152
     return out
 
 
@@ -171,7 +172,7 @@ def test_aa_routes_quote_between_two_transactions(
     calls.clear()
     r = client.post(f"{base}/aa-refresh", headers=h, json={"seq": 3})
     assert r.status_code == 200 and r.json()["refresh"] == {"quoted": 1, "failed": [], "skipped": 0}
-    assert [c[0] for c in calls] == ["aa_refresh_plan", "refresh", "apply_refresh"]
+    assert [c[0] for c in calls] == ["aa_refresh_plan", "refresh", "refresh_rrp", "apply_refresh"]
 
 
 def test_aa_routes_need_booking(pools: LocalPools, monkeypatch: pytest.MonkeyPatch, calls: list) -> None:
