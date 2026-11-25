@@ -174,9 +174,12 @@ async def test_agency_scope_and_the_batch_limit(monkeypatch: pytest.MonkeyPatch)
 @pytest.mark.asyncio
 async def test_a_disconnect_removes_every_event_revokes_and_deletes_the_token(monkeypatch: pytest.MonkeyPatch) -> None:
     conn, _ = _setup(monkeypatch, _row(status="revoked"))
-    client = FakeCalendar(remote=[RemoteEvent("r1", "departure-a", "h"), RemoteEvent("r2", "task-1", "h")])
+    remote = [RemoteEvent(f"r{i}", f"task-{i}", "h") for i in range(5)]
+    client = FakeCalendar(remote=remote)
+    real_get = ps.get
+    monkeypatch.setattr(push.ps, "get", lambda key, *a: 2 if key == ps.CALENDAR_PUSH_BATCH_SIZE else real_get(key))
     out = await push.sync_connection(conn, _runtime(client), TENANT, CONN, now=NOW)  # type: ignore[arg-type]
-    assert out["outcome"] == "removed" and out["deleted_count"] == 2
+    assert out["outcome"] == "removed" and out["deleted_count"] == 5 and out["left_count"] == 0  # no batch cap
     assert ("list", (True, True)) in client.calls  # every date, not only the window
     assert client.revoked and client.revoked[0]["refresh_token"] == REFRESH
     assert conn.sql("DELETE FROM crm.integration_credential") == [(CRED,)]
@@ -194,10 +197,11 @@ async def test_a_removal_retries_an_outage_until_its_last_attempt_then_deletes_t
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     conn, _ = _setup(monkeypatch, _row(status="revoked"))
-    client = FakeCalendar(error=Transient("unreachable"))
+    client = FakeCalendar(error=Transient("unreachable"), rotated={"refresh_token": "rt-9", "address": "a"})
     with pytest.raises(Transient):
         await push.sync_connection(conn, _runtime(client), TENANT, CONN, now=NOW, final_attempt=False)  # type: ignore[arg-type]
     assert conn.sql("DELETE FROM crm.integration_credential") == []
+    assert conn.sql("UPDATE crm.integration_credential SET secret_enc")  # the rotated token is kept for the retry
     out = await push.sync_connection(conn, _runtime(client), TENANT, CONN, now=NOW, final_attempt=True)  # type: ignore[arg-type]
     assert out == {"outcome": "removed_with_error", "reason_code": "unreachable"}
     assert conn.sql("DELETE FROM crm.integration_credential") == [(CRED,)]

@@ -2070,7 +2070,8 @@ design's fallback, §5.10). Implementation notes: `docs/implementation-notes/AA-
   writes the `departure` and `task` events of `app/calendar/events.py` (the ICS feed's text: label, short trip reference,
   link; never a title, name or amount) from `crm.calendar_push.past_days` (7) back to `crm.calendar_push.window_days`
   (120) ahead: it lists the CRM's own events of the connection (private extended properties `aaCrm` = connection id,
-  `aaCrmKey`, `aaCrmHash`), then creates, updates and deletes at most `crm.calendar_push.batch_size` (200) a run;
+  `aaCrmKey`, `aaCrmHash`), then creates, updates and deletes at most `crm.calendar_push.batch_size` (200) a run (a
+  removal deletes every listed event in its one run);
   Google event ids and Graph `transactionId`s are derived from (connection, key), so a retried create never doubles
   (idempotent by external event id; nothing about the events is stored in the CRM). A rotated refresh token is stored
   again. A refused token / permission keeps the connection active with its `failure_class` (the card asks for a

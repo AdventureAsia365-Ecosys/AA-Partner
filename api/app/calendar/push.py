@@ -233,11 +233,16 @@ async def _finish(
             ctx.audit("calendar_disconnect", "allowed", "calendar_connection",
                       str(loaded.row["calendar_connection_id"]), reason="credential_deleted")  # fmt: skip
             return
-        if loaded.rotated is not None:
-            vault = Vault(runtime.keys, ctx)  # type: ignore[arg-type]
-            sealed = await oauth_sync.seal_secret(vault, credential, loaded.rotated)
-            await ctx.conn.execute(ROTATE_SQL, credential, sealed)
+        await _rotate(ctx, runtime, loaded)
         await ctx.conn.execute(RESULT_SQL, loaded.row["calendar_connection_id"], failure, count)
+
+
+async def _rotate(ctx: SystemContext, runtime: Runtime, loaded: _Loaded) -> None:
+    """Store the refresh token the provider rotated (Microsoft on every refresh, Google sometimes)."""
+    if loaded.rotated is not None:
+        vault = Vault(runtime.keys, ctx)  # type: ignore[arg-type]
+        sealed = await oauth_sync.seal_secret(vault, loaded.row["credential_id"], loaded.rotated)
+        await ctx.conn.execute(ROTATE_SQL, loaded.row["credential_id"], sealed)
 
 
 def _counts(done: Counter[str]) -> dict[str, int]:
@@ -251,7 +256,9 @@ async def _push(
     token, loaded.rotated = await client.access_token(loaded.secret)
     remote = await client.list_ours(token, connection_id, loaded.since, loaded.until)
     todo = plan(loaded.desired, remote)
-    done = await _apply(client, token, connection_id, todo, Limits.read().batch_size)
+    # A removal deletes every listed event in one run (the token goes at its end); a push stays within the batch.
+    budget = todo.size if loaded.remove else Limits.read().batch_size
+    done = await _apply(client, token, connection_id, todo, budget)
     left = todo.size - sum(done.values())
     if loaded.remove:
         await client.revoke(loaded.rotated or loaded.secret)
@@ -269,6 +276,8 @@ async def _failed(
     code = exc.code if exc.code in FAILURE_CLASSES else ("unreachable" if transient else "vendor_rejected")
     if loaded.remove:
         if transient and not final:
+            async with system_tx(pool, tenant_id, actor=ACTOR) as ctx:
+                await _rotate(ctx, runtime, loaded)
             raise exc  # retried; the last attempt deletes the token whatever happens
         await _finish(pool, runtime, tenant_id, loaded, failure=None, count=None)
         return {"outcome": "removed_with_error", "reason_code": code}
