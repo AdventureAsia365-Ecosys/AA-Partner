@@ -35,6 +35,7 @@ STATE_TTL_S = 600
 CALLBACK_PATH = "/connect/mail/callback"
 SCOPES = ("own", "agency")
 PURPOSE = "mail"
+CALENDAR_STATE_PREFIX = "cal."  # app.calendar.oauth_sync.STATE_PREFIX (a calendar consent, AA-1011)
 
 
 @dataclass(frozen=True)
@@ -98,7 +99,8 @@ async def start(ctx: TenantContext, vault: Vault, settings: Settings, provider: 
 async def complete(
     ctx: TenantContext, vault: Vault, settings: Settings, providers: dict[str, Any], code: str, state: str
 ) -> Completed:
-    if not code or len(code) > 4096 or not state or len(state) > 4096:
+    # AA-1011: a calendar consent's state (prefix "cal.", sealed to another column) never completes a mailbox.
+    if not code or len(code) > 4096 or not state or len(state) > 4096 or state.startswith(CALENDAR_STATE_PREFIX):
         raise Invalid("oauth_state_invalid")
     opened = await vault.decrypt("oauth_state", "state", ctx.member_id, _unb64(state), purpose=PURPOSE)
     try:

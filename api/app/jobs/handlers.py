@@ -16,6 +16,8 @@
   tour retirement or reinstatement the catalog sync stored): the flags and tasks of :mod:`app.catalog.retired`.
 - ``crm_ops_release_sync`` (AA-956, hourly, :class:`app.ops_release.job.HourlyOpsReleaseSync`, plus one-trip nudges):
   the Module 8 ops release (create, refresh, T-21 alert, withdraw, purge with a receipt).
+- ``crm_calendar_push`` (AA-1011, hourly, :class:`app.calendar.push.HourlyCalendarPush`, plus one row per calendar
+  connect / disconnect): the one-way push of departures and tasks into the members' own calendars.
 - ``crm_campaign_tick`` (AA-968, CRM-36, hourly, :class:`app.campaigns.send.HourlyCampaignTick`): the live campaigns'
   gates and today's clients up to the mailbox daily limit, one ``crm_dispatch`` row each.
 - ``crm_workflow_run`` / ``crm_workflow_tick`` / ``crm_task_digest`` (AA-959, CRM-29a): one workflow run's due
@@ -51,6 +53,7 @@ from app.jobs.kinds import (
     AUDIT_EXPORT,
     AUDIT_RETENTION,
     BOOKING_SYNC,
+    CALENDAR_PUSH,
     CAMPAIGN_TICK,
     CATALOG_SYNC,
     CLIENT_IMPORT,
@@ -221,6 +224,7 @@ def build_handlers(
     from app.audit_export import export as audit_export
     from app.audit_export import retention as audit_retention
     from app.booking.sync import BookingSync
+    from app.calendar import push as calendar_push
     from app.campaigns import audience as campaign_audience
     from app.campaigns import send as campaign_send
     from app.catalog import retired as tour_retired
@@ -254,6 +258,7 @@ def build_handlers(
     from app.workflows import tick as workflow_tick
 
     text_runtime = messaging_runtime or _MessagingRuntime(keys=keys)
+    mail = mail_runtime or _MailRuntime(keys=keys)
     return {
         HEARTBEAT: heartbeat,
         JOB_RETENTION: build_job_retention(retention_dry_run),
@@ -270,7 +275,7 @@ def build_handlers(
         FX_FETCH: fx_fetch.build_handler(fx_provider),
         MEMBERSHIP_PULL: MembershipFeed(membership_feed, directory),
         MAIL_INGEST: mail_ingest.build_handler(ingest_store, documents, keys, ingest_domain),
-        MAIL_HEALTH: mail_health.build_handler(mail_runtime or _MailRuntime(keys=keys)),
+        MAIL_HEALTH: mail_health.build_handler(mail),
         MAIL_IMPORT: history_import.build_handler(ingest_store, documents, keys, ingest_domain),
         BOOKING_SYNC: BookingSync(booking_client),
         CATALOG_SYNC: CatalogSync(catalog),
@@ -299,6 +304,10 @@ def build_handlers(
         ),
         CAMPAIGN_TICK: campaign_send.build_handler(
             keys, campaign_links or campaign_audience.Links(client_origin=None, tripplanner_origin=None)
+        ),
+        # AA-1011: the calendar clients ride on the mail runtime (the same OAuth clients, MAIL_OAUTH).
+        CALENDAR_PUSH: calendar_push.build_handler(
+            calendar_push.Runtime(keys=mail.keys or keys, clients=mail.calendars, web_origin=mail.web_origin)
         ),
     }
 
@@ -347,6 +356,7 @@ def build_hooks(
     ``ingest_store`` (the forward-in scan; none = no scan)."""
     from app.audit_export.export import HourlyAuditExportSchedule
     from app.audit_export.retention import DailyAuditRetentionSchedule
+    from app.calendar.push import HourlyCalendarPush
     from app.campaigns.send import HourlyCampaignTick
     from app.catalog.sync import HourlyCatalogSync
     from app.cis.entitlement_feed import EntitlementPullSchedule
@@ -387,6 +397,7 @@ def build_hooks(
         PricePublishSchedule(clock),  # AA-1152: the agencies' planner prices, every hour
         TenantEraseSchedule(clock),  # AA-1093 stage 2: the CIS tenant erasure saga, every 2 minutes
         HourlyCampaignTick(clock),  # AA-968: the campaign send pass, every hour
+        HourlyCalendarPush(clock),  # AA-1011: the members' own calendars, every hour
     )
 
 
@@ -421,6 +432,7 @@ SCHEDULED_KINDS: frozenset[str] = frozenset(
         TP_PRICE_PUBLISH,  # AA-1152: every hour slot, due now (+ one row per owner change)
         TENANT_ERASE,  # AA-1093 stage 2: every 2-minute slot, due now
         CAMPAIGN_TICK,  # AA-968: hourly, due now
+        CALENDAR_PUSH,  # AA-1011: hourly, due now (+ one row per calendar connect / disconnect)
     }
 )
 # Kinds queued by request code, one row per event (AA-936: each stored inquiry), never scheduled.
