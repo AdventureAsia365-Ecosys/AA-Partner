@@ -690,6 +690,15 @@ registry the CIS alerts catalogue reads: every check with its setting keys and v
   integrity (`core/check-kit-copy.mjs`, also `--css`) and provenance (`api/scripts/check_kit_provenance.py`: the copied
   manifest is CIS's at the lock's `ref`, and that `ref` is on CIS `main`). `web/lib/{sameOrigin,crossSiteGuard,bffPath,
   proxyResponse}.ts` stay byte copies of AA-CIS-App `frontend/lib/` (CI "Vendored CIS copies").
+- **Map engine** (AA-948, CRM-20; the root ADR 0016 pattern): `web/lib/map-engine/` is a byte copy of the shared map
+  engine, canonical in AA-TripPlanner-Web `frontend/lib/map-engine/` (framework-free core + a thin React binding),
+  written only by that folder's `check-map-engine.mjs --sync` and pinned by `web/map-engine.lock.json`; never edit it
+  here. The proposal builder's map (`components/proposals/BuilderMap.tsx`) draws the builder view's `days[].map_points`
+  (API `app/proposals/day_map.py`: the places of the version's served whole AA tours). Web Build checks integrity, the
+  import guard (no TripPlanner app import; `mapbox-gl` only through the engine) and provenance
+  (`api/scripts/check_map_engine_provenance.py`). The public Mapbox token is runtime config: `MAPBOX_PUBLIC_TOKEN`
+  (`web/lib/mapConfig.ts`, `pk.` only), mapped by AA-CIS-Infra from `crm/dev/web` while `crm_web_mapbox_enabled`;
+  without it the builder shows "Map not set up yet". Notes: `docs/implementation-notes/AA-948.md`.
 - **Theme and hydration** (S262): `app/layout.tsx` renders no `data-theme` (the restore script alone sets it before
   paint) and mounts `_kit/local/ThemeKeeper`, which applies the stored choice again whenever React rebuilds the
   document (a failed hydration re-renders the root on the client and drops `<html>` attributes). Times on agency pages

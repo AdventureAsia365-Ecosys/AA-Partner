@@ -89,7 +89,7 @@ jobs:
           python3 .github/scripts/ci_scope.py --event "$EVENT" \
             --area integration=api/migrations/,api/tests/integration/ \
             --area docker=api/Dockerfile,api/.dockerignore,api/requirements.txt,.trivyignore \
-            --area web=web/,api/scripts/check_kit_provenance.py \
+            --area web=web/,api/scripts/check_kit_provenance.py,api/scripts/check_map_engine_provenance.py \
             --area webdocker=web/Dockerfile,web/.dockerignore,web/package.json,web/package-lock.json,.trivyignore \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
@@ -694,6 +694,23 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || '' }}
         run: python3 ../api/scripts/check_kit_provenance.py kit.lock.json --base "$BASE_SHA"
+
+      # AA-948 (card CRM-20; the root ADR 0016 pattern) — the shared map engine copy (lib/map-engine, canonical in
+      # AA-TripPlanner-Web frontend/lib/map-engine), before npm ci (dependency-free). Integrity: every file has the
+      # sha256 of its MANIFEST.json, none missing or extra, the core imports nothing outside itself. Import guard: no
+      # source file imports the TripPlanner app (package or repo name, or a path outside this repository) and mapbox-gl
+      # is imported only through the engine copy. Provenance: the copied manifest is what AA-TripPlanner-Web merged
+      # (reads GitHub only when this change touches web/map-engine.lock.json or web/lib/map-engine).
+      - name: Map engine copy (integrity + import guard)
+        run: |
+          node lib/map-engine/check-map-engine.mjs
+          node lib/map-engine/check-map-engine.mjs --imports . --engine lib/map-engine
+
+      - name: Map engine provenance (map-engine.lock.json on AA-TripPlanner-Web main)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before || '' }}
+        run: python3 ../api/scripts/check_map_engine_provenance.py map-engine.lock.json --base "$BASE_SHA"
 
       - name: Install (lockfile only)
         id: install

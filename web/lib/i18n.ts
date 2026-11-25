@@ -38,6 +38,7 @@ import { catalogueEn, catalogueVi } from "./i18nCatalogue";
 import { travelOpsEn, travelOpsVi } from "./i18nTravelOps";
 import { aaCancelEn, aaCancelVi } from "./i18nAaCancel";
 import { tourRetiredEn, tourRetiredVi } from "./i18nTourRetired";
+import { builderMapEn, builderMapVi } from "./i18nBuilderMap";
 import { tripSourceEn, tripSourceVi } from "./i18nTripSource";
 import { partnersEn, partnersVi } from "./i18nPartners";
 import { bookNowEn, bookNowVi } from "./i18nBookNow";
@@ -101,6 +102,7 @@ const en = {
   ...travelOpsEn, // AA-1070: departures, the trip's Travel panel, Settings > Travel, the portal's travel section
   ...aaCancelEn, // AA-1070 (crm-13): AA cancelled a departure
   ...tourRetiredEn, // AA-1093: an AA tour Adventure Asia no longer offers (lib/i18nTourRetired.ts)
+  ...builderMapEn, // AA-948: the proposal builder's map and its empty states (lib/i18nBuilderMap.ts)
   ...tripSourceEn, // AA-1089: the AA tour and departure the trip came from, on the trip header (lib/i18nTripSource.ts)
   ...partnersEn, // AA-1071: Partners, partner commissions, the trip's partner, the partner's own pages (lib/i18nPartners.ts)
   ...bookNowEn, // AA-1072: Book now on the tour page, Pay online, Settings > online payment and booking
@@ -2860,6 +2862,7 @@ const vi: Record<MessageKey, string> = {
   ...travelOpsVi,
   ...aaCancelVi,
   ...tourRetiredVi,
+  ...builderMapVi,
   ...tripSourceVi,
   ...partnersVi,
   ...bookNowVi,

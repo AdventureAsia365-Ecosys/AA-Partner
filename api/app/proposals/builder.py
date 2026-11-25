@@ -16,20 +16,19 @@ A builder version is a ``crm.proposal`` row with ``kind = builder``:
   409 ``version_conflict`` (two editors or two tabs, §11.2) and nothing is written. A rule set the defaults break is
   422 ``option_conflict`` (card R).
 - **Publish vN** (``PROPOSAL_PUBLISH``, owner / agent): checks (a default per block, none sold out, the rules hold,
-  something to charge, the balance date only when a balance is left, AA quotes still valid, every AA item priced),
-  then — when the working copy came from a version the client picked on since it was copied — 409
-  ``version_conflict`` with those picks until the agent acknowledges them (card E, §11.2). Then the price hash is
-  fixed, the amounts computed, the published v(N-1) superseded and the client's picks carried over to the copied
-  options (``carried``). Sending a published version is CRM-21b (AA-950). **Terms** (design v3 F6 step 3, WF-7, R34;
-  S261 live finding): a version without booking terms is pinned to the agency's published booking terms version at
-  publish (a new skeleton starts with it too), so the client accepts the terms with the proposal and no re-accept
-  waits before the deposit (:func:`app.proposals.service.pin_current_terms`). A version that names terms keeps them;
-  when that version is retired (the agency published a newer one), the draft is **not publishable** (blocking check
-  ``terms_retired``, ``terms_not_published`` for a draft or removed version) until the agent picks the current terms
-  (S262 round 3, AA-957): the agent chose the version the client accepts, so publish never swaps it silently. A
-  working copy of a version whose terms are retired starts with the current published terms, like a new skeleton.
-  Settings take only a published terms version (409 ``terms_not_published``); keeping the version already named is
-  allowed.
+  something to charge, the balance date only when a balance is left, AA quotes still valid, every AA item priced), then
+  — when the working copy came from a version the client picked on since it was copied — 409 ``version_conflict`` with
+  those picks until the agent acknowledges them (card E, §11.2). Then the price hash is fixed, the amounts computed, the
+  published v(N-1) superseded and the client's picks carried over to the copied options (``carried``). Sending a
+  published version is CRM-21b (AA-950). **Terms** (design v3 F6 step 3, WF-7, R34; S261 live finding): a version
+  without booking terms is pinned to the agency's published booking terms version at publish (a new skeleton starts with
+  it too), so the client accepts the terms with the proposal and no re-accept waits before the deposit
+  (:func:`app.proposals.service.pin_current_terms`). A version that names terms keeps them; when that version is retired
+  (the agency published a newer one), the draft is **not publishable** (blocking check ``terms_retired``,
+  ``terms_not_published`` for a draft or removed version) until the agent picks the current terms (S262 round 3,
+  AA-957): the agent chose the version the client accepts, so publish never swaps it silently. A working copy of a
+  version whose terms are retired starts with the current published terms, like a new skeleton. Settings take only a
+  published terms version (409 ``terms_not_published``); keeping the version already named is allowed.
 - **Picks** (:func:`record_pick`, the seam CRM-21b's client page calls): one pick per block of a published / sent
   version; a swap the block does not allow, a sold-out option or a rule break is refused; every pick moves
   ``selection_seq``.
@@ -58,6 +57,7 @@ from app.ledger import agency_items
 from app.margin import sees_margin
 from app.payments import schedule_plan
 from app.proposals import aa_days, discount, inclusions, option_fields, prep_packs, pricing, retail, rounding, rules
+from app.proposals.day_map import with_points as day_map_points
 from app.proposals.option_fields import rules_json as _rules_json
 from app.proposals.service import (
     ACCEPTED_EXISTS_SQL,
@@ -605,7 +605,7 @@ async def view(ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, *, audi
         "price_hash": bytes(row["price_hash"]).hex() if row["price_hash"] else None,
         "published_at": _iso(row["published_at"]),
         "based_on": base,
-        "days": days,
+        "days": await day_map_points(ctx, proposal_id, days),  # AA-948: each day's map points (CRM-20)
         "rules": [
             {
                 "option_rule_id": str(r["option_rule_id"]),

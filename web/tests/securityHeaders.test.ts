@@ -7,6 +7,7 @@ import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it } from "vitest";
 import nextConfig from "@/next.config";
 import {
+  MAPBOX_HOSTS,
   STATIC_SECURITY_HEADERS,
   contentSecurityPolicy,
   newNonce,
@@ -64,7 +65,16 @@ describe("contentSecurityPolicy", () => {
     }));
     expect(d.get("form-action")).toEqual(["'self'", "https://auth.example.test"]);
     expect(d.get("frame-ancestors")).toEqual(["'self'", "https://www.agency.example"]);
-    expect(d.get("connect-src")).toEqual(["'self'", "https://ingest.example.test"]);
+    expect(d.get("connect-src")).toEqual(["'self'", ...MAPBOX_HOSTS, "https://ingest.example.test"]);
+  });
+
+  it("lets the builder map load: Mapbox API, tiles and telemetry, blob workers (AA-948)", () => {
+    const d = directives(contentSecurityPolicy({ nonce: "n" }));
+    for (const host of ["https://api.mapbox.com", "https://*.tiles.mapbox.com", "https://events.mapbox.com"]) {
+      expect(d.get("connect-src")).toContain(host);
+    }
+    expect(d.get("worker-src")).toContain("blob:");
+    expect(d.get("img-src")).toEqual(expect.arrayContaining(["data:", "blob:"]));
   });
 
   it("keeps the https origin of a Sentry DSN only", () => {

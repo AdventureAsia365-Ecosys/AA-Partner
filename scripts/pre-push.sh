@@ -489,6 +489,10 @@ kit_check() {
     return
   fi
   local cmds=("node app/_kit/core/check-kit-copy.mjs" "node app/_kit/core/check-kit-copy.mjs --css .")
+  # AA-948: the shared map engine copy (integrity + import guard), Web Build "Map engine copy". Provenance: CI only.
+  if [[ -f "$REPO_ROOT/$app/lib/map-engine/check-map-engine.mjs" ]]; then
+    cmds+=("node lib/map-engine/check-map-engine.mjs" "node lib/map-engine/check-map-engine.mjs --imports . --engine lib/map-engine")
+  fi
   while IFS= read -r line; do cmds+=("node app/_kit/core/check-kit-copy.mjs --no-kit-disable $line"); done \
     < <(kit_disable_dirs "$app")
   base_file="$(mktemp)"; base_list="$(mktemp)"
