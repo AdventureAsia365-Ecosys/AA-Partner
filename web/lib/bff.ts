@@ -353,11 +353,6 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "GET", pattern: /^calendar(\/feed|\/feeds)?$/, tenant: true, card: "AA-961" },
   { method: "POST", pattern: /^calendar\/feed$/, tenant: true, card: "AA-961" },
   { method: "POST", pattern: new RegExp(`^calendar/feeds/${UUID}/revoke$`), tenant: true, card: "AA-961" },
-  // AA-1011 part 3: my own Google / Microsoft 365 calendar (one-way push of departures and tasks): the connections, the
-  // OAuth start / completion (same callback as the mailbox, the state says which), the disconnect.
-  { method: "GET", pattern: /^calendar\/connections$/, tenant: true, card: "AA-1011" },
-  { method: "POST", pattern: /^calendar\/connections\/oauth\/(start|complete)$/, tenant: true, card: "AA-1011" },
-  { method: "POST", pattern: new RegExp(`^calendar/connections/${UUID}/disconnect$`), tenant: true, card: "AA-1011" },
   // AA-966 (CRM-34): the Reports page, the Home tiles and one section as CSV (money sections: the API's view_margin).
   { method: "GET", pattern: /^reports\/(summary|tiles|export)$/, tenant: true, card: "AA-966" },
   // AA-971 (CRM-13b): AA support access (every member reads it for the banner; the owner grants and ends it).
@@ -487,6 +482,13 @@ export const SERVER_ONLY_ROUTES: readonly BffRoute[] = [
   // Content studio membership with CIS, never crm.member.
   { method: "GET", pattern: /^studio\/trip-planner(\/leads)?$/, tenant: true, card: "AA-1139" },
   { method: "POST", pattern: /^studio\/trip-planner\/webhook-key$/, tenant: true, card: "AA-1139" },
+  // AA-1011 part 3: my own Google / Microsoft 365 calendar (one-way push of departures and tasks): the connections, the
+  // OAuth start / completion (same callback as the mailbox, the state says which), the disconnect. Asked by the studio's
+  // route handler (app/api/studio/calendar) with the studio's tenant: a studio session picks no CRM agency, so these
+  // were 409 `no_agency_selected` through /bff (S294); the API still checks the person's crm.member row.
+  { method: "GET", pattern: /^calendar\/connections$/, tenant: true, card: "AA-1011" },
+  { method: "POST", pattern: /^calendar\/connections\/oauth\/(start|complete)$/, tenant: true, card: "AA-1011" },
+  { method: "POST", pattern: new RegExp(`^calendar/connections/${UUID}/disconnect$`), tenant: true, card: "AA-1011" },
 ];
 
 export function matchBff(method: string, subPath: string, routes: readonly BffRoute[] = BFF_ROUTES): BffRoute | null {

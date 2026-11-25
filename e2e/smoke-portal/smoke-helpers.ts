@@ -5,7 +5,7 @@
 // rbac page matrix, admin sidebar width and dark-theme checks) stay in AA-CIS-App. Same code otherwise.
 //
 // What a "page check" means (skill aa-ui-verify): the page navigates with an OK status, logs no console errors, makes
-// no failing same-origin /api/ call, and shows real content (a kit/table row, the kit empty state or the page's own
+// no failing same-origin /api/ or /bff/ call, and shows real content (a kit/table row, the kit empty state or the page's own
 // ready selector). Paths are relative to e2e/ (the workflow's working directory).
 import { expect, type BrowserContext, type Page } from '@playwright/test';
 import fs from 'fs';
@@ -91,11 +91,18 @@ export type PageWatcher = {
 };
 
 /**
- * Attach listeners that record console errors and failing SAME-ORIGIN `/api/` responses. Body
+ * Attach listeners that record console errors and failing SAME-ORIGIN `/api/` and `/bff/` responses (S294: since the
+ * studio joined the agency app a page can call the CRM's `/bff/` too; a 409 there showed only as a bare console
+ * error). A 4xx on page load from either BFF is a bug of the page: a display read answers 200 "not available". Body
  * reads are async, so we track their promises and expose `settle()` to await them before the
  * assertion (otherwise a late 500 can be missed). S212: read the body — a 500 once looked like a
  * 401.
  */
+/** The same-origin paths whose failures the watcher records: the studio BFF and the CRM BFF. */
+export function isWatchedPath(pathname: string): boolean {
+  return pathname.startsWith('/api/') || pathname.startsWith('/bff/');
+}
+
 export function watchPage(page: Page): PageWatcher {
   const consoleErrors: ConsoleError[] = [];
   const apiFailures: ApiFailure[] = [];
@@ -121,7 +128,7 @@ export function watchPage(page: Page): PageWatcher {
       return;
     }
     // Same-origin API calls the page itself makes.
-    if (u.origin !== origin || !u.pathname.startsWith('/api/')) return;
+    if (u.origin !== origin || !isWatchedPath(u.pathname)) return;
     const status = res.status();
     if (status < 400) return;
     pending.push(

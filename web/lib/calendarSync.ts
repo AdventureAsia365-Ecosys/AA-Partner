@@ -26,6 +26,9 @@ export interface CalendarConnectionsView {
   connections: CalendarConnection[];
   providers: Record<CalendarProvider, boolean>;
   kinds: string[];
+  /** Set by the studio's handler (lib/studio/calendar.ts): false when the person has no CRM role in the studio's
+   *  agency (or the agency has no CRM), so the card offers no connection. */
+  available?: boolean;
 }
 
 export const CALENDAR_PROVIDERS: readonly CalendarProvider[] = ["google", "microsoft"];

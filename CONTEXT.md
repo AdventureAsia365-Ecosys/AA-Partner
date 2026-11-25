@@ -762,7 +762,8 @@ studio rules. Deploy Web Dev verifies the studio paths and runs the studio smoke
 
 - **Layout**: route group `app/(studio)/` (`/portal/*` with the same URLs, `/portal-access/*`, the draft legal pages
   `/legal/partner-terms` and `/legal/privacy`), the studio BFF at `/api/*` (`app/api/tenant/[...path]`, `tenant/me`,
-  `auth/tenant-logout`, `auth/tenant-select`, `healthz`, `studio/apps`), the shell under
+  `auth/tenant-logout`, `auth/tenant-select`, `healthz`, `studio/apps`, `studio/trip-planner`, `studio/calendar`), the
+  shell under
   `app/_kit/local/studio/`, helpers under `lib/studio/`. One kit copy (`web/app/_kit/core`). The studio stylesheet
   (`app/(studio)/studio.css`: Tailwind 4 preflight with `source(none)`, no utility, plus the studio rules) loads only
   under the group; links between the studio and the CRM are plain `<a>` (full page loads).
@@ -2075,7 +2076,12 @@ design's fallback, §5.10). Implementation notes: `docs/implementation-notes/AA-
   only `app/calendar/oauth_sync.py` opens it (the `decrypt_secret` lint). `crm.calendar_connection` (one per member and
   provider, scope `mine` / `agency`, active -> revoked) carries the address (mail DEK) and the push counters. Routes
   `/crm/v1/calendar/connections` (GET), `.../oauth/start`, `.../oauth/complete`, `.../{id}/disconnect` (action
-  `calendar_feed_manage`; a disconnect: the member or an owner). The job `crm_calendar_push` (`app/calendar/push.py`)
+  `calendar_feed_manage`; a disconnect: the member or an owner). The card reaches them through the studio's route
+  handler `/api/studio/calendar` (`web/lib/studio/calendar.ts`; server-only allow-list lines, never the browser `/bff`:
+  a studio session picks no CRM agency, so `/bff` answered 409 `no_agency_selected` on page load, S294) with the
+  person's partner token and the studio's verified tenant; its read answers 200 `available: false` when the person has
+  no CRM role in that agency (no CRM agency, a locked agency), and the card then says the calendar comes with a CRM role.
+  Studio pages never import the CRM's `bffClient` (`web/tests/studioCalendar.test.ts`). The job `crm_calendar_push` (`app/calendar/push.py`)
   writes the `departure` and `task` events of `app/calendar/events.py` (the ICS feed's text: label, short trip reference,
   link; never a title, name or amount) from `crm.calendar_push.past_days` (7) back to `crm.calendar_push.window_days`
   (120) ahead: it lists the CRM's own events of the connection (private extended properties `aaCrm` = connection id,

@@ -174,6 +174,9 @@ test.describe('UI smoke — portal Account pages (AA-761)', () => {
         /^(not_connected|healthy|failing|untested)$/, { timeout: 15000 });
       await expect(page.getByTestId('api-key-card')).toHaveCount(0);
       await expect(page.getByRole('heading', { name: 'API access' })).toHaveCount(0);
+      // S294 (AA-1011 follow-up): the Calendar card answers through the studio (/api/studio/calendar), never the CRM's
+      // /bff (409 no_agency_selected for a studio session); it renders its connections or why there are none.
+      await expect(page.getByTestId('calendar-sync')).toBeVisible({ timeout: 15000 });
       await page.screenshot({ path: `${PORTAL_RESULTS_DIR}/aa761-integrations-1440.png`, fullPage: true });
       await watcher.settle();
       expect(watcher.apiFailures, describeApiFailures(watcher.apiFailures)).toEqual([]);
