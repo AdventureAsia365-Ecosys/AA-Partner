@@ -25,7 +25,10 @@ function tour(over: Partial<PoolTour> = {}): PoolTour {
   } as PoolTour;
 }
 
-const text = (html: string) => html.replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
+// Visible text of static markup: the text between tags (React escapes a "<" in text as &lt;, so every "<" opens a tag).
+// It splits on the tags instead of stripping them with replace(): it reads text for an assertion, it sanitizes nothing.
+const text = (html: string) =>
+  html.split(/<[^>]*>/).join("").replace(/&#x27;/g, "'").replace(/\s+/g, " ");
 
 function card(priceBlock: React.ReactNode) {
   return renderToStaticMarkup(createElement(TourCard, {

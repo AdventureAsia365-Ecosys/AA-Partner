@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 import uuid
 from collections import Counter
 from decimal import Decimal
@@ -219,7 +220,8 @@ async def test_preview_renders_the_published_version_with_its_hash() -> None:
     assert out["price_hash"] == HASH.hex() and out["locale"] == "vi" and out["link"] == "client_has_it"
     body = out["body"]
     assert "Lựa chọn khác: Lodge (+40,00 USD, theo yêu cầu)" in body and "Gone" not in body
-    assert "Warm layers" in body and "Pack prep-pack-nepal en" in body and "https://evisa.example.gov" in body
+    assert "Warm layers" in body and "Pack prep-pack-nepal en" in body
+    assert re.search(r"https://evisa\.example\.gov\b", body)  # the official link, as a link
     assert "Thể lực" in body  # "Annapurna trek"
 
 
