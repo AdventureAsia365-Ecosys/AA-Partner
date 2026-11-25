@@ -250,7 +250,9 @@ describe("no raw /bff fetch in the browser code", () => {
       return /\.tsx?$/.test(name) ? [full] : [];
     });
   }
-  const isClient = (src: string) => /^\s*(?:\/\/[^\n]*\n\s*|\/\*[\s\S]*?\*\/\s*)*["']use client["']/.test(src);
+  // A block comment body is written as "no */ inside" ([^*] or a * not before /): unlike [\s\S]*?, it cannot also
+  // match "*//*", so a run of comments has one way to match (no exponential backtracking).
+  const isClient = (src: string) => /^\s*(?:\/\/[^\n]*\n\s*|\/\*(?:[^*]|\*(?!\/))*\*\/\s*)*["']use client["']/.test(src);
   // Files that name a /bff/ path for another reason. Anything else that holds a "/bff/…" string or template literal is
   // a raw call in the making (fetch(url) with the url built a line earlier, or an XMLHttpRequest).
   const LITERAL_OK: Record<string, string> = {

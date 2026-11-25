@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import re
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -67,7 +68,7 @@ def test_one_snapshot_one_hash_and_the_same_facts_in_every_text() -> None:
     texts = [tr.render(snap(), f, loc) for f in tr.FORMATS for loc in tr.LOCALES]
     assert {t.price_hash for t in texts} == {HASH}
     for t in texts:
-        assert "https://www.immigration.gov.np" in t.body
+        assert re.search(r"https://www\.immigration\.gov\.np\b", t.body)  # the official link, as a link
         assert "Most travellers need a visa" not in t.body  # visa = the official link only (Q1 2.3)
         assert "Visa card" in t.body  # a payment card is not a visa section
         assert "Riverside Lodge" in t.body and "Homestay" in t.body
