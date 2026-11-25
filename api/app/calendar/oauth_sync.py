@@ -19,9 +19,11 @@ calendar in use never ages into ``invalid_grant``. Nothing here logs a token or 
 
 **The calendar APIs** (:class:`GoogleCalendar`, :class:`GraphCalendar`): list the CRM's own events of one connection
 (a private extended property ``aaCrm`` = the connection id, with ``aaCrmKey`` = the CRM event key and ``aaCrmHash``
-= the digest of what was written), create, update, delete, and revoke the grant on disconnect (Google's revoke
-endpoint; Microsoft has no per-token revoke: the token is deleted and the member may remove the app's consent in their
-account). Google events get a deterministic id derived from (connection, key), Graph events a deterministic
+= the digest of what was written), create, update and delete. Disconnect never revokes the grant at the provider:
+the calendar shares AA's OAuth client with the mailbox, and Google keeps one grant per user and client, so a revoke
+would also cancel the member's Gmail mailbox on the same account (its next send ``invalid_grant``). The token is
+deleted instead (Microsoft has no per-token revoke either); the member may remove the app's access in their Google or
+Microsoft account. Google events get a deterministic id derived from (connection, key), Graph events a deterministic
 ``transactionId``: a create retried after a lost answer never makes a second event (idempotent by external event id).
 
 Failures map to :mod:`app.mail.providers`: 401 / ``invalid_grant`` -> :class:`AuthRevoked` (``auth_revoked``), 403 ->
@@ -76,7 +78,6 @@ CAL_MICROSOFT = OAuthEndpoints(
 CAL_ENDPOINTS = {"google": CAL_GOOGLE, "microsoft": CAL_MICROSOFT}
 
 GOOGLE_EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
-GOOGLE_REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 GRAPH_EVENTS_URL = "https://graph.microsoft.com/v1.0/me/events"
 # Graph single-value extended properties: a GUID of our own, one name per value (MAPI named properties).
 GRAPH_PROP_SET = "{6b1f4c2e-8d3a-4e5b-9c7f-2a0d1e3b5c4f}"
@@ -279,10 +280,6 @@ class CalendarClient:
     async def update(self, token: str, connection_id: uuid.UUID, external_id: str, event: PushEvent) -> None:
         raise NotImplementedError
 
-    async def revoke(self, secret: dict[str, Any]) -> bool:
-        """Revoke the grant at the provider; True when the provider confirmed (or it was already gone)."""
-        return False
-
 
 def _iso_utc(value: dt.datetime) -> str:
     return value.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -355,14 +352,6 @@ class GoogleCalendar(CalendarClient):
         resp = await self._json("PUT", url, token, self._body(connection_id, event))
         if resp.status != 200:
             raise _failure(resp)
-
-    async def revoke(self, secret: dict[str, Any]) -> bool:
-        refresh = secret.get("refresh_token")
-        if not isinstance(refresh, str) or not refresh:
-            return True
-        resp = await self._http.form(GOOGLE_REVOKE_URL, {"token": refresh})
-        # 400 invalid_token: the grant is already gone (the member removed it in their Google account).
-        return resp.status in (200, 400)
 
 
 class GraphCalendar(CalendarClient):

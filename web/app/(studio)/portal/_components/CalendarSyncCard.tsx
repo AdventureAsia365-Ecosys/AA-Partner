@@ -3,7 +3,7 @@
 // member connects their own Google or Microsoft 365 calendar (OAuth through AA's client; the consent comes back
 // through /connect/mail/callback, which sends a calendar state here as ?calendar_code&calendar_state), and the CRM
 // pushes their departures and tasks one way. Disconnect asks first; the API then removes the pushed events and the
-// token. A provider AA has no client for (Microsoft until the Entra values exist) shows "Not available yet".
+// token (no revoke at the provider: the OAuth client is the mailbox's, the dialog says how to remove access). A provider AA has no client for (Microsoft until the Entra values exist) shows "Not available yet".
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";

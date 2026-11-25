@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import inspect
 import json
 import time
 import urllib.parse
@@ -14,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from app.calendar import oauth_sync
+from app.calendar import oauth_sync, push
 from app.calendar.oauth_sync import GoogleCalendar, GraphCalendar, PushEvent, RemoteEvent
 from app.errors import Conflict, Invalid, Unavailable
 from app.mail import oauth as mail_oauth
@@ -238,16 +239,25 @@ async def test_google_create_is_idempotent_by_event_id() -> None:
 
 
 @pytest.mark.asyncio
-async def test_google_timed_update_delete_and_revoke() -> None:
+async def test_google_timed_update_and_delete() -> None:
     client, script = _google([("PUT", "events/e1", _resp(200)), ("DELETE", "events/e1", _resp(204)),
-                              ("DELETE", "events/e2", _resp(410)), ("POST", "revoke", _resp(200))])  # fmt: skip
+                              ("DELETE", "events/e2", _resp(410))])  # fmt: skip
     await client.update("at", CONN, "e1", _event("task-1", all_day=False))
     assert script.body(0)["start"] == {"dateTime": "2030-03-14T02:30:00Z", "timeZone": "UTC"}
     await client.delete("at", "e1")
     await client.delete("at", "e2")  # already gone
-    assert await client.revoke({"refresh_token": "rt"}) is True
-    assert urllib.parse.parse_qs(script.requests[3].body.decode())["token"] == ["rt"]  # type: ignore[union-attr]
-    assert await client.revoke({}) is True
+    assert len(script.requests) == 3
+
+
+def test_no_provider_revoke_anywhere() -> None:
+    """Review fix (S294): the calendar shares AA's OAuth client with the Gmail mailbox, and Google keeps one grant per
+    user and client, so revoking the calendar's token would also cancel a mailbox on the same Google account. No
+    calendar client offers a revoke and neither the clients nor the push job names Google's revoke endpoint."""
+    for cls in (oauth_sync.CalendarClient, GoogleCalendar, GraphCalendar):
+        assert not hasattr(cls, "revoke")
+    for module in (oauth_sync, push):
+        source = inspect.getsource(module)
+        assert "oauth2.googleapis.com/revoke" not in source and ".revoke(" not in source
 
 
 @pytest.mark.parametrize(
@@ -324,4 +334,3 @@ async def test_graph_create_update_and_no_revoke_endpoint() -> None:
         await client.create("at", CONN, _event())
     with pytest.raises(AuthRevoked):
         await client.list_ours("at", CONN, None, None)
-    assert await client.revoke({"refresh_token": "rt"}) is False  # Graph has no per-token revoke

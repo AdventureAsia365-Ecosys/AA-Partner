@@ -15,8 +15,10 @@ events is stored in the CRM: a run that stopped half way is finished by the next
 left as they are.
 
 **Disconnect** (status ``revoked``, :func:`app.calendar.connections.disconnect`), or a member who is no longer active:
-the run deletes every CRM event of the connection (any date), revokes the grant (Google), then deletes the credential
-(the connection row goes with it, crm-089 cascade). A provider outage retries the run up to
+the run deletes every CRM event of the connection (any date), then deletes the credential (the connection row goes
+with it, crm-089 cascade). It never revokes the grant at the provider: the calendar shares the mailbox's OAuth client,
+and a Google revoke cancels the whole grant of that account and client, the member's Gmail mailbox included
+(:mod:`app.calendar.oauth_sync`). A provider outage retries the run up to
 ``crm.calendar_push.max_attempts``; the last attempt (and a refused token) deletes the credential anyway, so a
 disconnect never leaves a token behind (events left in the calendar are counted).
 
@@ -261,7 +263,6 @@ async def _push(
     done = await _apply(client, token, connection_id, todo, budget)
     left = todo.size - sum(done.values())
     if loaded.remove:
-        await client.revoke(loaded.rotated or loaded.secret)
         await _finish(pool, runtime, tenant_id, loaded, failure=None, count=None)
         return {"outcome": "removed", "left_count": left, **_counts(done)}
     count = max(len(remote) + done["created"] - done["deleted"], 0)

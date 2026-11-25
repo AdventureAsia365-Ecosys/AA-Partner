@@ -4,8 +4,8 @@ with a fake calendar provider (no network):
 - the calendar token is stored sealed in the member's own ``crm.integration_credential`` row (never plaintext) and only
   the push opens it; the push writes the member's task into the calendar and records its counters;
 - no token and no address in any log line of connect, push or disconnect;
-- a disconnect queues the clean-up, which removes the pushed events, revokes the grant and deletes the credential
-  (the connection row goes with it);
+- a disconnect queues the clean-up, which removes the pushed events and deletes the credential (the connection row
+  goes with it), never revoking at the provider, and leaves the member's Gmail mailbox credential as it was;
 - tenant isolation: another agency sees neither the connection nor its credential and cannot disconnect it.
 """
 
@@ -21,9 +21,10 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
-from app.calendar import connections, push
+from app.calendar import connections, oauth_sync, push
 from app.errors import NotFound
 from app.jobs.queue import Job
+from app.mail import mailbox
 from app.permissions import Action
 from app.tenancy import tenant_tx
 from app.vault import Vault
@@ -48,7 +49,8 @@ async def _no_calendar_credential_left(app_pool: asyncpg.Pool) -> Any:
             await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant))
             await conn.execute("SELECT set_config('app.actor', 'job:crm_calendar_push', true)")
             await conn.execute(
-                "DELETE FROM crm.integration_credential WHERE provider IN ('google_calendar', 'microsoft_calendar')"
+                "DELETE FROM crm.integration_credential "
+                "WHERE provider IN ('google_calendar', 'microsoft_calendar', 'google')"
             )
     _TENANTS.clear()
 
@@ -129,7 +131,11 @@ async def test_disconnect_removes_the_events_and_the_token(
 ) -> None:
     caplog.set_level(logging.DEBUG)
     d = await _setup(app_pool)
+    mailbox_credential = uuid.UUID("00000000-0000-4000-8000-0000000a1011")
     async with tenant_tx(app_pool, d["owner"], d["tenant"], action=Action.CALENDAR_FEED_MANAGE) as ctx:
+        # The same member's Gmail mailbox credential on the shared Google OAuth client (the S294 review case).
+        sealed = await oauth_sync.seal_secret(Vault(d["keys"], ctx), mailbox_credential, {"refresh_token": "rt-mail-7"})
+        await ctx.conn.execute(mailbox.INSERT_CREDENTIAL_SQL, mailbox_credential, "google", d["owner_id"], sealed)
         out = await connections.disconnect(ctx, Vault(d["keys"], ctx), d["connection"])
     assert out["connection"]["status"] == "revoked"
     jobs = await _jobs(app_pool, d["connection"])
@@ -139,10 +145,13 @@ async def test_disconnect_removes_the_events_and_the_token(
     handler = push.build_handler(_runtime(d, client))
     result = await handler(app_pool, Job("j", "crm_calendar_push", payload, 1, 3))
     assert result["outcome"] == "removed" and result["deleted_count"] == 1
-    assert client.revoked == [{"refresh_token": REFRESH, "address": ADDRESS}]
+    assert client.revoked == []  # no provider revoke: the Google grant is shared with the mailbox
     assert await _rows(app_pool, d["tenant"], "SELECT 1 AS ok FROM crm.integration_credential "
                                               "WHERE provider = 'google_calendar'") == []  # fmt: skip
     assert await _rows(app_pool, d["tenant"], "SELECT 1 AS ok FROM crm.calendar_connection") == []
+    kept_sql = "SELECT status FROM crm.integration_credential WHERE provider = 'google' AND member_id = $1"
+    (kept,) = await _rows(app_pool, d["tenant"], kept_sql, d["owner_id"])
+    assert kept["status"] == "connected"  # the mailbox is untouched
     # The mailbox and other credentials of the agency are untouched; a second run finds nothing to do.
     assert (await handler(app_pool, Job("j2", "crm_calendar_push", payload, 1, 3)))["outcome"] == "gone"
     assert REFRESH not in caplog.text and ADDRESS not in caplog.text

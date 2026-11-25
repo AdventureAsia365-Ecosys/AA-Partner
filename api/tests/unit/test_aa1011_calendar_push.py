@@ -5,6 +5,7 @@ SQL, the vault, RLS and the token removal run on PostgreSQL in tests/integration
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 import uuid
 from typing import Any
@@ -19,6 +20,7 @@ from app.errors import Conflict, Forbidden, NotFound
 from app.jobs.payload_guard import check_payload
 from app.jobs.queue import Job
 from app.mail.providers import AuthRevoked, Rejected, Transient
+from app.mail.providers.http import HttpClient, HttpResponse
 from app.mail.state import MailRuntime
 from app.main import create_app
 from app.routers import calendar as router
@@ -26,6 +28,7 @@ from tests.tokens import LocalPools
 from tests.unit.fakes import ScriptedConn
 from tests.unit.mail_fakes import MailVault, secret_blob
 from tests.unit.slice_fakes import MEMBER, OTHER_MEMBER, TENANT, fake_tx, system_ctx, tenant_ctx
+from tests.unit.test_aa1011_calendar_oauth import Script
 
 CONN = uuid.UUID("00000000-0000-4000-8000-00000000c011")
 CRED = uuid.UUID("00000000-0000-4000-8000-00000000c012")
@@ -104,7 +107,7 @@ class FakeCalendar:
     async def delete(self, token: str, external: str) -> None:
         self.calls.append(("delete", external))
 
-    async def revoke(self, secret: dict[str, Any]) -> bool:
+    async def revoke(self, secret: dict[str, Any]) -> bool:  # a tripwire: the push must never call it (S294 review)
         self.revoked.append(secret)
         return True
 
@@ -172,7 +175,7 @@ async def test_agency_scope_and_the_batch_limit(monkeypatch: pytest.MonkeyPatch)
 
 
 @pytest.mark.asyncio
-async def test_a_disconnect_removes_every_event_revokes_and_deletes_the_token(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_disconnect_removes_every_event_and_deletes_the_token(monkeypatch: pytest.MonkeyPatch) -> None:
     conn, _ = _setup(monkeypatch, _row(status="revoked"))
     remote = [RemoteEvent(f"r{i}", f"task-{i}", "h") for i in range(5)]
     client = FakeCalendar(remote=remote)
@@ -181,7 +184,28 @@ async def test_a_disconnect_removes_every_event_revokes_and_deletes_the_token(mo
     out = await push.sync_connection(conn, _runtime(client), TENANT, CONN, now=NOW)  # type: ignore[arg-type]
     assert out["outcome"] == "removed" and out["deleted_count"] == 5 and out["left_count"] == 0  # no batch cap
     assert ("list", (True, True)) in client.calls  # every date, not only the window
-    assert client.revoked and client.revoked[0]["refresh_token"] == REFRESH
+    assert client.revoked == []  # never at the provider: the OAuth client is the mailbox's too
+    assert conn.sql("DELETE FROM crm.integration_credential") == [(CRED,)]
+
+
+@pytest.mark.asyncio
+async def test_a_google_disconnect_never_calls_the_revoke_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review fix (S294): a member whose Gmail mailbox and Google calendar share one Google account disconnects the
+    calendar only. The real Google client on a scripted transport (any other request fails the test) refreshes the
+    token, lists and deletes the event, and makes no call to Google's revoke endpoint, so the shared grant (and the
+    mailbox) stays; the CRM's calendar credential row alone is deleted."""
+    conn, _ = _setup(monkeypatch, _row(status="revoked"))
+    script = Script([
+        ("POST", "oauth2.googleapis.com/token", HttpResponse(200, b'{"access_token": "at-1", "expires_in": 3600}')),
+        ("GET", "calendars/primary/events?", HttpResponse(200, json.dumps({"items": [
+            {"id": "r1", "extendedProperties": {"private": {"aaCrmKey": "task-1", "aaCrmHash": "h"}}}]}).encode())),
+        ("DELETE", "events/r1", HttpResponse(204, b"")),
+    ])  # fmt: skip
+    client = oauth_sync.GoogleCalendar(oauth_sync.CAL_GOOGLE, ("gid", "gs"), HttpClient(script))
+    out = await push.sync_connection(conn, _runtime(client), TENANT, CONN, now=NOW)  # type: ignore[arg-type]
+    assert out["outcome"] == "removed" and out["deleted_count"] == 1
+    assert [r.method for r in script.requests] == ["POST", "GET", "DELETE"]
+    assert not any("revoke" in r.url for r in script.requests) and script.answers == []
     assert conn.sql("DELETE FROM crm.integration_credential") == [(CRED,)]
 
 

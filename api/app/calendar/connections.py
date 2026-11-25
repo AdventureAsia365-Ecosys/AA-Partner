@@ -9,8 +9,8 @@ crm-089 ``crm.calendar_connection``).
   active one: a new consent, maybe another account) updated, and one push of this connection is queued at once. A
   connection whose disconnect is still being cleaned up answers 409 ``calendar_disconnect_pending`` (seconds).
 - :func:`disconnect`: the member's own connection (an owner: anyone's): status ``revoked`` and one clean-up run queued
-  (:mod:`app.calendar.push`: it deletes the pushed events, revokes the grant and deletes the credential, which takes
-  the connection row with it).
+  (:mod:`app.calendar.push`: it deletes the pushed events and the credential, which takes the connection row
+  with it; no revoke at the provider, the OAuth client is the mailbox's).
 
 One audit event per change (``calendar_connect`` / ``calendar_disconnect``, the provider as reason; no address, no
 token). Every function takes the open context and never opens one.
