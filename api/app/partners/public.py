@@ -7,14 +7,14 @@
   order as :func:`app.intake.public.submit` (origin, honeypot, consent, answers, call slot, the form's hourly quota),
   then the submission is stored with ``sales_partner_id`` (``crm_intake_process`` copies it onto the trip; lead
   source ``sales_partner``) and the link's counters move.
-- **View** (purpose ``view``, ``/c/a/<token>``, by the host-only cookie ``aa_partner_link``): :func:`request_code`
-  e-mails a 6-digit code (10 minutes, :data:`MAX_ATTEMPTS` tries, :data:`CODES_PER_HOUR` per link) to the partner's
-  own contact address from the agency's mailbox (the agency-level mailbox first), the stored mail showing the code
-  masked; the code waits sealed on ``crm.sales_partner_otp.code_enc`` until the mail sender puts it in. No mailbox ->
-  409 ``code_delivery_unavailable`` unless ``PORTAL_OTP_DEV_ECHO`` (Dev) answers the code (``delivery dev_echo``).
-  :func:`verify_code` opens a :data:`SESSION_HOURS` h session (httpOnly cookie, only its SHA-256 stored).
-  :func:`home` without a session: the agency's name and ``signed_in: false``; with one: the partner's name, the trips
-  it referred (short reference, stage group, start month, travellers; never a traveller's name or contact) and the
+- **View** (purpose ``view``, ``/c/a/<token>``, by the host-only cookie ``__Secure-aa_partner_link``):
+  :func:`request_code` e-mails a 6-digit code (10 minutes, :data:`MAX_ATTEMPTS` tries, :data:`CODES_PER_HOUR` per link)
+  to the partner's own contact address from the agency's mailbox (the agency-level mailbox first), the stored mail
+  showing the code masked; the code waits sealed on ``crm.sales_partner_otp.code_enc`` until the mail sender puts it in.
+  No mailbox -> 409 ``code_delivery_unavailable`` unless ``PORTAL_OTP_DEV_ECHO`` (Dev) answers the code (``delivery
+  dev_echo``). :func:`verify_code` opens a :data:`SESSION_HOURS` h session (httpOnly cookie, only its SHA-256 stored).
+  :func:`home` without a session: the agency's name and ``signed_in: false``; with one: the partner's name, the trips it
+  referred (short reference, stage group, start month, travellers; never a traveller's name or contact) and the
   commission of each (amount, currency, status, due and paid dates) with the totals.
 
 Unknown, expired, revoked or foreign link, a link of another purpose, an inactive partner: 404 ``link_not_found``.
@@ -46,8 +46,8 @@ from app.settings import Settings
 from app.tenancy import AnyContext, PartnerLink, partner_link_tx
 from app.vault import KeyProvider, Vault
 
-SESSION_COOKIE = "aa_partner_s"
-LINK_COOKIE = "aa_partner_link"
+SESSION_COOKIE = "__Secure-aa_partner_s"
+LINK_COOKIE = "__Secure-aa_partner_link"
 VIEW_PATH = "/crm/public/v1/partner"
 SESSION_HOURS = 12
 CODE_MINUTES = 10

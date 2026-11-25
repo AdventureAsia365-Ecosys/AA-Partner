@@ -10,7 +10,7 @@ The IAM allow-list of the API's task role on the partner pool is exactly ``Admin
   address that already has an account (a member of another agency) is found with ``ListUsers`` (exact e-mail
   filter; the pool's usernames are case-insensitive e-mails, so one address is one account) and gets no password.
   An existing account that never finished its first sign-in (``FORCE_CHANGE_PASSWORD``: the person never saw or
-  never used the temporary password, or it lapsed after the pool's 7 days) gets a **new** temporary password through
+  never used the temporary password, or it lapsed) gets a **new** temporary password through
   ``AdminCreateUser`` with ``MessageAction=RESEND`` (the same allow-listed action; S263 join fix). RESEND makes
   Cognito mail the new temporary password to the address too (its default invitation text): the address is the one
   the invitation link went to, so this opens nothing the link did not already open. Only the first claim of an
@@ -46,8 +46,8 @@ from typing import Any, Protocol
 
 from app.errors import Conflict, Unavailable
 
-# The partner pool's password policy (identity_partner.tf): >= 14 characters, all four classes. The temporary
-# password is 24 characters with each class present.
+# The partner pool's password policy (identity_partner.tf): >= 14 characters. The temporary password is 24
+# characters with each class present, so it also meets a policy with character classes.
 TEMP_PASSWORD_LENGTH = 24
 _SYMBOLS = "!#$%&*+-=?@^_"
 # The Cognito status of an account created by AdminCreateUser until its first sign-in sets the person's own password.

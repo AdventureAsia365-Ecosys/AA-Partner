@@ -97,7 +97,7 @@ def test_the_client_pages_pass_the_evidence(pools: LocalPools, monkeypatch: pyte
     with TestClient(app, base_url="https://go.test") as c:
         assert c.post(f"/crm/public/v1/p/{TOKEN}/accept", json={}, headers=ua).status_code == 200
         assert c.post(f"/crm/public/v1/p/{TOKEN}/terms", json={}, headers=ua).status_code == 200
-        c.cookies.set("aa_proposal_link", TOKEN)
+        c.cookies.set("__Secure-aa_proposal_link", TOKEN)
         assert c.post("/crm/public/v1/proposal/terms", json={}, headers=ua).status_code == 200
         assert c.post("/crm/public/v1/proposal/accept", json={}, headers=ua).status_code == 200
         assert c.post(f"/crm/public/v1/portal/{TOKEN}/sign", json={}, headers=ua).json() == {"status": "signed"}

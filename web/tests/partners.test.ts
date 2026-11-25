@@ -58,7 +58,7 @@ describe("partner helpers", () => {
   });
   it("sets the link cookie on the API's partner path only", () => {
     const cookie = partnerCookie("A".repeat(43));
-    for (const part of ["aa_partner_link=", "Path=/crm/public/v1/partner", "HttpOnly", "Secure", "SameSite=Strict"]) expect(cookie).toContain(part);
+    for (const part of ["__Secure-aa_partner_link=", "Path=/crm/public/v1/partner", "HttpOnly", "Secure", "SameSite=Strict"]) expect(cookie).toContain(part);
   });
 });
 

@@ -5,7 +5,7 @@
 // write-only, a passport scan is upload-only.
 
 /** The portal link's token goes into this host-only cookie (scoped to the API's traveller routes) and leaves the URL. */
-export const PORTAL_LINK_COOKIE = "aa_portal_link";
+export const PORTAL_LINK_COOKIE = "__Secure-aa_portal_link";
 export const PORTAL_API = "/crm/public/v1/traveller";
 /** The longest life of a link (crm.client_link: 30 days); the API refuses an expired or revoked token anyway. */
 export const PORTAL_COOKIE_MAX_AGE = 30 * 24 * 3600;
