@@ -39,8 +39,6 @@ SELECT min(d.day_no)::int AS start_day, o.aa_tour_source_id AS source_id, min(o.
  ORDER BY first_added, o.aa_tour_source_id
 """
 
-NAME_MAX = 200
-
 
 def _coord(value: Any, low: float, high: float) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -57,7 +55,7 @@ def place_point(place: Any) -> dict[str, Any] | None:
     if lat is None or lng is None:
         return None
     name = place.get("name")
-    name = name.strip()[:NAME_MAX] if isinstance(name, str) else ""
+    name = name.strip() if isinstance(name, str) else ""
     # contract 1.x precision: "point" is an exact spot; anything else ("area", a legacy value) is approximate.
     return {"name": name, "lat": lat, "lng": lng, "approximate": place.get("precision") != "point"}
 

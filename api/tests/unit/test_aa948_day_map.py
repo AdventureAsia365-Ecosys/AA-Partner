@@ -45,7 +45,6 @@ def test_a_place_needs_a_finite_point_in_range() -> None:
     ):
         assert day_map.place_point(bad) is None
     assert day_map.place_point({"name": None, "lat": 1, "lng": 2})["name"] == ""
-    assert len(day_map.place_point({"name": "n" * 500, "lat": 1, "lng": 2})["name"]) == day_map.NAME_MAX
 
 
 def test_tour_days_reads_the_cached_body_and_skips_malformed_days() -> None:
