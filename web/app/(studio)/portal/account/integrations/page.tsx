@@ -8,6 +8,7 @@
 // AA-815: Facebook Page next to WordPress, and Disconnect (confirm step) on both cards.
 // AA-761: each channel's health next to its title (the last test's result) — the "Test connection" lives here now,
 // Publish only shows a summary that links back. AA-1036 R3 slice 3: the API key card went with the tenant API keys.
+// AA-1011 part 3: the Calendar card (the member's own Google / Microsoft 365 calendar, one-way push from the CRM).
 import { useState } from "react";
 import { Badge, LinkButton, PageHeader, type Tone, K, useLang, useT } from "@/app/_kit";
 import { connectionHealth, healthLabel, type ConnectionHealth } from "@/lib/studio/account";
@@ -15,6 +16,7 @@ import { SectionSkeleton } from "../../_components/SectionSkeleton";
 import { INTEGRATIONS_MESSAGES } from "./integrations.messages";
 import { useWordPressStatus, WordPressConnectForm, WordPressStatusCard } from "../../_components/WordPressConnect";
 import { useFacebookStatus, FacebookConnectForm, FacebookStatusCard } from "../../_components/FacebookConnect";
+import { CalendarSyncCard } from "../../_components/CalendarSyncCard";
 
 const changeLinkStyle: React.CSSProperties = { alignSelf: "flex-start", textDecoration: "underline" };
 
@@ -84,6 +86,11 @@ export default function T11PublishConnectionPage() {
           {!fbPending && (!fbConnected || changingFb) && (
             <FacebookConnectForm onConnected={() => { setChangingFb(false); fb.refresh(); }} />
           )}
+        </section>
+
+        <section style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <SectionTitle title={t("calendar")} health={null} testId="calendar-health" />
+          <CalendarSyncCard />
         </section>
       </div>
     </div>

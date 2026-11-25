@@ -858,9 +858,9 @@ async def test_an_agency_erase_refused_late_keeps_every_file(monkeypatch: pytest
     assert store.objects == {}
 
 
-# Writers that seal an object, not a column (a bucket object, a canary, a browser state): not table columns.
 SEALED_OBJECTS = {("document", "content"), ("export_job", "object"), ("erasure_request", "export"),
                   ("erasure_request", "verify_canary"), ("oauth_state", "state")}  # fmt: skip
+SEALED_OBJECTS.add(("oauth_state", "calendar_state"))  # objects, not columns: bucket, canary, browser state
 
 
 def test_every_sealed_column_opens_under_the_name_its_writer_used() -> None:

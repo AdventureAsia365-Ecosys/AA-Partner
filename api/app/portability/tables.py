@@ -65,6 +65,7 @@ MAIL_TABLES = frozenset(
         "message_template",
         "ingest_address",
         "campaign",  # AA-968: the campaign's subject and text
+        "calendar_connection",  # AA-1011: the connected calendar account's address
     }
 )
 COLUMN_PURPOSES: dict[tuple[str, str], str] = {

@@ -353,6 +353,11 @@ export const BFF_ROUTES: readonly BffRoute[] = [
   { method: "GET", pattern: /^calendar(\/feed|\/feeds)?$/, tenant: true, card: "AA-961" },
   { method: "POST", pattern: /^calendar\/feed$/, tenant: true, card: "AA-961" },
   { method: "POST", pattern: new RegExp(`^calendar/feeds/${UUID}/revoke$`), tenant: true, card: "AA-961" },
+  // AA-1011 part 3: my own Google / Microsoft 365 calendar (one-way push of departures and tasks): the connections, the
+  // OAuth start / completion (same callback as the mailbox, the state says which), the disconnect.
+  { method: "GET", pattern: /^calendar\/connections$/, tenant: true, card: "AA-1011" },
+  { method: "POST", pattern: /^calendar\/connections\/oauth\/(start|complete)$/, tenant: true, card: "AA-1011" },
+  { method: "POST", pattern: new RegExp(`^calendar/connections/${UUID}/disconnect$`), tenant: true, card: "AA-1011" },
   // AA-966 (CRM-34): the Reports page, the Home tiles and one section as CSV (money sections: the API's view_margin).
   { method: "GET", pattern: /^reports\/(summary|tiles|export)$/, tenant: true, card: "AA-966" },
   // AA-971 (CRM-13b): AA support access (every member reads it for the banner; the owner grants and ends it).

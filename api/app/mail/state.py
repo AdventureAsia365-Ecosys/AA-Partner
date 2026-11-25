@@ -69,6 +69,8 @@ class MailRuntime:
     mailer: Mailer | None = None
     directory: PartnerDirectory | None = None
     web_origin: str = ""
+    # AA-1011: the calendar clients (app.calendar.oauth_sync.build_clients), on the same OAuth clients as the mailboxes.
+    calendars: dict[str, Any] = field(default_factory=dict)
 
 
 async def mark_disconnected(

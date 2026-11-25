@@ -89,7 +89,7 @@ export const NAV_GROUPS: NavGroup[] = [
     { href: ROUTES.members, label: "navMembers", icon: <Users size={16} />, keywords: "team members users roles owner editor viewer invite" },
     // AA-1036 (R3) — the CRM and Trip planner add-ons: state, and the owner's request to Adventure Asia.
     { href: ROUTES.addOns, label: "navAddOns", icon: <LayoutGrid size={16} />, keywords: "add-ons apps crm trip planner request upgrade" },
-    { href: ROUTES.integrations, label: "navIntegrations", icon: <Plug size={16} />, keywords: "wordpress facebook connect channel connection" },
+    { href: ROUTES.integrations, label: "navIntegrations", icon: <Plug size={16} />, keywords: "wordpress facebook calendar google outlook connect channel connection" },
   ] },
 ];
 

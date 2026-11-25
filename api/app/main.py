@@ -38,6 +38,7 @@ from app.booking.checker import BookingChecker
 from app.booking.client import BookingClient, BookingConfig
 from app.booking.products import ProductCache
 from app.booking.tariff import TariffCurrencies, TariffReader
+from app.calendar.oauth_sync import build_clients as build_calendar_clients
 from app.campaigns.audience import links_from
 from app.catalog.client import CatalogConfig
 from app.cis.activation import ActivationConfig
@@ -176,6 +177,7 @@ def create_app(
         mail_runtime = MailRuntime(
             keys=keys,  # type: ignore[arg-type]
             providers=build_providers(settings),
+            calendars=build_calendar_clients(settings),  # AA-1011: the members' own calendars
             mailer=mailer,  # type: ignore[arg-type]
             directory=directory,  # type: ignore[arg-type]
             web_origin=settings.invitation_origin,

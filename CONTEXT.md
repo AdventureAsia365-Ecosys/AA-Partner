@@ -438,6 +438,7 @@ AWS names follow the CRM naming contract of AA-CIS-Infra `cicd_crm.tf`: everythi
 | `crm-087` | `api/migrations/087_crm_price_round_settings.sql` | AA-1152 (**contract**: two `crm.setting_definition` rows, shipped with their readers in the code PR like crm-084): `crm.agency_defaults.price_round_step` (json, default `{"USD": "1", "VND": "10000"}`) and `crm.agency_defaults.price_round_steps` (json, the steps an owner may choose: USD 1 / 5 / 10, VND 10,000 / 50,000 / 100,000); readers `app/proposals/rounding.py` |
 | `crm-088` | `api/migrations/088_crm_job_load_settings.sql` | AA-838 S291 (**contract**: two `crm.setting_definition` rows, shipped with their readers in the code PR like crm-087; C4.3 W48 findings 4 and 5): `crm.jobs.booking_proposal_check_every_s` (int, default 300, 60-3600; `app/booking/proposal_checks.py`), `crm.jobs.history_prune_every_s` (int, default 60, 60-3600; `app/jobs/worker.py`, wired in `app/main.py`) |
 | `crm-089` | `api/migrations/089_crm_calendar_connection.sql` | AA-1011 part 3 (**contract**: a replaced `crm.integration_credential` provider CHECK + a `crm.status_transition` row, so MIG-4; readiness raised by the code PR): providers `google_calendar` / `microsoft_calendar` (a member's calendar refresh token is their own credential row under the integration DEK, beside their mailbox credential); `crm.calendar_connection` (base template; one per member and provider google / microsoft, scope mine / agency, active -> revoked, `credential_id` ON DELETE CASCADE, `address_enc` under the mail DEK, push counters `last_sync_at` / `last_ok_at` / `failure_class` / `event_count`; guard `crm.guard_calendar_connection` CRM57: own calendar only, member / provider / credential fixed, the member or an owner changes it, the counters are the job's; crm_app SELECT / INSERT / UPDATE; cascades from its credential and its member, no `erase_subject` change) |
+| `crm-090` | `api/migrations/090_crm_calendar_push_settings.sql` | AA-1011 part 3 (**contract**: four `crm.setting_definition` rows, shipped with their readers in the code PR like crm-088; readiness does not wait for it, the readers serve the compiled defaults): `crm.calendar_push.window_days` (120, 7-365), `crm.calendar_push.past_days` (7, 0-30), `crm.calendar_push.batch_size` (200, 10-1000), `crm.calendar_push.max_attempts` (3, 1-10), area `calendar`; reader `app/calendar/push.py` |
 
 Flow (data standards D8 / MIG-4): the file merges here first, then a byte copy goes to AA-CIS-Infra
 `db/migrations/crm/` (Migration Copy Guard compares it with this repo's `main`), then DB Migrate `check` -> `apply`
@@ -501,6 +502,7 @@ queued / running rows as information, exempt kinds left out). Daily or slower ki
 | `crm_tour_retired_fanout` | event: one per AA tour transition the catalog sync stored (key per tour, transition and `state_changed_at`) | AA-1093 part 1: for every agency in its own `system_tx` (actor `job:crm_tour_retired_fanout`): `retired` raises `crm.tour_retired_flag` rows for each live trip's AA options of draft / published / sent versions and live AA lines on the tour, plus one task `aa_tour_discontinued` per trip (the trip owner, else the agency owner; never a write on a line, option or proposal); `reinstated` clears the open flags and adds one internal note to a trip whose open task stays; a row whose tour moved on finishes `stale`. Ids and counts only. Not deploy-gate exempt |
 | `crm_campaign_tick` | hourly, due-now hook (`app.campaigns.send.HourlyCampaignTick`, key per UTC hour) | AA-968 (CRM-36): per agency in its own `system_tx` (actor `job:crm_campaign_tick`), each live campaign in a savepoint: the gates again (the `campaigns` feature, the client host configured, the campaign's own mailbox, the d21 content gate: a tour no longer served holds it `aa_tour_retired`, another code `content_gate`), then the planned clients due by today up to the mailbox's room today (the daily limit minus the campaign mails leaving it today: queued today, still waiting, or sent today; nothing while the mailbox is disconnected), each checked again (archived, no e-mail, no marketing yes, suppressed: skipped with the code) or queued as one message + one `crm_dispatch` row (purpose marketing, origin system); `sent` when no planned client is left. Ids and counts only. Not deploy-gate exempt |
 | `crm_tenant_erase` | every 2-minute slot, due-now hook (`app.lifecycle.tenant_erase.TenantEraseSchedule`, key per slot) | AA-1093 stage 2 (decision D2): pulls `tenant.erasure.v1` into `crm.tenant_erasure_saga` (cursor in `crm.tenant_erasure_feed_state`), then for each request whose crm step is active makes the report it owes (DRY RUN, apply, verify), records it in `crm.tenant_erasure_report` in the transaction that did the work and posts it to CIS (re-posted with the same id after a network error). The apply erases the agency in one `lifecycle_tx` (actor `job:crm_tenant_erase`); kill switch `TENANT_ERASE_APPLY_ENABLED` (Terraform, default off). Counts only. Not deploy-gate exempt |
+| `crm_calendar_push` | hourly, due-now hook (`app.calendar.push.HourlyCalendarPush`, key per UTC hour), plus one row per calendar connect / disconnect (payload `tenant_id`, `calendar_connection_id`, `mode`; `crm.calendar_push.max_attempts` tries) | AA-1011 part 3: per connection in its own `system_tx` (actor `job:crm_calendar_push`): the one-way push of departures and tasks into the member's own Google / Microsoft 365 calendar, or the clean-up of a disconnected one (events removed, credential deleted; no provider revoke); section "CRM-30 duty of care + calendar". Ids, codes and counts only. Not deploy-gate exempt |
 | `crm_job_retention` | daily, from `JOB_RETENTION_UTC_HOUR` (default 19 UTC), due-now hook | Data standards §7 row `crm.job`: succeeded 30 d, cancelled 90 d; **failed rows kept** until an archive bucket exists; DRY RUN (counts only) while `JOB_RETENTION_DRY_RUN` is on (default) |
 
 
@@ -2052,7 +2054,32 @@ design's fallback, §5.10). Implementation notes: `docs/implementation-notes/AA-
   revoked (404 from then on; the page shows the revoked banner, saying whether an owner did it); the owner lists the
   team's active links. The feed (`app/calendar/ics.py`) carries a fixed English label, the trip's short reference and a
   link to the trip, never a title, name or amount; 30 days back to 365 ahead; counters written at most every 10
-  minutes. No Google / Microsoft calendar write (bring-your-own sync is a later card).
+  minutes. A member's own Google / Microsoft 365 calendar gets a one-way push since AA-1011 (below).
+- **Calendar push (AA-1011 part 3, crm-089 / crm-090; implementation notes `docs/implementation-notes/AA-1011.md`).**
+  Account > Integrations > Calendar (`web/app/(studio)/portal/_components/CalendarSyncCard.tsx`): every role connects
+  their own calendar by OAuth through AA's clients (`MAIL_OAUTH`: Google `calendar.events`, Graph
+  `Calendars.ReadWrite` + `offline_access`; Microsoft answers 503 `mail_oauth_not_configured` until the Entra values
+  exist). The redirect URI is the mailbox's `/connect/mail/callback`: a calendar state carries the prefix `cal.` (the
+  callback sends it to `/portal/account/integrations?calendar_code&calendar_state`) and is sealed to its own AAD column
+  (`oauth_state.calendar_state`), so it never completes a mailbox nor the other way round. The refresh token is the
+  member's own `crm.integration_credential` row (provider `google_calendar` / `microsoft_calendar`, integration DEK);
+  only `app/calendar/oauth_sync.py` opens it (the `decrypt_secret` lint). `crm.calendar_connection` (one per member and
+  provider, scope `mine` / `agency`, active -> revoked) carries the address (mail DEK) and the push counters. Routes
+  `/crm/v1/calendar/connections` (GET), `.../oauth/start`, `.../oauth/complete`, `.../{id}/disconnect` (action
+  `calendar_feed_manage`; a disconnect: the member or an owner). The job `crm_calendar_push` (`app/calendar/push.py`)
+  writes the `departure` and `task` events of `app/calendar/events.py` (the ICS feed's text: label, short trip reference,
+  link; never a title, name or amount) from `crm.calendar_push.past_days` (7) back to `crm.calendar_push.window_days`
+  (120) ahead: it lists the CRM's own events of the connection (private extended properties `aaCrm` = connection id,
+  `aaCrmKey`, `aaCrmHash`), then creates, updates and deletes at most `crm.calendar_push.batch_size` (200) a run (a
+  removal deletes every listed event in its one run);
+  Google event ids and Graph `transactionId`s are derived from (connection, key), so a retried create never doubles
+  (idempotent by external event id; nothing about the events is stored in the CRM). A rotated refresh token is stored
+  again. A refused token / permission keeps the connection active with its `failure_class` (the card asks for a
+  reconnect). Disconnect (or a member who is no longer active): every CRM event of the connection is deleted, the
+  credential is deleted and the connection goes with it; the grant is never revoked at the provider (the calendar
+  shares the mailbox's OAuth client and a Google revoke cancels the whole grant of that account, the member's Gmail
+  mailbox included; Graph has no per-token revoke): the member may remove the app's access in their account; an outage retries up to `crm.calendar_push.max_attempts` (3) and the last
+  try deletes the token anyway.
 - Web: `/travelling` (regions, incidents, "Reach travellers here" with the kit DataTable selection and the reveal
   controls), `/calendar` (month agenda, kind filter, my link, the team's links for an owner), the trip workspace
   banner; BFF lines card AA-961.

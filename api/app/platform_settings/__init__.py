@@ -133,6 +133,12 @@ OPS_APP_SPEND_NEAR_PCT = "crm.ops.app_spend_near_pct"
 # the worker prunes the recurring kinds' history (app/jobs/worker.py, wired in app/main.py).
 JOBS_PROPOSAL_CHECK_EVERY_S = "crm.jobs.booking_proposal_check_every_s"
 JOBS_HISTORY_PRUNE_EVERY_S = "crm.jobs.history_prune_every_s"
+# AA-1011 part 3 (crm-090): the one-way calendar push into a member's own Google / Microsoft 365 calendar
+# (app/calendar/push.py): days ahead and back, writes per connection per run, tries of a connect / disconnect run.
+CALENDAR_PUSH_WINDOW_DAYS = "crm.calendar_push.window_days"
+CALENDAR_PUSH_PAST_DAYS = "crm.calendar_push.past_days"
+CALENDAR_PUSH_BATCH_SIZE = "crm.calendar_push.batch_size"
+CALENDAR_PUSH_MAX_ATTEMPTS = "crm.calendar_push.max_attempts"
 
 # The platform ranges of the agency-owner settings: (new-agency default, lowest an owner may pick, highest). The
 # registry service refuses a change that would break min <= default <= max (422 range_inconsistent);

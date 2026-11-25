@@ -26,8 +26,10 @@ APP = Path(__file__).resolve().parents[2] / "app"
 # AA-1072: the VN payment gateway (app/payments/gateway.py: the pay URL signer and the IPN check).
 # AA-958: the SMS / WhatsApp sender (app/messaging/sender.py; the webhook and the health check open the token
 # through it).
+# AA-1011: the calendar push (app/calendar/oauth_sync.py opens a member's calendar token for the push job only).
 SECRET_DECRYPT_ALLOWED = re.compile(
-    r"^app/(vault/vault\.py|integrations/(dispatch|webhook|health)[a-z_]*\.py|mail/sender\.py|messaging/sender\.py|payments/gateway\.py)$"
+    r"^app/(vault/vault\.py|integrations/(dispatch|webhook|health)[a-z_]*\.py|mail/sender\.py|messaging/sender\.py"
+    r"|payments/gateway\.py|calendar/oauth_sync\.py)$"
 )
 FORBIDDEN_FIELD = re.compile(r"(_enc|_bidx)$|^secret|^wrapped_dek$")
 

@@ -960,6 +960,70 @@
     "when": "Để nguyên trừ khi bảng job phình ra giữa các lần xoá hoặc câu lệnh xoá nổi lên trong lần rà soát cơ sở dữ liệu hằng tuần.",
     "example": "Với mặc định 60 giây, các lượt cũ được xoá khoảng mỗi phút một lần thay vì vài giây một lần."
    }
+  },
+  "crm.calendar_push.window_days": {
+   "en": {
+    "what": "How many days ahead the CRM writes a member's departures and tasks into the Google or Microsoft 365 calendar they connected under Account > Integrations; later events arrive as the days pass.",
+    "raise": "Members see departures further ahead in their own calendar; each run lists and writes more events.",
+    "lower": "Fewer events in the members' calendars and smaller runs; far departures appear later.",
+    "when": "Raise it when agencies plan trips far ahead and ask to see them in their calendar; lower it if the push runs grow slow.",
+    "example": "With the default of 120 days, a departure four months away is already in the member's calendar."
+   },
+   "vi": {
+    "what": "CRM ghi ngày khởi hành và việc cần làm của một thành viên vào lịch Google hoặc Microsoft 365 mà họ đã kết nối ở Tài khoản > Kết nối trước bao nhiêu ngày; sự kiện xa hơn được ghi dần khi tới gần.",
+    "raise": "Thành viên thấy ngày khởi hành xa hơn trong lịch của mình; mỗi lượt đọc và ghi nhiều sự kiện hơn.",
+    "lower": "Lịch của thành viên có ít sự kiện hơn, mỗi lượt nhẹ hơn; ngày khởi hành xa xuất hiện muộn hơn.",
+    "when": "Tăng khi đại lý lên kế hoạch xa và muốn thấy trong lịch; giảm nếu các lượt đẩy lịch chạy chậm.",
+    "example": "Với mặc định 120 ngày, một ngày khởi hành cách bốn tháng đã có trong lịch của thành viên."
+   }
+  },
+  "crm.calendar_push.past_days": {
+   "en": {
+    "what": "How many days back the calendar push still updates or removes the CRM events it wrote (a task done late, a trip cancelled after its departure day); older events stay as they are.",
+    "raise": "Late changes to past days still reach the members' calendars; each run looks at a few more days.",
+    "lower": "Past days are left alone sooner; a change made later does not reach the calendar.",
+    "when": "Leave it unless agencies report past events that stayed wrong in their calendars.",
+    "example": "With the default of 7 days, a task marked done three days late disappears from the member's calendar."
+   },
+   "vi": {
+    "what": "Lượt đẩy lịch vẫn cập nhật hoặc gỡ các sự kiện CRM đã ghi trong bao nhiêu ngày đã qua (việc làm xong muộn, chuyến đi huỷ sau ngày khởi hành); sự kiện cũ hơn giữ nguyên.",
+    "raise": "Thay đổi muộn cho các ngày đã qua vẫn tới lịch của thành viên; mỗi lượt xét thêm vài ngày.",
+    "lower": "Các ngày đã qua được để yên sớm hơn; thay đổi làm muộn không tới lịch.",
+    "when": "Để nguyên trừ khi đại lý báo sự kiện đã qua vẫn sai trong lịch.",
+    "example": "Với mặc định 7 ngày, một việc đánh dấu xong muộn ba ngày sẽ biến khỏi lịch của thành viên."
+   }
+  },
+  "crm.calendar_push.batch_size": {
+   "en": {
+    "what": "How many calendar writes (create, update, delete) the push makes for one connected calendar in one run; the rest waits for the next run.",
+    "raise": "A large calendar catches up in fewer runs, with more risk of meeting the provider's rate limit in one run.",
+    "lower": "Gentler on the provider's limits; a calendar with many changes needs more runs to catch up.",
+    "when": "Lower it if a provider answers with rate limits; raise it if first connections of busy members take many hours to fill.",
+    "example": "With the default of 200 writes, a member with 150 upcoming departures and tasks gets all of them in the first run."
+   },
+   "vi": {
+    "what": "Mỗi lượt đẩy lịch ghi tối đa bao nhiêu thay đổi (tạo, sửa, xoá) cho một lịch đã kết nối; phần còn lại chờ lượt sau.",
+    "raise": "Lịch có nhiều sự kiện bắt kịp trong ít lượt hơn, đổi lại dễ chạm giới hạn tốc độ của nhà cung cấp trong một lượt.",
+    "lower": "Nhẹ nhàng hơn với giới hạn của nhà cung cấp; lịch có nhiều thay đổi cần nhiều lượt hơn để bắt kịp.",
+    "when": "Giảm nếu nhà cung cấp báo giới hạn tốc độ; tăng nếu lần kết nối đầu của thành viên bận rộn mất nhiều giờ mới đầy đủ.",
+    "example": "Với mặc định 200 lần ghi, thành viên có 150 ngày khởi hành và việc sắp tới nhận đủ trong lượt đầu tiên."
+   }
+  },
+  "crm.calendar_push.max_attempts": {
+   "en": {
+    "what": "How many times the run started by a calendar connect or disconnect is tried while the calendar provider is down; the last try of a disconnect deletes the stored token whatever happens.",
+    "raise": "More chances to finish a disconnect cleanly (events removed) during a long outage; the token stays stored a little longer.",
+    "lower": "The token of a disconnected calendar is deleted sooner; during an outage some events may stay in the member's calendar.",
+    "when": "Leave it unless provider outages leave events behind after disconnects.",
+    "example": "With the default of 3 tries, a disconnect during a short provider outage still removes the events on a later try."
+   },
+   "vi": {
+    "what": "Lượt chạy do kết nối hoặc ngắt kết nối lịch tạo ra được thử bao nhiêu lần khi nhà cung cấp lịch gặp sự cố; lần thử cuối của một lần ngắt kết nối luôn xoá token đã lưu.",
+    "raise": "Thêm cơ hội ngắt kết nối gọn gàng (gỡ hết sự kiện) khi sự cố kéo dài; token được lưu lâu hơn một chút.",
+    "lower": "Token của lịch đã ngắt kết nối bị xoá sớm hơn; khi có sự cố, vài sự kiện có thể còn lại trong lịch của thành viên.",
+    "when": "Để nguyên trừ khi sự cố của nhà cung cấp làm sót sự kiện sau khi ngắt kết nối.",
+    "example": "Với mặc định 3 lần thử, ngắt kết nối giữa lúc nhà cung cấp gặp sự cố ngắn vẫn gỡ được sự kiện ở lần thử sau."
+   }
   }
  }
 }

@@ -129,6 +129,10 @@ TENANT_ERASE = "crm_tenant_erase"
 # clients up to the mailbox daily limit, queued due-now once per UTC hour. Not deploy-gate exempt (exists only while
 # due / running); each client is one crm_dispatch row, so a released run sends nothing twice.
 CAMPAIGN_TICK = "crm_campaign_tick"
+# AA-1011 part 3: the one-way push of departures and tasks into the members' own Google / Microsoft 365 calendars
+# (app.calendar.push): queued due-now once per hour slot by a maintenance hook, plus one row per connect / disconnect of
+# one calendar (in the request's transaction). Not deploy-gate exempt (exists only while due / queued, seconds).
+CALENDAR_PUSH = "crm_calendar_push"
 
 DEFAULT_EXPECTED_SECONDS = 300
 
@@ -182,6 +186,7 @@ EXPECTED_SECONDS: dict[str, int] = {
     TOUR_RETIRED_FANOUT: 120,
     TENANT_ERASE: 600,
     CAMPAIGN_TICK: 300,
+    CALENDAR_PUSH: 300,
 }
 
 

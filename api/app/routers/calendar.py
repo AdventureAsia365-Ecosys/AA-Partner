@@ -24,15 +24,18 @@ import uuid
 from typing import Annotated, Any, Literal
 
 from fastapi import Depends, Query, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
-from app.calendar import events, feeds
+from app.calendar import connections, events, feeds, oauth_sync
 from app.db import request_pool
+from app.errors import Unavailable
 from app.permissions import Action
 from app.routers.agency import tenant_header
 from app.tenancy import tenant_tx
+from app.vault import Vault
+from app.vault.provider import require_keys
 
 router = class_router(AGENCY, tags=["calendar"])
 
@@ -43,6 +46,25 @@ TenantDep = Annotated[uuid.UUID, Depends(tenant_header)]
 class FeedIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scope: Literal["mine", "agency"] = "mine"
+
+
+class ConnectStart(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: Literal["google", "microsoft"]
+    scope: Literal["mine", "agency"] = "mine"
+
+
+class ConnectComplete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str = Field(min_length=1, max_length=4096)
+    state: str = Field(min_length=1, max_length=4096)
+
+
+def _clients(request: Request) -> dict[str, Any]:
+    runtime = getattr(request.app.state, "mail_runtime", None)
+    if runtime is None:
+        raise Unavailable("mail_not_configured")
+    return runtime.calendars
 
 
 @router.get("/calendar")
@@ -86,3 +108,49 @@ async def get_team_feeds(request: Request, caller: CallerDep, tenant_id: TenantD
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.CALENDAR_FEED_MANAGE) as ctx:
         return await feeds.team(ctx)
+
+
+# ── AA-1011: the member's own Google / Microsoft 365 calendar ────────────────────────────────────
+
+
+@router.get("/calendar/connections")
+async def get_connections(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    clients = _clients(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.CALENDAR_FEED_MANAGE) as ctx:
+        return await connections.view(ctx, Vault(keys, ctx), clients)
+
+
+@router.post("/calendar/connections/oauth/start")
+async def post_connection_start(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, body: ConnectStart
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.CALENDAR_FEED_MANAGE) as ctx:
+        return await oauth_sync.start(ctx, Vault(keys, ctx), request.app.state.settings, body.provider, body.scope)
+
+
+@router.post("/calendar/connections/oauth/complete", status_code=201)
+async def post_connection_complete(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, body: ConnectComplete
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    clients = _clients(request)
+    settings = request.app.state.settings
+    async with tenant_tx(pool, caller, tenant_id, action=Action.CALENDAR_FEED_MANAGE) as ctx:
+        vault = Vault(keys, ctx)
+        done = await oauth_sync.complete(ctx, vault, settings, clients, body.code, body.state)
+        return await connections.connect(ctx, vault, provider=done.provider, scope=done.scope, secret=done.secret)
+
+
+@router.post("/calendar/connections/{connection_id}/disconnect")
+async def post_connection_disconnect(
+    request: Request, caller: CallerDep, tenant_id: TenantDep, connection_id: uuid.UUID
+) -> dict[str, Any]:
+    pool = await request_pool(request)
+    keys = require_keys(request.app.state.keys)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.CALENDAR_FEED_MANAGE) as ctx:
+        return await connections.disconnect(ctx, Vault(keys, ctx), connection_id)
