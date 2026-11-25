@@ -14,12 +14,29 @@ from typing import Any
 
 import asyncpg
 import pytest
+import pytest_asyncio
 
 from tests.integration.test_crm010_schema import ISS, _agency, _count, _ctx, _erase
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 SEALED = b"\x00\x01" + b"s" * 40  # a stand-in ciphertext (length only; the vault is tested in the code PR)
+CALENDAR_PROVIDERS = ("google_calendar", "microsoft_calendar")
+_TENANTS: set[uuid.UUID] = set()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _no_calendar_credential_left(app_pool: asyncpg.Pool) -> Any:
+    """Delete the calendar credentials (and so the connections) these tests made: test_reapply_is_a_no_op re-runs
+    crm-057, whose provider CHECK does not list the calendar providers, and fails on a row left behind."""
+    yield
+    for tenant in list(_TENANTS):
+        async with app_pool.acquire() as conn, conn.transaction():
+            await _ctx(conn, tenant, "job:crm_calendar_push")
+            await conn.execute(
+                "DELETE FROM crm.integration_credential WHERE provider = ANY($1::text[])", list(CALENDAR_PROVIDERS)
+            )
+    _TENANTS.clear()
 
 
 async def _run(pool: asyncpg.Pool, tenant: uuid.UUID, sql: str, *args: Any, actor: str, role: str = "") -> Any:
@@ -44,6 +61,7 @@ async def _member(pool: asyncpg.Pool, tenant: uuid.UUID, role: str = "agent") ->
 
 
 async def _credential(pool: asyncpg.Pool, tenant: uuid.UUID, member: uuid.UUID, provider: str) -> uuid.UUID:
+    _TENANTS.add(tenant)
     return await _run(
         pool, tenant,
         "INSERT INTO crm.integration_credential (provider, member_id, secret_enc, status) "
