@@ -17,7 +17,9 @@
 --   2. crm.calendar_connection (base template): one per member and provider (google | microsoft): scope mine | agency
 --      (the member's own trips and tasks, or the whole agency, as the ICS feed), status active -> revoked (revoked_at,
 --      revoked_by), credential_id (the same-agency key to the credential row, ON DELETE CASCADE: the push job deletes
---      the credential once it has removed the pushed events and revoked the grant, and the connection goes with it;
+--      the credential once it has removed the pushed events (no revoke at the provider: the OAuth client is the
+--      mailbox's, and a Google revoke would cancel a Gmail mailbox on the same account), and the connection goes
+--      with it;
 --      the agency erase deletes the credential too), address_enc (the calendar account's address, pii:contact under
 --      the mail DEK, shown on the card), and the last push: last_sync_at, last_ok_at, failure_class, event_count (the
 --      CRM events in the calendar after it). Nothing about the events themselves is stored: each pushed event carries
@@ -129,7 +131,7 @@ CREATE TABLE IF NOT EXISTS crm.calendar_connection (
     )
 );
 CREATE INDEX IF NOT EXISTS calendar_connection_status_idx ON crm.calendar_connection (tenant_id, status);
-COMMENT ON TABLE crm.calendar_connection IS 'AA-1011 (crm-089; errata S247 §1 bring-your-own, design v3 R15): one member''s own Google or Microsoft 365 calendar, connected by OAuth (Google calendar.events, Graph Calendars.ReadWrite), into which the crm_calendar_push job writes the member''s departures and tasks one way (scope mine) or the agency''s (scope agency). The refresh token is the member''s crm.integration_credential row (provider google_calendar / microsoft_calendar, the integration DEK); the connection cascades from it and from its member. Disconnect sets revoked; the job then deletes the pushed events, revokes the grant (Google) and deletes the credential, and the row goes with it. No event is stored here: each pushed event carries its CRM key in the calendar. crm.guard_calendar_connection (CRM57). crm_app never deletes one.';
+COMMENT ON TABLE crm.calendar_connection IS 'AA-1011 (crm-089; errata S247 §1 bring-your-own, design v3 R15): one member''s own Google or Microsoft 365 calendar, connected by OAuth (Google calendar.events, Graph Calendars.ReadWrite), into which the crm_calendar_push job writes the member''s departures and tasks one way (scope mine) or the agency''s (scope agency). The refresh token is the member''s crm.integration_credential row (provider google_calendar / microsoft_calendar, the integration DEK); the connection cascades from it and from its member. Disconnect sets revoked; the job then deletes the pushed events and the credential (never a revoke at the provider: the OAuth client is the mailbox''s), and the row goes with it. No event is stored here: each pushed event carries its CRM key in the calendar. crm.guard_calendar_connection (CRM57). crm_app never deletes one.';
 COMMENT ON COLUMN crm.calendar_connection.address_enc IS 'pii:contact; the calendar account''s address (the ID token''s email claim at consent), AES-256-GCM under the tenant mail DEK (AAD tenant, calendar_connection, address_enc, row id)';
 COMMENT ON COLUMN crm.calendar_connection.scope IS 'mine = the member''s own trips and tasks; agency = the whole agency (as crm.calendar_feed.scope)';
 COMMENT ON COLUMN crm.calendar_connection.event_count IS 'the CRM events in the calendar window after the last push (counts only)';
