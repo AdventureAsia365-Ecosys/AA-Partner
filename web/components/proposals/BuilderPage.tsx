@@ -5,8 +5,8 @@
 // right with its zone and UTC offset, its option blocks (default, client may swap), each block's options with
 // availability, sell and (owner / agent) net and the delta to the default, and "+ Add" (the AA / agency drawer); the
 // rooms and the settings; the Advanced section (requires / excludes rules). Every write sends the working copy's
-// edit_seq; a 409 version_conflict shows a banner (reload, or review the client's picks and publish anyway). The map
-// is CRM-20 and "Preview as client" the client page of CRM-21b (AA-950).
+// edit_seq; a 409 version_conflict shows a banner (reload, or review the client's picks and publish anyway). The map is
+// components/proposals/BuilderMap.tsx (CRM-20, AA-948); "Preview as client" is the client page of CRM-21b (AA-950).
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -16,6 +16,7 @@ import { Panel } from "@/components/PageTitle";
 import { BeforeYouGoPanel } from "@/components/proposals/BeforeYouGoPanel";
 import { InclusionsPanel } from "@/components/proposals/InclusionsPanel";
 import { BuilderAaDrawer, type Supplier } from "@/components/proposals/BuilderAaDrawer";
+import { BuilderMap } from "@/components/proposals/BuilderMap";
 import { DiscountBox } from "@/components/proposals/DiscountBox";
 import { ScheduleEditor } from "@/components/proposals/ScheduleEditor";
 import { OptionPricesEditor } from "@/components/proposals/OptionPricesEditor";
@@ -74,7 +75,7 @@ export function BuilderPage({
   locale,
   terms,
   suppliers,
-  canTariff = false,
+  canTariff = false, mapToken,
 }: {
   initial: BuilderView;
   role: string;
@@ -86,6 +87,7 @@ export function BuilderPage({
   suppliers: Supplier[];
   /** AA-1030: /me permissions.aa_tariff_view (the drawer links to the agency's AA prices). */
   canTariff?: boolean;
+  mapToken?: string; // AA-948: the builder map's public token (server runtime config, lib/mapConfig.ts); "" = not set up
 }) {
   const router = useRouter();
   const hydrated = useHydrated();
@@ -469,6 +471,7 @@ export function BuilderPage({
         )}
       </Panel>
 
+      <BuilderMap days={view.days} token={mapToken} lang={lang} activeDayId={dayId} onDay={setDayId} />
       <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 260px), 1fr))", alignItems: "start" }}>
         <Panel title={tr("builder.days")} testId="builder-days">
           <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "grid", gap: 4 }}>

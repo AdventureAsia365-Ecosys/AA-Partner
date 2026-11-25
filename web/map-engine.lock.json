@@ -1,0 +1,10 @@
+{
+  "adr": "root ADR 0016 (the guarded byte copy pattern)",
+  "canonical": {
+    "repo": "AdventureAsia365-Ecosys/AA-TripPlanner-Web",
+    "path": "frontend/lib/map-engine"
+  },
+  "ref": "57341475de3095d56d120fe0168f9c8d17e60738",
+  "dest": "web/lib/map-engine",
+  "manifest_sha256": "9d3f71efb494fed240bb6a09e62b9065caa351730103eca1322042e7d615d92b"
+}

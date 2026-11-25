@@ -3,6 +3,7 @@
 // agent), every booking terms version (the select shows the published one, and a retired one the version still
 // names: S262 round 3) and the agency's suppliers (the drawer's agency items). The page is a client component from
 // there on (components/proposals/BuilderPage.tsx); every write goes through the BFF lines of card AA-949 in lib/bff.ts.
+// AA-948: the builder map's public token comes from the task's runtime config (lib/mapConfig.ts), read per request.
 import { notFound } from "next/navigation";
 import { ErrorState } from "@/app/_kit";
 import { BuilderPage } from "@/components/proposals/BuilderPage";
@@ -10,6 +11,7 @@ import { seesAaTariff } from "@/lib/aaTariff";
 import type { BuilderView } from "@/lib/builder";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
+import { builderMapToken } from "@/lib/mapConfig";
 import { t } from "@/lib/i18n";
 import type { SuppliersView } from "@/lib/ledger";
 import type { Agreement } from "@/lib/proposals";
@@ -42,6 +44,7 @@ export default async function BuilderRoute({ params }: { params: Promise<{ tripI
       initial={view.data}
       role={ctx.role}
       canTariff={seesAaTariff(ctx.me)}
+      mapToken={builderMapToken()}
       lang={ctx.lang}
       locale={ctx.locale}
       terms={agreements.ok ? agreements.data.agreements.filter((d) => d.kind === "booking_terms") : []}

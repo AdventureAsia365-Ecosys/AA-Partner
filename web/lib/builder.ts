@@ -5,6 +5,7 @@
 // except the margin share shown next to the totals.
 
 import { fmt, type MessageKey } from "@/lib/i18n";
+import type { MapPoint } from "@/lib/builderMap";
 import type { PolicySummary, ScheduleAmount, ScheduleLine } from "@/lib/retailPayments";
 import type { AppliedRule, PriceRow, PricingBlock } from "@/lib/retailPricing";
 import type { InclusionsPanelData } from "@/lib/inclusions";
@@ -84,6 +85,8 @@ export interface BuilderDay {
   utc_offset: string;
   notes: string | null;
   blocks: BuilderBlock[];
+  /** AA-948 (CRM-20): the day's places on the map, from the version's served whole AA tours (none = no pin). */
+  map_points?: MapPoint[];
 }
 
 export interface Room {

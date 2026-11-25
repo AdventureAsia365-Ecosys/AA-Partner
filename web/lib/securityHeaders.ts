@@ -9,6 +9,8 @@
 //   (build chunks, image optimiser, favicon, the mail import upload) get it without a nonce from next.config.ts.
 // - style-src keeps 'unsafe-inline': the kit and the pages use React inline styles everywhere (a nonce cannot cover
 //   style attributes); moving them to classes is a kit-wide change.
+// - connect-src names the Mapbox GL hosts (AA-948, the proposal builder's map: its API, tiles and telemetry; the same
+//   list as the TripPlanner planner) beside 'self' and the Sentry ingest; workers come from blob: (worker-src).
 // - img-src / media-src allow any https: source (tour photos, agency logos, academy videos on presigned S3 URLs);
 //   every other fetch directive is 'self' plus the Google Fonts and Sentry origins the browser really talks to.
 //
@@ -30,6 +32,8 @@ export const STATIC_SECURITY_HEADERS: { key: string; value: string }[] = [
 
 const GOOGLE_FONTS_CSS = "https://fonts.googleapis.com";
 const GOOGLE_FONTS_FILES = "https://fonts.gstatic.com";
+/** AA-948: the hosts Mapbox GL talks to (style and tiles, the tile CDN, telemetry). */
+export const MAPBOX_HOSTS = ["https://api.mapbox.com", "https://*.tiles.mapbox.com", "https://events.mapbox.com"];
 
 /** The origin of a Sentry DSN (where the browser SDK posts events), or null when there is no valid DSN. */
 export function sentryOrigin(dsn: string | undefined | null): string | null {
@@ -79,7 +83,7 @@ export function contentSecurityPolicy(opts: CspOptions = {}): string {
     ["font-src", ["'self'", "data:", GOOGLE_FONTS_FILES]],
     ["img-src", ["'self'", "data:", "blob:", "https:"]],
     ["media-src", ["'self'", "blob:", "https:"]],
-    ["connect-src", ["'self'", ...present(opts.connectSrc)]],
+    ["connect-src", ["'self'", ...MAPBOX_HOSTS, ...present(opts.connectSrc)]],
     ["worker-src", ["'self'", "blob:"]],
     ["frame-src", ["'self'"]],
     ["manifest-src", ["'self'"]],
