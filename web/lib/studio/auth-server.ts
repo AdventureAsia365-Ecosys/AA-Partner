@@ -7,6 +7,7 @@
 // partner tokens (amr=partner) bound to the live sign-in are used.
 import { NextRequest, NextResponse } from "next/server";
 import { requestConfig, type WebConfig } from "../config";
+import { jsonInit } from "../jsonResponse";
 import { accessValid, readSession } from "../session";
 import {
   boundTo,
@@ -120,7 +121,7 @@ export async function verifyTenantToken(cisApiUrl: string, token: string, fetchI
 export const SESSION_EXPIRED_HEADER = "x-aa-session";
 
 export function unauthorizedStudio(): NextResponse {
-  const res = NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const res = NextResponse.json({ error: "Unauthorized" }, jsonInit({ status: 401 }));
   res.headers.set(SESSION_EXPIRED_HEADER, "expired");
   return res;
 }

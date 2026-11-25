@@ -5,6 +5,7 @@
 // no API-key session to fall back to any more.
 import { NextRequest, NextResponse } from "next/server";
 import { requestConfig } from "@/lib/config";
+import { jsonInit } from "@/lib/jsonResponse";
 import { TENANT_TOKEN_COOKIE, tenantVerifyCache } from "@/lib/studio/auth-server";
 import { studioCookiesCleared } from "@/lib/studioCookies";
 import { refuseForeignWrite } from "@/lib/writeGuard";
@@ -18,7 +19,7 @@ export async function POST(req: NextRequest) {
   if (refused) return refused;
   const token = req.cookies.get(TENANT_TOKEN_COOKIE)?.value;
   if (token) tenantVerifyCache.delete(token);
-  const response = NextResponse.json({ ok: true, sign_out: SIGN_OUT_PATH });
+  const response = NextResponse.json({ ok: true, sign_out: SIGN_OUT_PATH }, jsonInit());
   response.headers.set("Cache-Control", "no-store");
   for (const c of studioCookiesCleared(cfg)) {
     response.cookies.set(c.name, "", { path: c.path, maxAge: 0, httpOnly: true, secure: c.secure, sameSite: c.sameSite });

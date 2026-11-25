@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requestConfig } from "@/lib/config";
 import { crmCall } from "@/lib/crmApi";
+import { jsonInit } from "@/lib/jsonResponse";
 import { accessValid, readSession } from "@/lib/session";
 import { requireStudio, withRenewed } from "@/lib/studio/auth-server";
 import { studioClaims } from "@/lib/studio/studioSession";
@@ -27,7 +28,7 @@ const NO_STORE = { "Cache-Control": "no-store" };
 type Upstream = { ok: true; data: unknown } | { ok: false; status: number; detail: string };
 
 function answer(body: unknown, status = 200): NextResponse {
-  return NextResponse.json(body, { status, headers: NO_STORE });
+  return NextResponse.json(body, jsonInit({ status, headers: NO_STORE }));
 }
 
 async function cis(apiUrl: string, token: string, method: "GET" | "PUT", rest: string, body?: unknown): Promise<Upstream> {

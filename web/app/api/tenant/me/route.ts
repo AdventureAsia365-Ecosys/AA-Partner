@@ -2,6 +2,7 @@
 // AA-427 — "/me" for the Content studio: the display fields of the verified studio session (the token itself never
 // reaches the response). The httpOnly studio cookies are invisible to page JavaScript, so the shell asks here.
 import { NextRequest, NextResponse } from "next/server";
+import { jsonInit } from "@/lib/jsonResponse";
 import { requireStudio, withRenewed } from "@/lib/studio/auth-server";
 import { studioClaims } from "@/lib/studio/studioSession";
 
@@ -19,7 +20,7 @@ export async function GET(req: NextRequest) {
       // AA-1036 (R3): the person's Content studio role from the verified token (csr), so a page can show what only the
       // owner may do (the Add-ons request); CIS enforces the role on every write.
       content_studio_role: studioClaims(auth.token).csr,
-    }),
+    }, jsonInit()),
     auth.renewed,
     auth.cfg,
   );

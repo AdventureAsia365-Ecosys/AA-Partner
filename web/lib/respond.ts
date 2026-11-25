@@ -4,6 +4,7 @@
 
 import { NextResponse } from "next/server";
 import type { WebConfig } from "./config";
+import { jsonInit } from "./jsonResponse";
 import type { CookieSpec } from "./session";
 
 export function withCookies<T extends NextResponse>(res: T, specs: CookieSpec[]): T {
@@ -37,7 +38,7 @@ export function redirectExternal(url: string, status: 303 | 307 = 307): NextResp
 }
 
 export function json(body: unknown, status = 200): NextResponse {
-  const res = NextResponse.json(body, { status });
+  const res = NextResponse.json(body, jsonInit({ status }));
   res.headers.set("Cache-Control", "no-store");
   return res;
 }
