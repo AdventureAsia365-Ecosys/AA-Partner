@@ -63,6 +63,15 @@ AI_PATH = re.compile(r"/(?:llm|ai|gateway|completions?|converse|generate|embed(?
 # path -> {hit: reason}: reviewed exceptions outside WRAPPER. Ratcheted like test_gateway_bypass.ALLOWED.
 ALLOWED: dict[str, dict[str, str]] = {
     "api/app/main.py": {"call build_gateway": "the process builds its one gateway at start (app.state.llm_gateway)"},
+    # S294 (AA-1166): the ad-hoc red-team runner, run by hand through ECS exec, never by the app. It builds its own
+    # gateway like the process does, sends every case through gateway.call (ledger, budgets, caps, scrub), and reads
+    # profiles / scrubber / provider only for its dry-run readiness report and to borrow the live draft profile.
+    "api/scripts/aa1166_redteam_crm.py": {
+        "call build_gateway": "builds its own gateway, as api/app/main.py does; every case still goes through .call",
+        "gateway.profiles": "dry-run readiness and the borrowed crm_draft_reply profile, read only",
+        "gateway.scrubber": "dry-run readiness: reports whether the PII scrub is wired, read only",
+        "gateway.provider": "dry-run readiness: refuses to run on the stub provider, read only",
+    },
 }
 
 
