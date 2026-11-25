@@ -23,7 +23,7 @@ from typing import Any
 
 from app.calendar import oauth_sync, push
 from app.errors import Conflict, Forbidden, NotFound
-from app.mail import oauth as mail_oauth
+from app.mail.oauth import PURPOSE as MAIL_PURPOSE
 from app.tenancy import TenantContext
 from app.vault import Vault
 
@@ -73,7 +73,7 @@ def _iso(value: Any) -> str | None:
 async def _view(vault: Vault, row: Any) -> dict[str, Any]:
     address = await vault.decrypt(
         "calendar_connection", "address_enc", row["calendar_connection_id"], row["address_enc"],
-        purpose=mail_oauth.PURPOSE,
+        purpose=MAIL_PURPOSE,
     )  # fmt: skip
     return {
         "calendar_connection_id": str(row["calendar_connection_id"]),
@@ -126,7 +126,7 @@ async def connect(
     credential_id = await _credential(ctx, vault, provider, secret)
     connection_id = existing["calendar_connection_id"] if existing is not None else uuid.uuid4()
     sealed_address = await vault.encrypt(
-        "calendar_connection", "address_enc", connection_id, address, purpose=mail_oauth.PURPOSE
+        "calendar_connection", "address_enc", connection_id, address, purpose=MAIL_PURPOSE
     )
     if existing is None:
         await ctx.conn.execute(INSERT_SQL, connection_id, ctx.member_id, provider, scope, credential_id, sealed_address)

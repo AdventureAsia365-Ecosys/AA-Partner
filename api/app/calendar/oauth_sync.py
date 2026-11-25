@@ -44,6 +44,7 @@ from typing import Any
 
 from app.errors import Conflict, Invalid, Unavailable
 from app.mail import oauth as mail_oauth
+from app.mail.oauth import PURPOSE as MAIL_PURPOSE
 from app.mail.providers import AuthRevoked, ProviderError, Rejected, Transient
 from app.mail.providers.http import HttpClient, HttpResponse, Transport
 from app.mail.providers.oauth_mail import GOOGLE, MICROSOFT, OAuthEndpoints, OAuthMailProvider
@@ -125,9 +126,7 @@ async def start(ctx: TenantContext, vault: Vault, settings: Settings, provider: 
         "e": int(time.time()) + mail_oauth.STATE_TTL_S,
         "v": verifier,
     }
-    sealed = await vault.encrypt(
-        STATE_TABLE, STATE_COLUMN, ctx.member_id, json.dumps(payload), purpose=mail_oauth.PURPOSE
-    )
+    sealed = await vault.encrypt(STATE_TABLE, STATE_COLUMN, ctx.member_id, json.dumps(payload), purpose=MAIL_PURPOSE)
     params = {
         "client_id": client[0],
         "redirect_uri": mail_oauth.redirect_uri(settings),
@@ -153,7 +152,7 @@ async def complete(
     if not code or len(code) > 4096 or not state.startswith(STATE_PREFIX) or len(state) > 4096:
         raise Invalid("oauth_state_invalid")
     sealed = _unb64(state[len(STATE_PREFIX) :])
-    opened = await vault.decrypt(STATE_TABLE, STATE_COLUMN, ctx.member_id, sealed, purpose=mail_oauth.PURPOSE)
+    opened = await vault.decrypt(STATE_TABLE, STATE_COLUMN, ctx.member_id, sealed, purpose=MAIL_PURPOSE)
     try:
         payload = json.loads(opened)
     except ValueError:

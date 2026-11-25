@@ -19,6 +19,7 @@ from typing import Any
 
 import asyncpg
 import pytest
+import pytest_asyncio
 
 from app.calendar import connections, push
 from app.errors import NotFound
@@ -32,13 +33,30 @@ from tests.unit.test_aa1011_calendar_push import FakeCalendar
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
+_TENANTS: set[uuid.UUID] = set()
 REFRESH = "rt-integration-token-0042"
 ADDRESS = "minh.calendar@senvang.example"
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _no_calendar_credential_left(app_pool: asyncpg.Pool) -> Any:
+    """Delete the calendar credentials (and so the connections) these tests made: test_reapply_is_a_no_op re-runs
+    crm-057, whose provider CHECK does not list the calendar providers, and fails on a row left behind."""
+    yield
+    for tenant in list(_TENANTS):
+        async with app_pool.acquire() as conn, conn.transaction():
+            await conn.execute("SELECT set_config('app.tenant_id', $1, true)", str(tenant))
+            await conn.execute("SELECT set_config('app.actor', 'job:crm_calendar_push', true)")
+            await conn.execute(
+                "DELETE FROM crm.integration_credential WHERE provider IN ('google_calendar', 'microsoft_calendar')"
+            )
+    _TENANTS.clear()
 
 
 async def _setup(pool: asyncpg.Pool) -> dict[str, Any]:
     keys = _keys()
     d = await _inquiry(pool, keys, "owner")
+    _TENANTS.add(d["tenant"])
     d["keys"] = keys
     async with tenant_tx(pool, d["owner"], d["tenant"], action=Action.CALENDAR_FEED_MANAGE) as ctx:
         out = await connections.connect(
@@ -58,7 +76,7 @@ async def _rows(pool: asyncpg.Pool, tenant: uuid.UUID, sql: str, *args: Any) -> 
 async def _jobs(pool: asyncpg.Pool, connection: uuid.UUID) -> list[asyncpg.Record]:
     return list(await pool.fetch(
         "SELECT payload, max_attempts FROM crm.job WHERE kind = 'crm_calendar_push' "
-        "AND payload->>'calendar_connection_id' = $1 ORDER BY created_at", str(connection),
+        "AND payload->>'calendar_connection_id' = $1 ORDER BY created_at, id", str(connection),
     ))  # fmt: skip
 
 
