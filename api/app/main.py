@@ -65,6 +65,7 @@ from app.messaging.state import MessagingRuntime
 from app.messaging.webhook import HookCache
 from app.observability import setup as setup_observability
 from app.observability.request_id import RequestIdMiddleware, unhandled_error_handler
+from app.observability.security_headers import SecurityHeadersMiddleware
 from app.ratelimit import HOOK_MISSES_PER_MINUTE, IPN_REF_REFUSALS_PER_MINUTE, FixedWindowLimiter
 from app.routers import (
     aa,
@@ -352,6 +353,9 @@ def create_app(
     # AA-969 (F1): the body ceiling runs before any route reads a body (FastAPI parses JSON before the class guard).
     # Added first, so the request id middleware (added next) is the outer one and logs its 413 too.
     app.add_middleware(BodyLimitMiddleware)
+    # AA-1111 (S294, ZAP baseline): nosniff + HSTS on every response, between the two (so the 413 carries them); the
+    # unhandled 500 gets them from unhandled_error_handler.
+    app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestIdMiddleware)
     app.include_router(health.router)
     app.include_router(ci.router)

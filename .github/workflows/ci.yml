@@ -742,7 +742,10 @@ jobs:
           # AA-1025: the studio's identity probe is the literal route (not the catch-all) and is always 200.
           curl -sf http://localhost:3005/bff/identity | jq -e '. == {"kind": "signed_out"}'
           [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3005/signed-out)" = "200" ]
-          curl -sI http://localhost:3005/signed-out | grep -qi "^content-security-policy: frame-ancestors 'none'"
+          # Headers to a file, then grep the file: `curl | grep -q` under pipefail can fail with SIGPIPE when grep
+          # exits at the first match while curl still writes (root ci_hygiene.py WL9).
+          curl -sI http://localhost:3005/signed-out -o "$RUNNER_TEMP/signed-out.headers"
+          grep -qi "^content-security-policy: frame-ancestors 'none'" "$RUNNER_TEMP/signed-out.headers"
           # AA-1036 (R3 slice 1): the Content studio inside this app. The retired API-key sign-in and the old legal
           # paths answer 308; the studio's legal pages are public; a studio page without a session goes to the refresh;
           # the studio BFF answers 401 JSON, the app switcher 200.

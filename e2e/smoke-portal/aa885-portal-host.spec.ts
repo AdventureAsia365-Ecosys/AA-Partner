@@ -174,6 +174,13 @@ test.describe('AA-885 — portal host', () => {
         expect(h['content-security-policy'], `${p}: CSP default-src`).toContain("default-src 'self'");
         expect(h['cross-origin-opener-policy'], `${p}: COOP`).toBe('same-origin');
       }
+      // AA-1111 (S294): on the agency host /crm/* is the CRM API behind the same edge; it sends nosniff + HSTS too.
+      if (FARGATE) {
+        const h = (await ctx.get('/crm/health', { maxRedirects: 0, timeout: 15000 })).headers();
+        expect(h['strict-transport-security'], '/crm/health: HSTS').toContain('max-age=63072000');
+        expect(h['x-content-type-options'], '/crm/health: nosniff').toBe('nosniff');
+        expect(h['server'], '/crm/health: no server header').toBeUndefined();
+      }
     } finally {
       await ctx.dispose();
     }
