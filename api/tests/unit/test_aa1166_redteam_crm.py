@@ -171,13 +171,15 @@ def test_a_gateway_refusal_or_outage_stops_the_run(outcome: str, code, rows: tup
 # ── estimate ───────────────────────────────────────────────────────────────────────────────────────────────────
 
 
-def test_the_call_bound_uses_the_dearest_entry_and_is_never_zero() -> None:
+def test_the_call_bound_pays_every_route_entry_and_is_never_zero() -> None:
+    """A billed refusal makes the gateway try the next entry, billed too: a case may pay every entry once."""
     cheap = ("vendor.cheap-model", (Decimal("0.06"), Decimal("0.24")))
     dear = ("vendor.dear-model", (Decimal("1.00"), Decimal("5.00")))
     one = rt.call_bound([cheap], 3000, 600)
     both = rt.call_bound([cheap, dear], 3000, 600)
     assert 0 < one < both
-    assert both == pytest.approx((1000 * 1.00 + 600 * 5.00) / 1e6)
+    assert both == pytest.approx((1000 * 0.06 + 600 * 0.24) / 1e6 + (1000 * 1.00 + 600 * 5.00) / 1e6)
+    assert rt.call_bound([dear, dear], 3000, 600) == pytest.approx(2 * rt.call_bound([dear], 3000, 600))
     assert rt.call_bound([("vendor.unknown-model", None)], 3000, 600) > 0
 
 
@@ -192,12 +194,27 @@ def test_the_case_bound_adds_the_guardrail_units() -> None:
 def test_the_estimate_prefers_the_measured_mean() -> None:
     cases = list(rt.CASES[:3])
     bounds = {c.id: 0.01 for c in cases}
-    assert rt.estimate(cases, bounds, {})["source"] == "bound"
-    assert rt.estimate(cases, bounds, {})["projected_usd"] == pytest.approx(0.03)
+    assert rt.estimate(cases, bounds, {}, 1)["source"] == "bound"
+    assert rt.estimate(cases, bounds, {}, 1)["projected_usd"] == pytest.approx(0.03)
     basis = {rt.ROUTE_STAGE: {"calls": 4, "usd": 0.008}, "crm_scrub": {"calls": 4, "usd": 0.0004}}
-    out = rt.estimate(cases, bounds, basis)
+    out = rt.estimate(cases, bounds, basis, 1)
     assert out["source"] == "measured"
     assert out["projected_usd"] == pytest.approx(3 * 0.0021)
+
+
+def test_the_measured_mean_counts_every_route_attempt() -> None:
+    """The rollup has one call per attempt; a refusal case may run every entry, so the mean attempt counts each."""
+    cases = list(rt.CASES[:2])
+    basis = {rt.ROUTE_STAGE: {"calls": 4, "usd": 0.008}, "crm_scrub": {"calls": 4, "usd": 0.0004}}
+    out = rt.estimate(cases, {c.id: 0.01 for c in cases}, basis, 3)
+    assert out["measured_mean_usd"] == pytest.approx(3 * 0.002 + 0.0001)
+    assert out["projected_usd"] == pytest.approx(2 * (3 * 0.002 + 0.0001))
+
+
+def test_pacing_says_how_long_the_rate_cap_stretches_the_run() -> None:
+    assert rt.pacing(9, 0) is None and rt.pacing(6, 6) is None
+    assert rt.pacing(9, 6) == {"rate_ai_per_minute": 6, "windows": 2, "min_wait_minutes": 1}
+    assert rt.pacing(13, 6)["windows"] == 3
 
 
 def test_simulate_stops_before_the_budget() -> None:
@@ -340,6 +357,84 @@ async def test_the_budget_stop_counts_the_ledger_before_each_case() -> None:
     assert [r["verdict"] for r in results] == ["pass", "not_run", "not_run"]
     assert results[1]["reasons"] == ["budget"]
     assert len(gateway.calls) == 1 and spent == pytest.approx(0.0041)
+
+
+class FakeLimiter:
+    """A full window for the first ``full`` looks, then free (the real one rolls with the clock)."""
+
+    window_s = 60.0
+
+    def __init__(self, full: int) -> None:
+        self.full = full
+        self.looks = 0
+
+    def exhausted(self, key: str) -> bool:
+        self.looks += 1
+        return self.looks <= self.full
+
+
+@pytest.mark.asyncio
+async def test_a_full_rate_window_is_a_wait_not_a_stop(capsys) -> None:
+    cases = rt.select(("crm_injection_codeword", "crm_exfiltration_rules"))
+    answer = (GatewayResult(outcome="ok", text="Your agent will confirm."), ("ok",), 0.001)
+    runtime, gateway = _runtime({"VELMORANTH": answer, "RULES DUMP": answer})
+    gateway.limiter = FakeLimiter(full=3)
+    slept: list[float] = []
+
+    async def fake_sleep(s: float) -> None:
+        slept.append(s)
+
+    runtime.sleep = fake_sleep
+    results, _ = await rt.apply(runtime, cases, 1.0, {c.id: 0.01 for c in cases})
+    assert [r["verdict"] for r in results] == ["pass", "pass"]
+    assert slept == [rt.PACE_STEP_S] * 3 and len(gateway.calls) == 2
+    assert '"paced_s": 15.0' in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_the_pacing_wait_never_passes_one_window() -> None:
+    runtime, gateway = _runtime({})
+    gateway.limiter = FakeLimiter(full=10_000)
+
+    async def fake_sleep(s: float) -> None:
+        return None
+
+    runtime.sleep = fake_sleep
+    assert await rt.pace(runtime) == pytest.approx(FakeLimiter.window_s + rt.PACE_STEP_S)
+
+
+@pytest.mark.asyncio
+async def test_a_rate_limited_case_waits_and_is_sent_once_more() -> None:
+    cases = rt.select(("crm_injection_codeword", "crm_exfiltration_rules"))
+    limited = (GatewayResult(outcome="refused", refusal_code=rt.RATE_LIMITED), ("refused",), 0.0)
+    answer = (GatewayResult(outcome="ok", text="Your agent will confirm."), ("ok",), 0.001)
+    runtime, gateway = _runtime({"VELMORANTH": answer, "RULES DUMP": answer})
+    first = {"done": False}
+    real_call = gateway.call
+
+    async def call_once_limited(ctx, **kw):
+        if not first["done"]:
+            first["done"] = True
+            gateway.plan = {"VELMORANTH": limited}
+            out = await real_call(ctx, **kw)
+            gateway.plan = {"VELMORANTH": answer, "RULES DUMP": answer}
+            return out
+        return await real_call(ctx, **kw)
+
+    gateway.call = call_once_limited
+    results, spent = await rt.apply(runtime, cases, 1.0, {c.id: 0.01 for c in cases})
+    assert [r["verdict"] for r in results] == ["pass", "pass"]
+    assert len(gateway.calls) == 3 and spent == pytest.approx(0.0001 * 3 + 0.002)
+
+
+@pytest.mark.asyncio
+async def test_a_second_rate_refusal_of_the_same_case_stops_the_run() -> None:
+    cases = rt.select(("crm_injection_codeword", "crm_exfiltration_rules"))
+    limited = (GatewayResult(outcome="refused", refusal_code=rt.RATE_LIMITED), ("refused",), 0.0)
+    runtime, gateway = _runtime({"VELMORANTH": limited})
+    results, _ = await rt.apply(runtime, cases, 1.0, {c.id: 0.01 for c in cases})
+    assert [r["verdict"] for r in results] == ["not_run", "not_run"]
+    assert results[0]["reasons"] == ["gateway_refused:rate_limited"] and len(gateway.calls) == 2
 
 
 def test_the_report_is_masked_and_between_nothing_personal() -> None:
