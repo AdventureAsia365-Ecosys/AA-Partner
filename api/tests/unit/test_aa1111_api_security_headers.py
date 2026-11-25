@@ -10,7 +10,12 @@ from fastapi.testclient import TestClient
 from app.bodylimit import BodyLimitMiddleware
 from app.main import create_app
 from app.observability.request_id import RequestIdMiddleware
-from app.observability.security_headers import SECURITY_HEADERS, SecurityHeadersMiddleware
+from app.observability.security_headers import (
+    JSON_CONTENT_TYPE,
+    SECURITY_HEADERS,
+    SecurityHeadersMiddleware,
+    with_json_charset,
+)
 from app.settings import Settings
 
 HSTS = "max-age=63072000; includeSubDomains"
@@ -28,6 +33,14 @@ def _app():
     @probe.get("/crm/_own_headers")
     async def _own() -> Response:
         return Response("x", media_type="text/plain", headers={"X-Content-Type-Options": "custom"})
+
+    @probe.get("/crm/_ndjson")
+    async def _ndjson() -> Response:
+        return Response("{}\n", media_type="application/x-ndjson")
+
+    @probe.get("/crm/_json_latin1")
+    async def _json_latin1() -> Response:
+        return Response("{}", headers={"Content-Type": "application/json; charset=latin-1"})
 
     @probe.get("/crm/_boom")
     async def _boom() -> dict:
@@ -75,3 +88,25 @@ def test_registered_between_the_request_id_and_the_body_ceiling() -> None:
 def test_image_starts_uvicorn_without_the_server_header() -> None:
     cmd = next(line for line in (API / "Dockerfile").read_text().splitlines() if line.startswith("CMD ["))
     assert '"uvicorn"' in cmd and '"--no-server-header"' in cmd
+
+
+def test_json_content_type_names_its_charset() -> None:
+    with TestClient(_app()) as client:
+        for path in ("/crm/health", "/crm/no-such-path", "/crm/v1/clients"):
+            r = client.get(path)
+            assert r.headers["content-type"] == JSON_CONTENT_TYPE, (path, r.status_code)
+
+
+def test_other_media_types_and_explicit_parameters_are_left_alone() -> None:
+    with TestClient(_app()) as client:
+        assert client.get("/crm/_ndjson").headers["content-type"] == "application/x-ndjson"
+        assert client.get("/crm/_json_latin1").headers["content-type"] == "application/json; charset=latin-1"
+        assert client.get("/crm/_own_headers").headers["content-type"].startswith("text/plain")
+
+
+def test_with_json_charset() -> None:
+    assert JSON_CONTENT_TYPE == "application/json; charset=utf-8"
+    assert with_json_charset("application/json") == JSON_CONTENT_TYPE
+    assert with_json_charset("Application/JSON ") == JSON_CONTENT_TYPE
+    assert with_json_charset("application/problem+json") == "application/problem+json"
+    assert with_json_charset("text/csv; charset=utf-8") == "text/csv; charset=utf-8"

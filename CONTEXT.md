@@ -135,7 +135,7 @@ The shortest path that works without AWS access. The [README](README.md#run-the-
 | Part | Choice |
 |---|---|
 | Language | Python 3.12 |
-| API | FastAPI, Pydantic v2, uvicorn (keep-alive 105 s > ALB idle 100 s, `--no-server-header`); every response carries `nosniff` + HSTS (`app/observability/security_headers.py`, AA-1111) |
+| API | FastAPI, Pydantic v2, uvicorn (keep-alive 105 s > ALB idle 100 s, `--no-server-header`); every response carries `nosniff` + HSTS and a JSON body says `application/json; charset=utf-8` (`app/observability/security_headers.py`, AA-1111); input checks per data item and the sign-in protections: `docs/operations/security-controls.md` |
 | DB access | asyncpg with plain SQL, no ORM; `ssl="require"`; pool `max_size=3` |
 | Jobs | `crm.job` (ADR 0003a template, kinds `crm_*`), worker loop inside the API process |
 | Lint / tests | ruff, pytest + pytest-asyncio; integration tests on PostgreSQL 15 with the RDS role shape |
