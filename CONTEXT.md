@@ -625,6 +625,11 @@ registry the CIS alerts catalogue reads: every check with its setting keys and v
   reaches the page as `x-nonce` (`app/layout.tsx` restore scripts) and in the request CSP (Next's own scripts). The
   paths the proxy skips (`/_next/*`, `/favicon.ico`, the mail import upload) get the policy without a nonce from
   `next.config.ts`.
+- **JSON answers name their charset** (S294 hardening, `web/lib/jsonResponse.ts`): every JSON answer the web builds
+  (route handlers, `lib/respond.ts` `json()`, the studio 401, the cross-site refusal set in `lib/writeGuard.ts` because
+  `lib/crossSiteGuard.ts` is a vendored copy) uses `jsonInit()`, so it says `application/json; charset=utf-8`, like
+  the API. The BFF proxies pass the upstream content type through unchanged. `web/tests/jsonResponse.test.ts` refuses a
+  new `NextResponse.json` / `Response.json` in `app/` or `lib/` without `jsonInit`.
 - **Client host is white-label** (AA-1129 P5): the inquiry form `/c/f/<key>` shows the agency's name as the brand
   mark and tab title; an unknown key answers HTTP 404 (`app/c/f/[publicKey]/not-found.tsx`); the visitor switches EN /
   VI with `?lang=` for that visit (the client host has no `/prefs`); an agency with no privacy link gets a short

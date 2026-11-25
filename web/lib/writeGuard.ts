@@ -16,6 +16,7 @@
 import type { NextResponse } from "next/server";
 import type { WebConfig } from "./config";
 import { refuseCrossSiteWrite } from "./crossSiteGuard";
+import { JSON_CONTENT_TYPE } from "./jsonResponse";
 import type { WriteCheckRequest } from "./sameOrigin";
 
 /** The origin a same-origin browser request carries in `Origin`: the public one, not the server's bind address. */
@@ -25,9 +26,13 @@ export function expectedOrigin(cfg: Pick<WebConfig, "publicOrigin">, req: WriteC
 
 /** A 403 for a cross-site write (Origin / Sec-Fetch-Site of another origin), or null when the request may go on. */
 export function refuseForeignWrite(cfg: Pick<WebConfig, "publicOrigin">, req: WriteCheckRequest): NextResponse | null {
-  return refuseCrossSiteWrite({
+  const refused = refuseCrossSiteWrite({
     method: req.method,
     headers: req.headers,
     nextUrl: { origin: expectedOrigin(cfg, req) },
   });
+  // S294 hardening: the vendored refusal answers a bare application/json (lib/crossSiteGuard.ts is a byte copy of
+  // AA-CIS-App, never edited here), so the charset is set on its answer here, like every other JSON answer of the web.
+  refused?.headers.set("content-type", JSON_CONTENT_TYPE);
+  return refused;
 }

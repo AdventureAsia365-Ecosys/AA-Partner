@@ -4,10 +4,11 @@
 // the studio is part of the agency app now, so this answers for the agency app (lib/studio/health.ts); once the
 // cut-over sends /api/* here, the portal rows read this body. Public, no dependency, never cached.
 import { NextResponse } from "next/server";
+import { jsonInit } from "@/lib/jsonResponse";
 import { healthBody } from "@/lib/studio/health";
 
 export const dynamic = "force-dynamic";
 
 export function GET() {
-  return NextResponse.json(healthBody(), { headers: { "Cache-Control": "no-store" } });
+  return NextResponse.json(healthBody(), jsonInit({ headers: { "Cache-Control": "no-store" } }));
 }

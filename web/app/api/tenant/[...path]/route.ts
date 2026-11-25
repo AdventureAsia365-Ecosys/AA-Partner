@@ -21,6 +21,7 @@
 //     CIS (lib/studio/facts.ts factWriteRefusal); CIS refuses it too (and the edit of an older fact of another kind).
 import { NextRequest, NextResponse } from "next/server";
 import { requestConfig } from "@/lib/config";
+import { jsonInit } from "@/lib/jsonResponse";
 import { requireStudio, withRenewed } from "@/lib/studio/auth-server";
 import { refuseForeignWrite } from "@/lib/writeGuard";
 import { proxyPath } from "@/lib/bffPath";
@@ -54,7 +55,7 @@ async function handler(
   const { path } = await params;
   const upstreamPath = proxyPath(path);
   if (upstreamPath === null) {
-    return NextResponse.json({ detail: "Invalid path" }, { status: 400 });
+    return NextResponse.json({ detail: "Invalid path" }, jsonInit({ status: 400 }));
   }
   const url = `${auth.cfg.cisApiUrl}/${upstreamPath}${req.nextUrl.search}`;
 
@@ -66,7 +67,7 @@ async function handler(
   // AA-1144 (B6): the agency's own facts are its price and booking terms only (the multipart body is never a fact).
   const factRefusal = factWriteRefusal(req.method, path, contentType, body);
   if (factRefusal) {
-    return withRenewed(NextResponse.json({ detail: factRefusal.detail }, { status: factRefusal.status }), auth.renewed,
+    return withRenewed(NextResponse.json({ detail: factRefusal.detail }, jsonInit({ status: factRefusal.status })), auth.renewed,
       auth.cfg);
   }
 
@@ -77,7 +78,7 @@ async function handler(
     for (const [name, value] of Object.entries(studioDownloadHeaders(res.headers))) out.headers.set(name, value);
     return withRenewed(out, auth.renewed, auth.cfg);
   } catch {
-    return NextResponse.json({ detail: "Upstream connection error" }, { status: 502 });
+    return NextResponse.json({ detail: "Upstream connection error" }, jsonInit({ status: 502 }));
   }
 }
 

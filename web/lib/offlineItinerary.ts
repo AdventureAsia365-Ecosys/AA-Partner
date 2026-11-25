@@ -15,6 +15,7 @@
 // The service worker (lib/portalServiceWorker.ts) caches the page shell only; it never touches this entry's content.
 
 import type { PortalDay, PortalService } from "./clientPortal";
+import { JSON_CONTENT_TYPE } from "./jsonResponse";
 
 /** Bump with any change of {@link OfflineItinerary}'s shape: an older entry is then ignored and replaced. */
 export const OFFLINE_VERSION = 1;
@@ -197,7 +198,7 @@ export async function writeOffline(copy: OfflineItinerary, cs: CacheStorageLike 
     const cache = await cs.open(OFFLINE_DATA_CACHE);
     await cache.put(
       OFFLINE_DATA_KEY,
-      new Response(JSON.stringify(copy), { headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } }),
+      new Response(JSON.stringify(copy), { headers: { "Content-Type": JSON_CONTENT_TYPE, "Cache-Control": "no-store" } }),
     );
   } catch {
     // no space or no storage: the page still works online
