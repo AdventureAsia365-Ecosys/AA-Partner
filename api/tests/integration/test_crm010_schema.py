@@ -1256,6 +1256,9 @@ CASCADE_ERASED = {
     "campaign_recipient": {"campaign", "traveler"},  # a recipient with its campaign or its client (erase, trash purge)
     "campaign_suppression": {"tenant_settings"},
     "aa_extra_night_request": {"trip"},  # AA-1144 (crm-080): a request to AA for extra nights leaves with its trip
+    # AA-1011 (crm-089): a member's calendar connection leaves with its credential (the agency erase deletes the
+    # credentials; the push job deletes one after a disconnect) and with its member.
+    "calendar_connection": {"integration_credential", "member"},
 }
 
 
