@@ -2233,7 +2233,8 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
   `web/components/proposals/BuilderAddonTab.tsx`): the builder's drawer tab "AA add-on" lists the optional activities
   AA sells on the block's day (`booking.b2b.v1` 1.11 `GET /add-ons` for the day's date and party) at a place of the AA
   tour on that day (S291 follow-up, the TripPlanner day cards' rule; `app/proposals/aa_addon_places.py`: the CIS
-  destination ids of the tour day that falls on the block's day in the catalog cache, the first day before the tour and
+  destination ids of the tour day that falls on the block's day in the catalog cache, its stops and, from CIS
+  `catalog.http.v1` 1.4, its overnight destination (`days[].overnight_destination_id`, S292), the first day before the tour and
   the last day after it, every place of a tour only there as parts; none known = nothing offered), the ones whose CIS
   place name matches the day's place first, each with the agency's suggested price per traveller (the margin rule of
   AA-1030: a markup suggestion and AA's price only for owner / agent). `POST /crm/v1/proposals/{id}/blocks/{block}/
