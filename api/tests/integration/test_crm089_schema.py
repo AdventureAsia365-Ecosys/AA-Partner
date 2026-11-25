@@ -10,12 +10,15 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 import asyncpg
 import pytest
 import pytest_asyncio
 
+from tests.integration.conftest import OWNER
 from tests.integration.test_crm010_schema import ISS, _agency, _count, _ctx, _erase
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -23,6 +26,21 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 SEALED = b"\x00\x01" + b"s" * 40  # a stand-in ciphertext (length only; the vault is tested in the code PR)
 CALENDAR_PROVIDERS = ("google_calendar", "microsoft_calendar")
 _TENANTS: set[uuid.UUID] = set()
+
+
+CRM089 = Path(__file__).resolve().parents[2] / "migrations" / "089_crm_calendar_connection.sql"
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _crm089(admin: asyncpg.Connection) -> AsyncIterator[None]:
+    """crm-089 again (re-runnable) before each test: an earlier test of the session may have re-run an older file
+    (test_crm057_schema re-runs crm-057 before each of its tests, whose provider CHECK lacks the calendar providers)."""
+    await admin.execute(f"SET ROLE {OWNER}")
+    try:
+        await admin.execute(CRM089.read_text(encoding="utf-8"))
+    finally:
+        await admin.execute("RESET ROLE")
+    yield
 
 
 @pytest_asyncio.fixture(autouse=True)
