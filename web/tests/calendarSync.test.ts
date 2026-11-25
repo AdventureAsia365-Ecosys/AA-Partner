@@ -1,9 +1,9 @@
 // AA-1011 part 3: the Calendar card's helpers, the OAuth callback that routes a calendar consent back to Account >
-// Integrations (the mailbox keeps its own return), and the BFF lines of the calendar connection routes.
+// Integrations (the mailbox keeps its own return), and the (server-only) allow-list lines of the calendar connection routes.
 import { NextRequest } from "next/server";
 import { describe, expect, it } from "vitest";
 import { GET as mailCallback } from "@/app/connect/mail/callback/route";
-import { matchBff } from "@/lib/bff";
+import { matchBff, SERVER_ONLY_ROUTES } from "@/lib/bff";
 import {
   calendarReturn,
   connectionHealth,
@@ -90,13 +90,17 @@ describe("calendar card helpers", () => {
 });
 
 describe("BFF lines", () => {
-  it("allows exactly the calendar connection calls", () => {
-    expect(matchBff("GET", "calendar/connections")?.card).toBe("AA-1011");
-    expect(matchBff("POST", "calendar/connections/oauth/start")?.tenant).toBe(true);
-    expect(matchBff("POST", "calendar/connections/oauth/complete")?.card).toBe("AA-1011");
-    expect(matchBff("POST", `calendar/connections/${UUID}/disconnect`)?.card).toBe("AA-1011");
-    expect(matchBff("DELETE", "calendar/connections")).toBeNull();
-    expect(matchBff("GET", "calendar/connections/oauth/start")).toBeNull();
-    expect(matchBff("POST", "calendar/connections/not-a-uuid/disconnect")).toBeNull();
+  // S294: server-only (the studio's route handler app/api/studio/calendar asks them with the studio's tenant); through
+  // the browser /bff a studio session got 409 no_agency_selected on page load.
+  it("allows exactly the calendar connection calls, server side only", () => {
+    expect(matchBff("GET", "calendar/connections", SERVER_ONLY_ROUTES)?.card).toBe("AA-1011");
+    expect(matchBff("POST", "calendar/connections/oauth/start", SERVER_ONLY_ROUTES)?.tenant).toBe(true);
+    expect(matchBff("POST", "calendar/connections/oauth/complete", SERVER_ONLY_ROUTES)?.card).toBe("AA-1011");
+    expect(matchBff("POST", `calendar/connections/${UUID}/disconnect`, SERVER_ONLY_ROUTES)?.card).toBe("AA-1011");
+    expect(matchBff("GET", "calendar/connections")).toBeNull();
+    expect(matchBff("POST", `calendar/connections/${UUID}/disconnect`)).toBeNull();
+    expect(matchBff("DELETE", "calendar/connections", SERVER_ONLY_ROUTES)).toBeNull();
+    expect(matchBff("GET", "calendar/connections/oauth/start", SERVER_ONLY_ROUTES)).toBeNull();
+    expect(matchBff("POST", "calendar/connections/not-a-uuid/disconnect", SERVER_ONLY_ROUTES)).toBeNull();
   });
 });

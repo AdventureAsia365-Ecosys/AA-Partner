@@ -2,13 +2,15 @@
 // web/app/(studio)/portal/_components/CalendarSyncCard.tsx — AA-1011 part 3: Account > Integrations > Calendar. The
 // member connects their own Google or Microsoft 365 calendar (OAuth through AA's client; the consent comes back
 // through /connect/mail/callback, which sends a calendar state here as ?calendar_code&calendar_state), and the CRM
-// pushes their departures and tasks one way. Disconnect asks first; the API then removes the pushed events and the
+// pushes their departures and tasks one way. S294: every call goes through the studio's own route handler
+// (/api/studio/calendar, lib/studio/calendar.ts) with the studio's tenant, never the CRM's /bff (a studio session picks
+// no CRM agency, so /bff answered 409 on page load); a person with no CRM role in this agency sees why and no connect
+// button (the read answers 200 with available: false). Disconnect asks first; the API then removes the pushed events and the
 // token (no revoke at the provider: the OAuth client is the mailbox's, the dialog says how to remove access). A provider AA has no client for (Microsoft until the Entra values exist) shows "Not available yet".
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { Badge, Button, ConfirmModal, Field, K, Select, useFormat, useT } from "@/app/_kit";
-import { bffSend } from "@/lib/bffClient";
 import {
   CALENDAR_PROVIDERS,
   CALENDAR_RETURN,
@@ -22,6 +24,7 @@ import {
   type CalendarProvider,
   type CalendarScope,
 } from "@/lib/calendarSync";
+import { studioCalendarUrl } from "@/lib/studio/calendar";
 import { SectionSkeleton } from "./SectionSkeleton";
 import { CALENDAR_SYNC_MESSAGES } from "./calendarSync.messages";
 
@@ -38,11 +41,39 @@ function errKey(detail: string | null | undefined): Key {
   return `err_${errorKey(detail)}` as Key;
 }
 
+type Sent<T> = { ok: true; data: T } | { ok: false; detail: string; redirecting?: true };
+
+/** A JSON call to the studio's calendar handler. A 401 (the partner session ran out) reloads through /auth/refresh,
+ *  like the CRM's bffSend; the caller then shows no error. */
+async function studioSend<T>(method: "GET" | "POST", rest: string, body?: unknown): Promise<Sent<T>> {
+  let res: Response;
+  try {
+    res = await fetch(studioCalendarUrl(rest), {
+      method,
+      headers: body === undefined ? { Accept: "application/json" } : { Accept: "application/json", "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      credentials: "same-origin",
+    });
+  } catch {
+    return { ok: false, detail: "network" };
+  }
+  if (res.status === 401) {
+    window.location.assign(`/auth/refresh?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+    return { ok: false, detail: "session_expired", redirecting: true };
+  }
+  const json = (await res.json().catch(() => null)) as unknown;
+  if (!res.ok) {
+    const detail = (json as { detail?: unknown } | null)?.detail;
+    return { ok: false, detail: typeof detail === "string" ? detail : "error" };
+  }
+  return { ok: true, data: json as T };
+}
+
 export function useCalendarConnections() {
   const q = useQuery({
     queryKey: ["integration", "calendar"],
     queryFn: async () => {
-      const res = await bffSend<CalendarConnectionsView>("GET", "calendar/connections");
+      const res = await studioSend<CalendarConnectionsView>("GET", "");
       return res.ok ? res.data : null;
     },
   });
@@ -63,7 +94,7 @@ export function CalendarSyncCard() {
   async function call<T>(path: string, body?: unknown): Promise<T | null> {
     setBusy(true);
     setMessage(null);
-    const res = await bffSend<T>("POST", path, body);
+    const res = await studioSend<T>("POST", path, body);
     setBusy(false);
     if (!res.ok) {
       if (!res.redirecting) setMessage({ ok: false, key: errKey(res.detail) });
@@ -82,7 +113,7 @@ export function CalendarSyncCard() {
       if ("error" in back) {
         await Promise.resolve();
         setMessage({ ok: false, key: back.error === "denied" ? "err_denied" : "err_generic" });
-      } else if (await call("calendar/connections/oauth/complete", back)) {
+      } else if (await call("oauth/complete", back)) {
         setMessage({ ok: true, key: "connected" });
         void refresh();
       }
@@ -91,12 +122,12 @@ export function CalendarSyncCard() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function connect(provider: CalendarProvider) {
-    const data = await call<{ authorize_url?: string }>("calendar/connections/oauth/start", { provider, scope });
+    const data = await call<{ authorize_url?: string }>("oauth/start", { provider, scope });
     if (data?.authorize_url) window.location.assign(data.authorize_url);
   }
 
   async function disconnect(c: CalendarConnection) {
-    const done = await call(`calendar/connections/${c.calendar_connection_id}/disconnect`);
+    const done = await call(`${c.calendar_connection_id}/disconnect`);
     setConfirm(null);
     if (done) {
       setMessage({ ok: true, key: "disconnected" });
@@ -105,6 +136,19 @@ export function CalendarSyncCard() {
   }
 
   if (loading && !view) return <SectionSkeleton label={t("loading")} />;
+  // No CRM role in the studio's agency (or no CRM there): nothing to connect; say why. A finished OAuth return still
+  // shows its message.
+  if (view?.available === false) {
+    return (
+      <div style={{ display: "grid", gap: 10, minWidth: 0 }} data-testid="calendar-sync">
+        <p style={{ margin: 0, fontSize: 13, color: K.body }} data-testid="calendar-no-crm">{t("noCrm")}</p>
+        {message && (
+          <p role="status" data-testid="calendar-message"
+            style={{ margin: 0, fontSize: 13, color: message.ok ? K.ink : K.danger }}>{t(message.key)}</p>
+        )}
+      </div>
+    );
+  }
 
   const row = (label: string, value: React.ReactNode, testId?: string) => (
     <>
