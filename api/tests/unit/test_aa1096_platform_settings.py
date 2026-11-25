@@ -193,7 +193,9 @@ def test_limits_and_dry_run_switches_read_now(monkeypatch: pytest.MonkeyPatch) -
 
 @pytest.mark.asyncio
 async def test_the_refresher_waits_for_the_pool_and_stops(monkeypatch: pytest.MonkeyPatch) -> None:
-    assert ps.start_refresher(lambda: None) is None  # ENVIRONMENT=test: tests read the defaults
+    off = ps.start_refresher(lambda: None)
+    await ps.stop_refresher(off)  # never leave a stray task on the loop when the next line fails
+    assert off is None  # ENVIRONMENT=test (pinned by tests/conftest.py): tests read the defaults
     monkeypatch.setenv("ENVIRONMENT", "dev")
     monkeypatch.setattr(ps.READER, "max_age_s", 0.01)
     calls = {"n": 0}
