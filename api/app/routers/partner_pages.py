@@ -5,8 +5,8 @@ signed link (43 characters, SHA-256 stored); served on the client host. Service:
 - ``POST /crm/public/v1/r/{token}/submissions``: one inquiry, stamped with the partner: 202 ``{"status": "received"}``
   (stored, a repeat or a honeypot hit alike); 422 ``consent_required`` / ``invalid_submission``; 403
   ``origin_not_allowed``; 429 per address (the intake limiter, before anything is read) and per form; 413 over 32 KiB.
-- The view, by the host-only cookie ``aa_partner_link`` (the web's ``/c/a/<token>`` landing sets it, Path
-  ``/crm/public/v1/partner``) and the session cookie ``aa_partner_s`` on the same path:
+- The view, by the host-only cookie ``__Secure-aa_partner_link`` (the web's ``/c/a/<token>`` landing sets it, Path
+  ``/crm/public/v1/partner``) and the session cookie ``__Secure-aa_partner_s`` on the same path:
   ``GET /partner`` (the agency name; signed in: the partner's trips and commissions), ``POST /partner/code`` (202, the
   sign-in code by e-mail), ``POST /partner/session`` (200 + the session cookie; 422 a refused code),
   ``POST /partner/sign-out``. Writes take the intake limiter per address (the anonymous ceiling).

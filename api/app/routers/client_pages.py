@@ -7,8 +7,8 @@ origin (no CORS) and the per-address limits key on the real visitor.
 - ``POST /crm/public/v1/p/{token}/accept``: accept with the typed full name, the terms tick and the price hash
   (:func:`app.proposals.public.accept`); 409 ``price_changed`` / ``terms_changed``.
 - AA-950 (CRM-21b, Fix B11): the same page **by cookie**. The web exchanges the link's token for the host-only cookie
-  ``aa_proposal_link`` (httpOnly, Secure, SameSite=Strict, Path ``/crm/public/v1/proposal``) and strips it from the
-  URL; the token stays valid until the link expires, so a second device opening the link gets in too.
+  ``__Secure-aa_proposal_link`` (httpOnly, Secure, SameSite=Strict, Path ``/crm/public/v1/proposal``) and strips it
+  from the URL; the token stays valid until the link expires, so a second device opening the link gets in too.
   ``GET /proposal``, ``POST /proposal/pick`` (Keep / Swap / Choose later), ``POST /proposal/hold`` (the version's hold
   set: 200, 409 ``option_sold_out`` / ``hold_unavailable``, 429 ``recheck_limit``, 503 ``booking_unavailable``, each
   with the fresh page), ``POST /proposal/accept`` (409 ``hold_expired`` with the re-quote offer, ``choice_changed``),
@@ -22,8 +22,8 @@ origin (no CORS) and the per-address limits key on the real visitor.
 - ``GET  /crm/public/v1/portal/{token}``: the portal home (``signed_in: false`` without a session).
 - ``POST /crm/public/v1/portal/{token}/code``: e-mail a code (``{"purpose": "sign_in" | "sign"}``).
 - ``POST /crm/public/v1/portal/{token}/session``: check a sign-in code; 200 sets the session cookie
-  (``aa_portal_s``: httpOnly, Secure, SameSite=Strict, Path = this portal's own path, 12 hours); a wrong code is 422
-  ``code_invalid`` with ``attempts_left`` (the counter commits), an old one 422 ``code_expired``.
+  (``__Secure-aa_portal_s``: httpOnly, Secure, SameSite=Strict, Path = this portal's own path, 12 hours); a wrong code
+  is 422 ``code_invalid`` with ``attempts_left`` (the counter commits), an old one 422 ``code_expired``.
 - ``POST /crm/public/v1/portal/{token}/sign-out``: ends the session and clears the cookie.
 - ``PUT  /crm/public/v1/portal/{token}/stage3``: the traveller's Stage 3 details (write-only); **403
   ``stage3_locked`` before the deposit** (card R), 403 ``portal_sign_in_required`` without a session.
@@ -86,7 +86,7 @@ router = APIRouter(prefix="/crm/public/v1", tags=["client-pages"])
 
 HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
 SessionCookie = Annotated[str | None, Cookie(alias=portal.SESSION_COOKIE)]
-PROPOSAL_COOKIE = "aa_proposal_link"
+PROPOSAL_COOKIE = "__Secure-aa_proposal_link"
 ProposalCookie = Annotated[str | None, Cookie(alias=PROPOSAL_COOKIE)]
 _TOKEN = re.compile(r"^[A-Za-z0-9_-]{43}$")
 
@@ -475,13 +475,13 @@ async def post_portal_sign(
 
 
 # ── the traveller portal by cookie (AA-953, CRM-24a; design v3 §2.9 rule 1 for the portal, Fix B11) ────────────────
-# The web exchanges the portal link's token (/c/t/<token>) for the host-only cookie aa_portal_link (httpOnly, Secure,
-# SameSite=Strict, Path /crm/public/v1/traveller) and strips it from the URL; the token stays valid until the link
-# expires (a second device opening the link gets in too, after its own code). The session cookie of these routes is
+# The web exchanges the portal link's token (/c/t/<token>) for the host-only cookie __Secure-aa_portal_link (httpOnly,
+# Secure, SameSite=Strict, Path /crm/public/v1/traveller) and strips it from the URL; the token stays valid until the
+# link expires (a second device opening the link gets in too, after its own code). The session cookie of these routes is
 # scoped to the same path.
 
 TRAVELLER_PATH = "/crm/public/v1/traveller"
-PORTAL_LINK_COOKIE = "aa_portal_link"
+PORTAL_LINK_COOKIE = "__Secure-aa_portal_link"
 PortalLinkCookie = Annotated[str | None, Cookie(alias=PORTAL_LINK_COOKIE)]
 # A passport scan: 7 MiB of bytes is ~9.4 MiB of base64 (app.documents.service.MAX_BYTES) plus the JSON around it.
 SCAN_BODY_BYTES = 10 * 1024 * 1024

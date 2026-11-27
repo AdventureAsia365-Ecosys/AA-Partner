@@ -89,7 +89,7 @@ from app.travellers.fields import clean_f1
 from app.vault import KeyProvider, Vault
 
 PURPOSE = "portal"
-SESSION_COOKIE = "aa_portal_s"
+SESSION_COOKIE = "__Secure-aa_portal_s"
 SESSION_PATH = "/crm/public/v1/portal/"
 SESSION_HOURS = 12
 CODE_MINUTES = 10

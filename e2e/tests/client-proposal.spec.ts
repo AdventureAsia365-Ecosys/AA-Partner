@@ -246,7 +246,7 @@ test.describe("CRM-21b client proposal on Dev", () => {
     await first.page.goto(link);
     await expect(first.page).toHaveURL(new RegExp(`^${CLIENT}/c/p$`), { timeout: 15_000 });
     // context.cookies(url) returns only the cookies sent to that URL: ask for the API path the cookie is scoped to.
-    const cookie = (await first.context.cookies(`${CLIENT}/crm/public/v1/proposal`)).find((c) => c.name === "aa_proposal_link");
+    const cookie = (await first.context.cookies(`${CLIENT}/crm/public/v1/proposal`)).find((c) => c.name === "__Secure-aa_proposal_link");
     expect(cookie, "the link cookie").toBeTruthy();
     expect(cookie!.httpOnly && cookie!.secure && cookie!.sameSite === "Strict").toBe(true);
     expect(cookie!.path).toBe("/crm/public/v1/proposal");

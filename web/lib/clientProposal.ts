@@ -9,7 +9,7 @@ import type { PaxType } from "@/lib/retailPricing";
 import type { PublicProposal } from "./proposals";
 
 /** Fix B11: the link's token goes into this host-only cookie (scoped to the API's proposal path) and leaves the URL. */
-export const PROPOSAL_COOKIE = "aa_proposal_link";
+export const PROPOSAL_COOKIE = "__Secure-aa_proposal_link";
 export const PROPOSAL_API = "/crm/public/v1/proposal";
 /** The longest life of a link (crm.client_link: 30 days); the API refuses an expired or revoked token anyway. */
 export const PROPOSAL_COOKIE_MAX_AGE = 30 * 24 * 3600;

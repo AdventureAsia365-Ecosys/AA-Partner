@@ -1,12 +1,12 @@
 // web/app/c/t/[token]/route.ts — the traveller portal link's landing (AA-953, card CRM-24a; design v3 §2.9 rule 1, the
 // Fix B11 model of the proposal page). The link each traveller gets stays /c/t/<token> (AA-946). This handler exchanges
-// the token for the host-only cookie aa_portal_link (httpOnly, Secure, SameSite=Strict, scoped to the API's
+// the token for the host-only cookie __Secure-aa_portal_link (httpOnly, Secure, SameSite=Strict, scoped to the API's
 // /crm/public/v1/traveller routes) and redirects to /c/t, so the token leaves the address bar, the history and any
 // Referer, and page script never sees it. Nothing binds the link to a device: the token stays valid until the link
 // expires, so a second device opening the same link gets the same exchange (and still needs its own e-mail code).
 // The agent's "New portal link" revokes it. The web server never calls the API with the token.
 import { NextResponse } from "next/server";
-import { portalCookie } from "@/lib/clientPortal";
+import { PORTAL_API, portalCookie } from "@/lib/clientPortal";
 import { CLIENT_TOKEN } from "@/lib/proposals";
 
 export const dynamic = "force-dynamic";
@@ -19,5 +19,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
   // A relative Location: the client host the visitor used (CloudFront -> ALB host rule), never an internal origin.
   const res = new NextResponse(null, { status: 303, headers: { Location: "/c/t", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
   res.headers.append("Set-Cookie", portalCookie(token));
+  // The pre-rename cookie (no __Secure- prefix) is no longer read; clear it so a still-valid link token does not sit
+  // in the browser until it expires.
+  // TODO(AA-1111): remove 30 days after this ships (the longest life of an old link cookie).
+  res.headers.append("Set-Cookie", `aa_portal_link=; Path=${PORTAL_API}; Max-Age=0; HttpOnly; Secure; SameSite=Strict`);
   return res;
 }

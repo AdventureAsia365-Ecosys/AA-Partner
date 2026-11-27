@@ -1,5 +1,8 @@
 # AA-953 follow-up — a separate write limit for the signed-in traveller portal (lane l9)
 
+> Note (AA-1111, S294): the client-host cookie names gained the `__Secure-` prefix (`__Secure-aa_proposal_link`,
+> `__Secure-aa_portal_s`, ...). This page uses the current names; the limits and buckets are unchanged.
+
 Dev E2E run 41174840671: `lifecycle-thin.spec.ts` (CRM-18) got 429 `rate_limited` (0.8 ms, at the limiter, before any
 read) on `PUT /crm/public/v1/traveller/stage3`. Every client-page write called `_write_limit()`, one per-address
 bucket (`app.state.intake_limiter`, `RATE_LIMIT_INTAKE_PER_MINUTE` = 5) built against inquiry-form spam. Since #145
@@ -24,7 +27,7 @@ home address would hit the same wall.
     `sign_in` (or anything else) → the intake bucket, even with a session cookie, because it e-mails a code to someone
     who is not signed in.
 - **The cookie's shape alone is not trust (review fix, second commit).** The first pass sent any request with a
-  43-character `aa_portal_s` to the 30/min bucket, so a caller who is not signed in could forge one and get 30
+  43-character `__Secure-aa_portal_s` to the 30/min bucket, so a caller who is not signed in could forge one and get 30
   session-gated writes per address per minute instead of 5 (and 30 x 10 MiB passport-scan bodies). Now
   `_session_write(request, session)` is an async context manager around the handler body:
   1. no cookie of the issued shape -> the intake bucket, as before;
@@ -52,13 +55,13 @@ home address would hit the same wall.
 |---|---|---|
 | `POST /p/{token}/accept` | proposal link only | intake |
 | `POST /p/{token}/terms` | proposal link only | intake |
-| `POST /proposal/pick` | `aa_proposal_link` cookie | intake |
-| `POST /proposal/hold` | `aa_proposal_link` cookie (Booking re-check; its own `recheck_limit` too) | intake |
-| `POST /proposal/accept` | `aa_proposal_link` cookie | intake |
-| `POST /proposal/terms` | `aa_proposal_link` cookie | intake |
-| `POST /proposal/change-request` | `aa_proposal_link` cookie | intake |
-| `POST /proposal/invoices/{id}/claim` | `aa_proposal_link` cookie | intake |
-| `POST /proposal/invoices/{id}/card` | `aa_proposal_link` cookie | intake |
+| `POST /proposal/pick` | `__Secure-aa_proposal_link` cookie | intake |
+| `POST /proposal/hold` | `__Secure-aa_proposal_link` cookie (Booking re-check; its own `recheck_limit` too) | intake |
+| `POST /proposal/accept` | `__Secure-aa_proposal_link` cookie | intake |
+| `POST /proposal/terms` | `__Secure-aa_proposal_link` cookie | intake |
+| `POST /proposal/change-request` | `__Secure-aa_proposal_link` cookie | intake |
+| `POST /proposal/invoices/{id}/claim` | `__Secure-aa_proposal_link` cookie | intake |
+| `POST /proposal/invoices/{id}/card` | `__Secure-aa_proposal_link` cookie | intake |
 | `POST /portal/{token}/code`, `POST /traveller/code` with `purpose: sign_in` | portal link only (e-mails a code) | intake |
 | `POST /portal/{token}/code`, `POST /traveller/code` with `purpose: sign` | portal session (`_signed_in`) | portal (with a session cookie) |
 | `POST /portal/{token}/session`, `POST /traveller/session` | portal link + the e-mailed code (pre-auth) | intake |

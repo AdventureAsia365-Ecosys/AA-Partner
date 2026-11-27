@@ -13,6 +13,7 @@ import {
   commissionActions,
   FILTERS,
   isFilter,
+  PARTNER_API,
   partnerCookie,
   partnerErrorKey,
   partnerPageErrorKey,
@@ -58,7 +59,22 @@ describe("partner helpers", () => {
   });
   it("sets the link cookie on the API's partner path only", () => {
     const cookie = partnerCookie("A".repeat(43));
-    for (const part of ["aa_partner_link=", "Path=/crm/public/v1/partner", "HttpOnly", "Secure", "SameSite=Strict"]) expect(cookie).toContain(part);
+    for (const part of ["__Secure-aa_partner_link=", "Path=/crm/public/v1/partner", "HttpOnly", "Secure", "SameSite=Strict"]) expect(cookie).toContain(part);
+  });
+  it("the /c/a landing sets the link cookie, clears the pre-rename one (AA-1111) and redirects; a bad token is 404", async () => {
+    const { GET } = await import("@/app/c/a/[token]/route");
+    const token = "A".repeat(43);
+    const res = await GET(new Request(`https://go.test/c/a/${token}`), { params: Promise.resolve({ token }) });
+    expect(res.status).toBe(303);
+    expect(res.headers.get("location")).toBe("/c/a");
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(res.headers.getSetCookie()).toEqual([
+      partnerCookie(token),
+      `aa_partner_link=; Path=${PARTNER_API}; Max-Age=0; HttpOnly; Secure; SameSite=Strict`,
+    ]);
+    const bad = await GET(new Request("https://go.test/c/a/short"), { params: Promise.resolve({ token: "short" }) });
+    expect(bad.status).toBe(404);
+    expect(bad.headers.get("set-cookie")).toBeNull();
   });
 });
 

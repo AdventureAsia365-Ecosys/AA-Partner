@@ -112,7 +112,7 @@ export interface PartnerView {
 }
 
 export const PARTNER_API = "/crm/public/v1/partner";
-export const PARTNER_LINK_COOKIE = "aa_partner_link";
+export const PARTNER_LINK_COOKIE = "__Secure-aa_partner_link";
 
 export function isFilter(value: unknown): value is PartnerFilter {
   return typeof value === "string" && (FILTERS as readonly string[]).includes(value);
