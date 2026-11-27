@@ -37,7 +37,16 @@ def test_the_names_are_the_ones_the_web_sets() -> None:
         assert f'"{name}"' in (web / file).read_text(encoding="utf-8"), (name, file)
 
 
+def _is_true(node: ast.expr) -> bool:
+    return isinstance(node, ast.Constant) and node.value is True
+
+
 def test_every_set_or_delete_cookie_names_a_prefixed_constant() -> None:
+    """Every ``set_cookie`` / ``delete_cookie`` names a prefixed constant and passes ``secure=True``.
+
+    A browser refuses a ``__Secure-`` cookie without ``Secure``, so a clear (``Max-Age=0``) that forgets it is dropped
+    and the cookie stays.
+    """
     allowed = {"portal.SESSION_COOKIE", "partner.SESSION_COOKIE"}
     seen: list[str] = []
     for path in APP.rglob("*.py"):
@@ -50,4 +59,9 @@ def test_every_set_or_delete_cookie_names_a_prefixed_constant() -> None:
                 first = ast.unparse(node.args[0]) if node.args else ast.unparse(node.keywords[0].value)
                 seen.append(f"{path.name}:{first}")
                 assert first in allowed, (path, first)
+                secure = [k.value for k in node.keywords if k.arg == "secure"]
+                assert len(secure) == 1 and _is_true(secure[0]), (
+                    "__Secure- cookies need secure=True on set and delete",
+                    f"{path.name}:{node.lineno}",
+                )
     assert seen, "no cookie call found: the scan is broken"

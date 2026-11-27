@@ -6,7 +6,7 @@
 // spouse) opening the same link gets the same exchange. The agent's "Re-issue link" revokes it. The web server never
 // calls the API with the token (the browser does, on this origin, so the per-address limit keys on the visitor).
 import { NextResponse } from "next/server";
-import { proposalCookie } from "@/lib/clientProposal";
+import { PROPOSAL_API, proposalCookie } from "@/lib/clientProposal";
 import { CLIENT_TOKEN } from "@/lib/proposals";
 
 export const dynamic = "force-dynamic";
@@ -19,5 +19,9 @@ export async function GET(_request: Request, { params }: { params: Promise<{ tok
   // A relative Location: the client host the visitor used (CloudFront -> ALB host rule), never an internal origin.
   const res = new NextResponse(null, { status: 303, headers: { Location: "/c/p", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
   res.headers.append("Set-Cookie", proposalCookie(token));
+  // The pre-rename cookie (no __Secure- prefix) is no longer read; clear it so a still-valid link token does not sit
+  // in the browser until it expires.
+  // TODO(AA-1111): remove 30 days after this ships (the longest life of an old link cookie).
+  res.headers.append("Set-Cookie", `aa_proposal_link=; Path=${PROPOSAL_API}; Max-Age=0; HttpOnly; Secure; SameSite=Strict`);
   return res;
 }

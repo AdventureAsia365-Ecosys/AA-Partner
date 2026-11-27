@@ -56,6 +56,11 @@ describe("the portal link cookie (§2.9 rule 1)", () => {
     expect(res.headers.get("location")).toBe("/c/t");
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
     expect(res.headers.get("set-cookie")).toContain(`${PORTAL_LINK_COOKIE}=${TOKEN}`);
+    // AA-1111: the landing also clears the pre-rename cookie (same path, Max-Age=0, Secure).
+    expect(res.headers.getSetCookie()).toEqual([
+      portalCookie(TOKEN),
+      `aa_portal_link=; Path=${PORTAL_API}; Max-Age=0; HttpOnly; Secure; SameSite=Strict`,
+    ]);
     const bad = await GET(new Request("https://go.test/c/t/short"), { params: Promise.resolve({ token: "short" }) });
     expect(bad.status).toBe(404);
   });

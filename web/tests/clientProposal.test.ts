@@ -107,6 +107,11 @@ describe("the link cookie (Fix B11)", () => {
     expect(res.status).toBe(303);
     expect(res.headers.get("location")).toBe("/c/p");
     expect(res.headers.get("set-cookie")).toContain(`__Secure-aa_proposal_link=${TOKEN}`);
+    // AA-1111: the landing also clears the pre-rename cookie (same path, Max-Age=0, Secure).
+    expect(res.headers.getSetCookie()).toEqual([
+      proposalCookie(TOKEN),
+      `aa_proposal_link=; Path=${PROPOSAL_API}; Max-Age=0; HttpOnly; Secure; SameSite=Strict`,
+    ]);
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
     const bad = await GET(new Request("https://go.test/c/p/short"), { params: Promise.resolve({ token: "short" }) });
     expect(bad.status).toBe(404);
