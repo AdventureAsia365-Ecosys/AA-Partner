@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
-from app.booking import contract
+from app.booking import contract, invoice_contract
 from app.booking.client import BookingClient, BookingRefusal, BookingUnavailable
 from app.errors import Conflict, NotFound, UnavailableRetry
 from app.tenancy import TenantContext
@@ -87,9 +87,9 @@ SELECT l.booking_line_id, l.trip_id, t.title AS trip_title, t.start_date, l.titl
 class Fetched:
     """What Booking answered in one open (None = not read); ``error``: the code when it could not answer."""
 
-    invoices: list[contract.AgencyInvoiceSummary] | None = None
-    details: dict[str, contract.AgencyInvoice] = field(default_factory=dict)
-    billing: contract.BillingStatus | None = None
+    invoices: list[invoice_contract.AgencyInvoiceSummary] | None = None
+    details: dict[str, invoice_contract.AgencyInvoice] = field(default_factory=dict)
+    billing: invoice_contract.BillingStatus | None = None
     error: str | None = None
 
 
@@ -101,7 +101,7 @@ def booking_error_code(exc: Exception) -> str:
     return "booking_unavailable"
 
 
-def booking_amounts(invoice: contract.AgencyInvoice) -> dict[str, dict[str, Any]]:
+def booking_amounts(invoice: invoice_contract.AgencyInvoice) -> dict[str, dict[str, Any]]:
     """Per AA booking id of a settlement invoice: the sum of its live deposit / balance / full / adjustment lines and
     whether a balance or full line billed it (``complete``). Cancellation fees are left out: Booking reports them as
     the line's cancellation cost (the cancel answer, AA-957)."""
@@ -116,7 +116,7 @@ def booking_amounts(invoice: contract.AgencyInvoice) -> dict[str, dict[str, Any]
     return {k: {"amount": str(v["amount"].quantize(cent)), "complete": v["complete"]} for k, v in out.items()}
 
 
-def _needs_detail(inv: contract.AgencyInvoiceSummary, known: dict[str, Any]) -> bool:
+def _needs_detail(inv: invoice_contract.AgencyInvoiceSummary, known: dict[str, Any]) -> bool:
     if inv.invoice_kind != "settlement":
         return False
     cached = known.get(inv.number)
@@ -131,19 +131,19 @@ async def fetch(
         return Fetched(error="booking_not_configured")
     out = Fetched()
     try:
-        invoices: list[contract.AgencyInvoiceSummary] = []
+        invoices: list[invoice_contract.AgencyInvoiceSummary] = []
         for page in range(MAX_PAGES):
             answer = await client.invoices(tenant_id, limit=PAGE, offset=page * PAGE)
-            items, total = contract.agency_invoice_page(answer)
+            items, total = invoice_contract.agency_invoice_page(answer)
             invoices += items
             if len(invoices) >= total or not items:
                 break
         out.invoices = invoices
-        out.billing = contract.billing_status(await client.billing_status(tenant_id))
+        out.billing = invoice_contract.billing_status(await client.billing_status(tenant_id))
         if details:
             todo = [inv.number for inv in invoices if _needs_detail(inv, known)][:MAX_DETAILS]
             for number in todo:
-                out.details[number] = contract.agency_invoice(await client.invoice(tenant_id, number))
+                out.details[number] = invoice_contract.agency_invoice(await client.invoice(tenant_id, number))
     except (BookingUnavailable, BookingRefusal, contract.ContractError) as exc:
         out.error = booking_error_code(exc)
     return out
@@ -177,7 +177,7 @@ def _amounts(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def banner(billing: contract.BillingStatus | None, cache: list[Any]) -> dict[str, Any] | None:
+def banner(billing: invoice_contract.BillingStatus | None, cache: list[Any]) -> dict[str, Any] | None:
     """The past-due banner: Booking's credit status when it answered, else the copy's overdue invoices."""
     if billing is not None:
         if billing.status == "ok":
@@ -370,14 +370,14 @@ async def page(tx: Tx, client: BookingClient | None, tenant_id: uuid.UUID, today
 
 async def invoice_detail(tx: Tx, client: BookingClient | None, tenant_id: uuid.UUID, number: str) -> dict[str, Any]:
     """One AA invoice read live (lines, approved payments, how to pay), its lines linked to the agency's AA lines."""
-    if not contract._INVOICE_NO.match(number):  # noqa: SLF001 — the contract's own number pattern
+    if not invoice_contract._INVOICE_NO.match(number):  # noqa: SLF001 — the contract's own number pattern
         raise NotFound("invoice_not_found")
     async with tx() as ctx:
         pass  # the membership and the role before Booking is asked
     if client is None:
         raise _unavailable("booking_not_configured")
     try:
-        invoice = contract.agency_invoice(await client.invoice(tenant_id, number))
+        invoice = invoice_contract.agency_invoice(await client.invoice(tenant_id, number))
     except BookingRefusal as exc:
         if exc.status == 404:
             raise NotFound("invoice_not_found") from None

@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import margin
-from app.booking import contract
+from app.booking import contract, invoice_contract
 from app.booking.client import BookingRefusal
 from app.errors import Conflict, Invalid, NotFound, UnavailableRetry
 from app.finance import aa_invoices, agenda, bills, departures, pnl
@@ -427,9 +427,9 @@ def test_the_agenda_reads_departure_dates_from_the_aa_lines_and_needs_for_the_ca
 
 # ── Booking 1.5 and the "Bookings with AA" page ──────────────────────────────────────────────────────────────────
 def test_the_invoice_readers() -> None:
-    items, total = contract.agency_invoice_page({"items": [agency_invoice("AAT-2031-000001")], "total": 1})
+    items, total = invoice_contract.agency_invoice_page({"items": [agency_invoice("AAT-2031-000001")], "total": 1})
     assert total == 1 and items[0].total == D("1000.00") and items[0].due_on == dt.date(2031, 2, 15)
-    detail = contract.agency_invoice(agency_invoice_detail("AAT-2031-000001", [invoice_line(1, "full", "10.00",
+    detail = invoice_contract.agency_invoice(agency_invoice_detail("AAT-2031-000001", [invoice_line(1, "full", "10.00",
                                                                                             "BK-1")]))  # fmt: skip
     assert detail.lines[0].booking_id == "BK-1" and detail.invoice_inbox == "billing@invented.example"
     for broken in (
@@ -440,7 +440,7 @@ def test_the_invoice_readers() -> None:
         {"items": [agency_invoice("AAT-2031-000001", total="10")], "total": 1},
     ):
         with pytest.raises(contract.ContractError):
-            contract.agency_invoice_page(broken)
+            invoice_contract.agency_invoice_page(broken)
     good = agency_invoice_detail("AAT-2031-000001", [invoice_line(1, "full", "10.00", "BK-1")])
     for broken in (
         {**good, "lines": None},
@@ -449,21 +449,21 @@ def test_the_invoice_readers() -> None:
         {**good, "lines": [{**invoice_line(1, "spa", "1.00", None)}]},
     ):
         with pytest.raises(contract.ContractError):
-            contract.agency_invoice(broken)
-    paid = contract.agency_invoice(
+            invoice_contract.agency_invoice(broken)
+    paid = invoice_contract.agency_invoice(
         {**good, "issuer": None, "payments": [{"received_on": "2031-02-02", "amount": "5.00", "currency": "USD"}]}
     )
     assert paid.payments[0][1] == D("5.00") and paid.payment_instructions is None  # fmt: skip
-    status = contract.billing_status(FakeBooking().billing | {"paid_through": "2031-03-31"})
+    status = invoice_contract.billing_status(FakeBooking().billing | {"paid_through": "2031-03-31"})
     assert status.status == "ok" and status.paid_through == dt.date(2031, 3, 31)
     for broken in ({"status": "ok", "holds_paused": "no"}, {"status": "ok", "holds_paused": False,
                                                             "overdue_amount": None}):  # fmt: skip
         with pytest.raises(contract.ContractError):
-            contract.billing_status(broken)
+            invoice_contract.billing_status(broken)
 
 
 def test_booking_amounts_and_the_banner() -> None:
-    detail = contract.agency_invoice(agency_invoice_detail("AAT-2031-000001", [
+    detail = invoice_contract.agency_invoice(agency_invoice_detail("AAT-2031-000001", [
         invoice_line(1, "deposit", "30.00", "BK-1"), invoice_line(2, "balance", "70.00", "BK-1"),
         invoice_line(3, "deposit", "20.00", "BK-2"), invoice_line(4, "deposit", "5.00", "BK-3", voided=True),
         invoice_line(5, "cancellation_fee", "9.00", "BK-4"), invoice_line(6, "adjustment", "-1.00", None),
@@ -471,7 +471,7 @@ def test_booking_amounts_and_the_banner() -> None:
     assert aa_invoices.booking_amounts(detail) == {
         "BK-1": {"amount": "100.00", "complete": True}, "BK-2": {"amount": "20.00", "complete": False},
     }  # fmt: skip
-    assert aa_invoices.banner(contract.billing_status(FakeBooking().billing), []) is None
+    assert aa_invoices.banner(invoice_contract.billing_status(FakeBooking().billing), []) is None
     cache = [{"aa_status": "issued", "overdue_days": 4, "balance_amount": D(10), "currency": "USD"},
              {"aa_status": "issued", "overdue_days": 9, "balance_amount": D(5), "currency": "USD"},
              {"aa_status": "paid", "overdue_days": 0, "balance_amount": D(0), "currency": "USD"}]  # fmt: skip

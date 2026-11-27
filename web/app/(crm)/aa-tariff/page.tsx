@@ -27,14 +27,40 @@ import {
 import { AA_TERMS_PATH, type AaTerms } from "@/lib/aaTerms";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
-import { formatDate } from "@/lib/dates";
-import { fmt, t, type MessageKey } from "@/lib/i18n";
+import { formatDate, type DateLocale } from "@/lib/dates";
+import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { serverContext } from "@/lib/serverContext";
 
 export const dynamic = "force-dynamic";
 
 function tierLabel(code: string): string {
   return code ? code.charAt(0).toUpperCase() + code.slice(1).replace(/_/g, " ") : "";
+}
+
+/** The prices once AA answered (AA-1188: the coverage line and the notes under the table). */
+function TariffBody({ view, lang, locale }: { view: TariffView; lang: Lang; locale: DateLocale }) {
+  const tr = (key: string) => t(lang, key as MessageKey);
+  const coverage = coverageText(view, lang);
+  return (
+    <>
+      <p style={{ margin: 0, fontSize: 12.5, color: K.muted }} data-testid="tariff-meta">
+        {fmt(tr("tariff.pricedOn"), { date: formatDate(view.priced_on, locale) })}
+        {view.tier_code ? ` · ${fmt(tr("tariff.tier"), { tier: tierLabel(view.tier_code) })}` : ""}
+        {coverage ? <span data-testid="tariff-coverage">{` · ${coverage}`}</span> : null}
+      </p>
+      {view.truncated && (
+        <p role="status" style={{ margin: 0, fontSize: 12.5, color: K.amberDeep }} data-testid="tariff-truncated">
+          {tr("tariff.truncated")}
+        </p>
+      )}
+      <AaTariffTable items={view.items} lang={lang} locale={locale} />
+      <ul data-testid="tariff-notes" style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: K.muted, lineHeight: 1.6 }}>
+        {tariffNotes(view, lang).map((note) => (
+          <li key={note}>{note}</li>
+        ))}
+      </ul>
+    </>
+  );
 }
 
 export default async function AaTariffPage({ searchParams }: { searchParams: Promise<{ currency?: string | string[] }> }) {
@@ -60,7 +86,6 @@ export default async function AaTariffPage({ searchParams }: { searchParams: Pro
     }),
     crmCall<AaTerms>(ctx.cfg, session, "GET", AA_TERMS_PATH),
   ]);
-  const coverage = view.ok ? coverageText(view.data, ctx.lang) : null;
   return (
     // minmax(0, 1fr): the table's min width never stretches the page's grid (S254 lesson).
     <div data-testid="crm-aa-tariff" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12, maxWidth: 1200 }}>
@@ -79,24 +104,7 @@ export default async function AaTariffPage({ searchParams }: { searchParams: Pro
           <ErrorState message={tr(tariffErrorKey(view.detail))} />
         </div>
       ) : (
-        <>
-          <p style={{ margin: 0, fontSize: 12.5, color: K.muted }} data-testid="tariff-meta">
-            {fmt(tr("tariff.pricedOn"), { date: formatDate(view.data.priced_on, ctx.locale) })}
-            {view.data.tier_code ? ` · ${fmt(tr("tariff.tier"), { tier: tierLabel(view.data.tier_code) })}` : ""}
-            {coverage ? <span data-testid="tariff-coverage">{` · ${coverage}`}</span> : null}
-          </p>
-          {view.data.truncated && (
-            <p role="status" style={{ margin: 0, fontSize: 12.5, color: K.amberDeep }} data-testid="tariff-truncated">
-              {tr("tariff.truncated")}
-            </p>
-          )}
-          <AaTariffTable items={view.data.items} lang={ctx.lang} locale={ctx.locale} />
-          <ul data-testid="tariff-notes" style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: K.muted, lineHeight: 1.6 }}>
-            {tariffNotes(view.data, ctx.lang).map((note) => (
-              <li key={note}>{note}</li>
-            ))}
-          </ul>
-        </>
+        <TariffBody view={view.data} lang={ctx.lang} locale={ctx.locale} />
       )}
       <AaTermsPanel terms={terms.ok ? terms.data : null} lang={ctx.lang} />
     </div>
