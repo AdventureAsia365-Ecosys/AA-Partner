@@ -17,6 +17,12 @@
 
 export type HostKind = "partner" | "client" | "academy" | "unknown";
 
+/**
+ * AA-1185 (S295 security audit SA-73): public/.well-known/security.txt (RFC 9116), the vulnerability contact. Every
+ * host serves it without a session: the partner, client and academy hosts.
+ */
+export const SECURITY_TXT_PATH = "/.well-known/security.txt";
+
 /** Paths the client host serves. Everything else on it is 404. */
 export const CLIENT_PATH_PREFIXES = [
   "/c/",
@@ -26,6 +32,7 @@ export const CLIENT_PATH_PREFIXES = [
   "/favicon.ico",
   "/icon.svg",
   "/robots.txt",
+  SECURITY_TXT_PATH,
 ] as const;
 
 /** Pages that exist on the client host only: 404 on the partner host (local development serves both). */
@@ -47,6 +54,7 @@ export const PUBLIC_PARTNER_PATHS = [
   // redirect chain just to load the favicon, and crawlers would never read the "Disallow: /" file.
   "/icon.svg",
   "/robots.txt",
+  SECURITY_TXT_PATH,
   // AA-939: the invitation landing (the person has no account yet). /join/accept and /join/confirm need a session.
   "/join",
   "/join/invite",
@@ -166,6 +174,7 @@ export const ACADEMY_EXTRA_PATHS = [
   "/favicon.ico",
   "/icon.svg",
   "/robots.txt",
+  SECURITY_TXT_PATH,
   "/prefs/locale",
 ] as const;
 
