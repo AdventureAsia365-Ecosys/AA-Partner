@@ -5,29 +5,62 @@
 // S270: the currency select offers USD plus the currencies AA has an approved FX rate for today (GET
 // /crm/v1/aa/tariff/currencies, read first: the API caches it); a ?currency= that is not offered shows USD with a
 // role=status notice, and a 422 aa_tariff_invalid says "pick another currency", never "AA cannot be reached".
+// AA-1188: "Priced tours N of M", the notes under the table (twin share + single supplement, the group size AA quotes
+// on request, early booking, departures with their own price) and "Booking conditions with AA" (GET
+// /crm/v1/aa/terms) below the prices; the sidebar lists the page under Money (D10).
 import { EmptyState, ErrorState, K } from "@/app/_kit";
 import { AaTariffTable, AaTariffToolbar } from "@/components/aaTariff/AaTariffView";
+import { AaTermsPanel } from "@/components/aaTariff/AaTermsPanel";
 import { PageTitle } from "@/components/PageTitle";
 import {
+  coverageText,
   offeredCurrencies,
   pickCurrency,
   seesAaTariff,
   TARIFF_CURRENCIES_PATH,
   TARIFF_TIMEOUT_MS,
   tariffErrorKey,
+  tariffNotes,
   type TariffCurrencies,
   type TariffView,
 } from "@/lib/aaTariff";
+import { AA_TERMS_PATH, type AaTerms } from "@/lib/aaTerms";
 import { crmCall } from "@/lib/crmApi";
 import { crmContext } from "@/lib/crmContext";
-import { formatDate } from "@/lib/dates";
-import { fmt, t, type MessageKey } from "@/lib/i18n";
+import { formatDate, type DateLocale } from "@/lib/dates";
+import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { serverContext } from "@/lib/serverContext";
 
 export const dynamic = "force-dynamic";
 
 function tierLabel(code: string): string {
   return code ? code.charAt(0).toUpperCase() + code.slice(1).replace(/_/g, " ") : "";
+}
+
+/** The prices once AA answered (AA-1188: the coverage line and the notes under the table). */
+function TariffBody({ view, lang, locale }: { view: TariffView; lang: Lang; locale: DateLocale }) {
+  const tr = (key: string) => t(lang, key as MessageKey);
+  const coverage = coverageText(view, lang);
+  return (
+    <>
+      <p style={{ margin: 0, fontSize: 12.5, color: K.muted }} data-testid="tariff-meta">
+        {fmt(tr("tariff.pricedOn"), { date: formatDate(view.priced_on, locale) })}
+        {view.tier_code ? ` · ${fmt(tr("tariff.tier"), { tier: tierLabel(view.tier_code) })}` : ""}
+        {coverage ? <span data-testid="tariff-coverage">{` · ${coverage}`}</span> : null}
+      </p>
+      {view.truncated && (
+        <p role="status" style={{ margin: 0, fontSize: 12.5, color: K.amberDeep }} data-testid="tariff-truncated">
+          {tr("tariff.truncated")}
+        </p>
+      )}
+      <AaTariffTable items={view.items} lang={lang} locale={locale} />
+      <ul data-testid="tariff-notes" style={{ margin: 0, paddingLeft: 18, fontSize: 12.5, color: K.muted, lineHeight: 1.6 }}>
+        {tariffNotes(view, lang).map((note) => (
+          <li key={note}>{note}</li>
+        ))}
+      </ul>
+    </>
+  );
 }
 
 export default async function AaTariffPage({ searchParams }: { searchParams: Promise<{ currency?: string | string[] }> }) {
@@ -46,10 +79,13 @@ export default async function AaTariffPage({ searchParams }: { searchParams: Pro
   if (!session) return null;
   const offered = offeredCurrencies(await crmCall<TariffCurrencies>(ctx.cfg, session, "GET", TARIFF_CURRENCIES_PATH));
   const { currency, fellBack } = pickCurrency((await searchParams).currency, offered);
-  const view = await crmCall<TariffView>(ctx.cfg, session, "GET", "aa/tariff", {
-    query: new URLSearchParams({ currency }),
-    timeoutMs: TARIFF_TIMEOUT_MS,
-  });
+  const [view, terms] = await Promise.all([
+    crmCall<TariffView>(ctx.cfg, session, "GET", "aa/tariff", {
+      query: new URLSearchParams({ currency }),
+      timeoutMs: TARIFF_TIMEOUT_MS,
+    }),
+    crmCall<AaTerms>(ctx.cfg, session, "GET", AA_TERMS_PATH),
+  ]);
   return (
     // minmax(0, 1fr): the table's min width never stretches the page's grid (S254 lesson).
     <div data-testid="crm-aa-tariff" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12, maxWidth: 1200 }}>
@@ -68,19 +104,9 @@ export default async function AaTariffPage({ searchParams }: { searchParams: Pro
           <ErrorState message={tr(tariffErrorKey(view.detail))} />
         </div>
       ) : (
-        <>
-          <p style={{ margin: 0, fontSize: 12.5, color: K.muted }} data-testid="tariff-meta">
-            {fmt(tr("tariff.pricedOn"), { date: formatDate(view.data.priced_on, ctx.locale) })}
-            {view.data.tier_code ? ` · ${fmt(tr("tariff.tier"), { tier: tierLabel(view.data.tier_code) })}` : ""}
-          </p>
-          {view.data.truncated && (
-            <p role="status" style={{ margin: 0, fontSize: 12.5, color: K.amberDeep }} data-testid="tariff-truncated">
-              {tr("tariff.truncated")}
-            </p>
-          )}
-          <AaTariffTable items={view.data.items} lang={ctx.lang} locale={ctx.locale} />
-        </>
+        <TariffBody view={view.data} lang={ctx.lang} locale={ctx.locale} />
       )}
+      <AaTermsPanel terms={terms.ok ? terms.data : null} lang={ctx.lang} />
     </div>
   );
 }

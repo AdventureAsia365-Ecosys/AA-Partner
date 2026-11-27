@@ -95,7 +95,7 @@ export const TOURS_LIB_MESSAGES = defineMessages(
   {
     days: (n: number) => `${n} day${n === 1 ? "" : "s"}`,
     nights: (n: number) => `${n} night${n === 1 ? "" : "s"}`,
-    priceNote: (pax: number) => `Suggested price for ${pax} traveller${pax === 1 ? "" : "s"}. Your advisor confirms the final price.`,
+    priceNote: (pax: number) => `Suggested retail (RRP) for ${pax} traveller${pax === 1 ? "" : "s"}, not your agency's price.`,
     durAll: "Any length",
     dur13: "1–3 days",
     dur47: "4–7 days",
@@ -128,7 +128,7 @@ export const TOURS_LIB_MESSAGES = defineMessages(
   {
     days: (n: number) => `${n} ngày`,
     nights: (n: number) => `${n} đêm`,
-    priceNote: (pax: number) => `Giá đề xuất cho ${pax} khách. Tư vấn viên sẽ xác nhận giá cuối cùng.`,
+    priceNote: (pax: number) => `Giá bán lẻ gợi ý (RRP) cho ${pax} khách, không phải giá dành cho đại lý.`,
     durAll: "Mọi độ dài",
     dur13: "1–3 ngày",
     dur47: "4–7 ngày",

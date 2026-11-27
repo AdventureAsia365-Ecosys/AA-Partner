@@ -249,10 +249,15 @@ class BookingClient:
             raise BookingUnavailable("booking_contract")
         return resp.body, _attachment_name(_header(resp, "content-disposition"))
 
+    async def terms(self, tenant_id: uuid.UUID) -> dict[str, Any]:
+        """AA-1188 (contract 1.3 ``GET /terms``, 1.12 ``quote_rules``): the agency's booking conditions with AA (read
+        with :func:`app.booking.contract.partner_terms`)."""
+        return await self._call("GET", "/terms", READ, tenant_id)
+
     async def invoices(self, tenant_id: uuid.UUID, *, limit: int = 100, offset: int = 0) -> dict[str, Any]:
         """AA-1068 (contract 1.5 ``GET /invoices``): one page of the agency's own AA invoices, newest first (read with
-        :func:`app.booking.contract.agency_invoice_page`). Booking answers ``no-store``: the CRM keeps only the copy
-        of ``crm.aa_invoice_cache``."""
+        :func:`app.booking.invoice_contract.agency_invoice_page`). Booking answers ``no-store``: the CRM keeps only the
+        copy of ``crm.aa_invoice_cache``."""
         query = {"limit": str(limit), "offset": str(offset)}
         return await self._call("GET", "/invoices", READ, tenant_id, query=query)
 

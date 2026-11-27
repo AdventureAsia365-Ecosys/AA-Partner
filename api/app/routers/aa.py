@@ -12,6 +12,7 @@ Route                                          What                             
                                                                                               confirm: owner, agent)
 ``GET  /aa/tariff``                            the agency's AA tariff (JSON or Booking's CSV)  owner, agent
 ``GET  /aa/tariff/currencies``                 the currencies AA prices the tariff in today    owner, agent
+``GET  /aa/terms``                             the agency's booking conditions with AA (live)  every role
 =============================================  =============================================  ======================
 
 Every ask is queued in ``crm.aa_request`` and sent by ``crm_booking_sync`` (:mod:`app.booking.sync`); the answer is
@@ -28,6 +29,11 @@ reads in flight per process and one per agency, else 429 ``aa_tariff_busy``; a f
 S270: ``GET /aa/tariff/currencies`` (same gate, no audit event: no price) answers ``{currencies, rate_date, checked}``,
 USD plus the quote currencies Booking has an approved FX rate for today (:class:`app.booking.tariff.TariffCurrencies`,
 10 min per process); Booking down or not connected -> every quote currency with ``checked: false``, never a 5xx.
+
+AA-1188: ``GET /aa/terms`` (booking.b2b.v1 ``GET /terms``, :mod:`app.booking.aa_terms`): the deposit %, balance days,
+default cancellation fee tiers, AA's approved clauses and quote rules (quote validity, group size quoted on request,
+child and infant ages). Every role (no price, no margin: what any agency member needs before quoting AA), read live
+after the membership check, ``Cache-Control: no-store``.
 """
 
 from __future__ import annotations
@@ -43,7 +49,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
-from app.booking import aa_lines, products
+from app.booking import aa_lines, aa_terms, products
 from app.booking import tariff as aa_tariff
 from app.catalog import store as catalog
 from app.db import request_pool
@@ -205,3 +211,17 @@ async def get_tariff_currencies(request: Request, caller: CallerDep, tenant_id: 
         return aa_tariff.static_currencies()
     # Booking is asked after the membership check, outside the transaction (no connection held while it answers).
     return await offer.get(tenant_id, dt.datetime.now(dt.UTC).date())
+
+
+@router.get("/aa/terms")
+async def get_aa_terms(request: Request, response: Response, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
+    """AA-1188: the agency's booking conditions with AA (payment, cancellation fees, clauses, quote rules)."""
+    client = getattr(request.app.state, "booking_client", None)
+    if client is None:
+        raise Unavailable("booking_not_configured", "AA products are not connected on this environment")
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_VIEW):
+        pass  # the membership and the role; nothing is read here
+    # Booking is called after the membership check, outside the transaction (no connection held while it answers).
+    response.headers["Cache-Control"] = NO_STORE
+    return await aa_terms.read(client, tenant_id)

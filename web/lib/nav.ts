@@ -55,6 +55,7 @@ export const SECTIONS: readonly Section[] = [
   { key: "payments", path: "/payments", group: "money", label: "nav.payments", icon: "wallet", roles: ALL, empty: { title: "section.payments.title", body: "section.payments.body" } }, // AA-952
   { key: "bookings", path: "/bookings", group: "money", label: "nav.bookings", icon: "ticket", roles: ALL, empty: { title: "section.bookings.title", body: "section.bookings.body" } }, // AA-944
   { key: "aa-bookings", path: "/aa-bookings", group: "money", label: "nav.aaBookings", icon: "ticket", roles: NO_ASSISTANT }, // AA-1068
+  { key: "aa-tariff", path: "/aa-tariff", group: "money", label: "nav.aaTariff", icon: "book", roles: NO_ASSISTANT }, // AA-1030; sidebar AA-1188 (D10)
   { key: "commissions", path: "/commissions", group: "money", label: "nav.commissions", icon: "percent", roles: NO_ASSISTANT, empty: { title: "section.commissions.title", body: "section.commissions.body" } }, // AA-957
   { key: "partners", path: "/partners", group: "money", label: "nav.partners", icon: "users", roles: ALL }, // AA-1071
   { key: "reports", path: "/reports", group: "grow", label: "nav.reports", icon: "chart", roles: ALL }, // AA-966

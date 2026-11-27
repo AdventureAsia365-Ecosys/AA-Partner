@@ -94,7 +94,9 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   (the AA tour cache) through `app/catalog/`, with the same M2M client (section "CRM-19" below). AA-951: `catalog.http.v1`
   1.2 `/aa-content` (AA prep packs and starter templates, AA-977) into `crm.aa_content` (section "CRM-22" below).
   AA-1030: `booking.b2b.v1` is consumed up to **1.4** (`GET /tariff`, the agency's AA tariff; section "CRM-19",
-  "AA prices"); AA-1152: **1.11** `GET /add-ons` (the "AA add-on" drawer and the planner prices, section "CRM-19").
+  "AA prices"); AA-1152: **1.11** `GET /add-ons` (the "AA add-on" drawer and the planner prices, section "CRM-19");
+  AA-1188: **1.12** (the tariff's twin share, availability and coverage fields, `GET /terms` `quote_rules`; "AA prices"
+  and "Booking conditions with AA").
   AA-1093 stage 2: `tenant.erasure.v1` 1.0 (AA-CIS-App, byte copy in `docs/contracts/`): the CIS tenant offboarding
   erasure saga's requests (`GET /tenant/v1/erasure-requests`) and the CRM's reports (`POST .../reports`), scope
   `cis.tenant/erasure` (section "CIS tenant erasure saga, stage 2" below).
@@ -973,8 +975,10 @@ original CIS commit). P2a moves the code only:
   tour and the (bulk) rewrite with the Billing quota note (`lib/tours.ts` `rewriteQuotaNote` over `usageMeter`). View
   "In my catalog" (`?view=mine`): CIS `GET /v1/marketplace` (price, status, version); a card opens the tour in My Tours.
   AA-1029: the "All tours" card and drawer show AA-Booking's "from" price (contract `price.from.v1`, the pool row's
-  `from_price`, read by CIS) as "From US$X per person" with the TripPlanner caveat, and no price without one; the
-  source price text `price_raw` is never shown as a price (root ADR 0005 d7). AA-Partner reads no `booking.*` itself.
+  `from_price`, read by CIS) as "From US$X per person" with the caveat "Suggested retail (RRP) for 2 travellers, not
+  your agency's price" (AA-1188, D10); AA-1188: "In my catalog" shows the same line from the rollup's `from_price`, and
+  every view shows "Price on request" when a tour has no from price; the source price text `price_raw` is never shown
+  as a price (root ADR 0005 d7) and CIS no longer sends it to an agency (AA-1188, DB-01). AA-Partner reads no `booking.*` itself.
   `/portal/tours/marketplace` and `/portal/marketplace` answer 308 to `?view=mine`. Activity / intensity filters wait
   for the CIS pool API to expose them (implementation notes AA-671).
 - **The AA-CIS-App copy** of `portal/` was deleted at the P2b clean-up (a CIS guard keeps it gone). Portal changes are
@@ -2462,6 +2466,23 @@ hold / feed only, "from"-price warning, AA-aware Lost reasons, outage queue); mi
   is `aa_tariff_invalid` -> "AA does not price in this currency today. Pick another currency." The BFF passes the
   API's `Retry-After` on for a 429 or 503 only when it is 1 to 4 digits (`lib/retryAfter.ts`; `lib/proxyResponse.ts`
   still forwards Content-Type only), and the download's busy message names those seconds.
+  AA-1188 (`booking.b2b.v1` 1.12, S295 decisions D5 / D10): the price per person is the **twin share** and the page
+  shows the single supplement, child and infant prices beside it (`b2b_single_supplement_per_person`,
+  `b2b_child_price_per_person`, `b2b_infant_price`: B2B names, stripped by the margin serializer like the adult
+  price); a band that reaches AA's group size (`availability: on_request`, the 8-10 and 11+ bands with AA's policy
+  value 9) reads "On request" with the computed amount kept as a guide; a row whose dates hold a departure with its own
+  price adjustment says so (`departure_adjusted`); the meta line adds "Priced tours N of M" (`tours_priced` /
+  `catalog_tours`) and notes under the table say twin share + supplement, the group size, the early-booking days and
+  that a departure can carry its own price. The reader (`contract.tariff`) takes an older answer without these fields
+  as before. The page sits in the sidebar's **Money** group ("AA prices", owner and agent, `lib/nav.ts`).
+- **Booking conditions with AA** (AA-1188, `booking.b2b.v1` 1.3 `GET /terms` + 1.12 `quote_rules`;
+  `app/booking/aa_terms.py`, `contract.partner_terms`): `GET /crm/v1/aa/terms` (every role: no price and no margin;
+  membership checked by `tenant_tx`, then Booking live, `Cache-Control: no-store`, no copy kept) answers the deposit %,
+  balance days and invoice due days, the default cancellation fee tiers (largest first), AA's approved clauses (title,
+  text, free-cancel days), the quote rules (quote validity days, group size quoted on request, child and infant ages)
+  and `holds_paused`. Errors as the tariff: 409 `aa_partner_not_active`, 422 `aa_terms_refused`, 503
+  `booking_unavailable` + `Retry-After`. The AA prices page shows it under the table (`AaTermsPanel`, a server-only
+  read; a failed read shows one line and never hides the prices).
 - **AA-aware Lost**: `GET /trips/{id}/lines` answers `lost_reason_hint` (declined -> `aa_on_request_declined`, or
   `aa_sold_out` when Booking said sold out); the Lost picker pre-selects it. Lost (and cancel) holds the waiting
   quote / requote / hold / refresh requests back by the Undo window and queues a release of every line AA has not

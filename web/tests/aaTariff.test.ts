@@ -27,6 +27,7 @@ import {
   type TariffCurrencies,
   type TariffView,
 } from "@/lib/aaTariff";
+import type { AaTerms } from "@/lib/aaTerms";
 import { passedRetryAfter, retryAfterSeconds } from "@/lib/retryAfter";
 import { MESSAGES } from "@/lib/i18n";
 import { refreshCookie, sessionCookie } from "@/lib/session";
@@ -40,7 +41,9 @@ const state: {
   answer: { ok: true; status: number; data: TariffView } | { ok: false; status: number; detail: string };
   currencies: { ok: true; status: number; data: TariffCurrencies } | { ok: false; status: number; detail: string };
   calls: Array<{ path: string; query?: string; timeoutMs?: number }>;
+  terms: { ok: true; status: number; data: AaTerms } | { ok: false; status: number; detail: string };
 } = {
+  terms: { ok: false, status: 503, detail: "booking_unavailable" },
   role: "owner",
   permissions: { aa_tariff_view: true },
   answer: { ok: true, status: 200, data: tariffView() },
@@ -63,6 +66,7 @@ vi.mock("@/lib/serverContext", () => ({ serverContext: async () => ({ session: {
 vi.mock("@/lib/crmApi", () => ({
   crmCall: async (_cfg: unknown, _s: unknown, _m: string, path: string, opts?: { query?: URLSearchParams; timeoutMs?: number }) => {
     state.calls.push({ path, query: opts?.query?.toString(), timeoutMs: opts?.timeoutMs });
+    if (path === "aa/terms") return state.terms; // AA-1188: Booking conditions with AA (tests/aa1188AgencyPrices.test.ts)
     return path === "aa/tariff/currencies" ? state.currencies : state.answer;
   },
 }));
@@ -144,6 +148,7 @@ describe("the AA prices page (layout fixture)", () => {
     expect(state.calls).toEqual([
       { path: TARIFF_CURRENCIES_PATH, query: undefined, timeoutMs: undefined },
       { path: "aa/tariff", query: "currency=EUR", timeoutMs: TARIFF_TIMEOUT_MS },
+      { path: "aa/terms", query: undefined, timeoutMs: undefined },
     ]);
     expect(TARIFF_TIMEOUT_MS).toBeGreaterThan(25_000);
     expect(html).toContain('data-testid="crm-aa-tariff"');
@@ -309,7 +314,7 @@ describe("the currencies AA prices in today (S270)", () => {
 
   it("shows USD with a role=status notice for a ?currency= AA does not price in, and never asks the API for it", async () => {
     const html = await page("AUD");
-    expect(state.calls.map((c) => c.query)).toEqual([undefined, "currency=USD"]);
+    expect(state.calls.filter((c) => c.path !== "aa/terms").map((c) => c.query)).toEqual([undefined, "currency=USD"]);
     expect(html).toMatch(/<p role="status"[^>]*data-testid="tariff-currency-fallback"[^>]*>AA does not price in AUD today, so prices are shown in USD\.<\/p>/);
     expect(html).toContain("388.00 USD");
   });

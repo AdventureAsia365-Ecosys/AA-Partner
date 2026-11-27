@@ -522,6 +522,14 @@ class TariffItem:
     agency_discount_pct: Decimal
     rrp_per_person: Decimal | None
     rrp_currency: str | None
+    # 1.7 (AA-1075): sell prices by age band and room, in the tariff currency (None = Booking did not price it).
+    child_price_per_person: Decimal | None = None
+    infant_price: Decimal | None = None
+    single_supplement_per_person: Decimal | None = None
+    # 1.12 (AA-1188): available | on_request (a band that reaches AA's group size); True when a departure inside the
+    # row's dates carries a price adjustment. A 1.11 answer has neither: available, False.
+    availability: str = "available"
+    departure_adjusted: bool = False
 
 
 @dataclass(frozen=True)
@@ -534,6 +542,25 @@ class Tariff:
     rate_date: dt.date
     truncated: bool
     items: tuple[TariffItem, ...]
+    # 1.12 (AA-1188): AA's group size quoted on request, its early-booking days, the tours with a priced row and the
+    # tours AA serves (None when the answer has no such field: a 1.11 Booking, or a one-tour read for catalog_tours).
+    group_on_request_min_pax: int | None = None
+    early_booking_days: int | None = None
+    tours_priced: int | None = None
+    catalog_tours: int | None = None
+
+
+TARIFF_AVAILABILITY = frozenset({"available", "on_request"})
+
+
+def _price_or_none(item: dict[str, Any], key: str, currency: str) -> Decimal | None:
+    """A 1.7 sell price of a tariff row: None when absent or null, else a non-negative amount in the tariff currency."""
+    if item.get(key) is None:
+        return None
+    amount, cur = money(item.get(key), key)
+    if cur != currency or amount < 0:
+        raise ContractError(f"{key} is not a non-negative amount in the tariff currency")
+    return amount
 
 
 def _tariff_item(value: Any, currency: str) -> TariffItem:
@@ -577,7 +604,26 @@ def _tariff_item(value: Any, currency: str) -> TariffItem:
         agency_discount_pct=discount,
         rrp_per_person=rrp_amount,
         rrp_currency=rrp_currency,
+        child_price_per_person=_price_or_none(item, "child_price_per_person", currency),
+        infant_price=_price_or_none(item, "infant_price", currency),
+        single_supplement_per_person=_price_or_none(item, "single_supplement_per_person", currency),
+        availability=_availability(item),
+        departure_adjusted=_flag(item, "departure_adjusted"),
     )
+
+
+def _availability(item: dict[str, Any]) -> str:
+    value = item.get("availability", "available")
+    if value not in TARIFF_AVAILABILITY:
+        raise ContractError("availability is unknown")
+    return value
+
+
+def _flag(item: dict[str, Any], key: str) -> bool:
+    value = item.get(key, False)
+    if not isinstance(value, bool):
+        raise ContractError(f"{key} is not a boolean")
+    return value
 
 
 def tariff(data: Any, currency: str | None = None) -> Tariff:
@@ -611,6 +657,10 @@ def tariff(data: Any, currency: str | None = None) -> Tariff:
         rate_date=_date(fx.get("rate_date"), "fx.rate_date"),
         truncated=truncated,
         items=tuple(_tariff_item(x, tariff_currency) for x in items),
+        group_on_request_min_pax=_count_or_none(body, "group_on_request_min_pax"),
+        early_booking_days=_count_or_none(body, "early_booking_days", minimum=0),
+        tours_priced=_count_or_none(body, "tours_priced", minimum=0),
+        catalog_tours=_count_or_none(body, "catalog_tours", minimum=0),
     )
 
 
@@ -644,152 +694,103 @@ def fx_rates(data: Any, on: dt.date) -> FxRates:
     return FxRates(on=on, currencies=frozenset(currencies - {"USD"}))
 
 
-# ── 1.5 (AA-1037): the agency's AA invoices and billing status (AA-1068, the "Bookings with AA" page) ───────────────
-_INVOICE_NO = re.compile(r"^AA[ST]-\d{4}-\d{6}$")
-_INVOICE_AMOUNT = re.compile(r"^-?\d+\.\d{2}$")
-INVOICE_KINDS = frozenset({"saas", "settlement"})
-INVOICE_STATUSES = frozenset({"issued", "paid", "void"})
-CREDIT_STATUSES = frozenset({"ok", "warn", "past_due"})
-LINE_ROLES = frozenset({"subscription", "extra_seats", "deposit", "balance", "full", "cancellation_fee", "adjustment"})
+# ── AA-1188: GET /terms (contract 1.3, 1.7 PaymentTerms.scope, 1.12 quote_rules) ─────────────────────────────────────
+_PCT_TEXT = re.compile(r"^\d+(\.\d{1,2})?$")
+_CLAUSE_CODE = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
+TERMS_SCOPES = frozenset({"agency_tour", "tour", "agency", "default"})
+MAX_CLAUSES = 50  # technical-constant: a bound on what the reader accepts from Booking, not a business rule
+MAX_TIERS = 20  # technical-constant: booking.b2b.v1 CancellationPolicy.tiers maxItems
 
 
-@dataclass(frozen=True)
-class AgencyInvoiceSummary:
-    number: str
-    invoice_kind: str
-    status: str
-    currency: str
-    total: Decimal
-    balance: Decimal
-    issued_on: dt.date
-    due_on: dt.date
-    overdue_days: int
-
-
-@dataclass(frozen=True)
-class AgencyInvoiceLine:
-    line_no: int
-    line_role: str
-    description: str
-    amount: Decimal
-    hold_id: str | None
-    booking_id: str | None
-    voided: bool
-
-
-@dataclass(frozen=True)
-class AgencyInvoice:
-    summary: AgencyInvoiceSummary
-    lines: tuple[AgencyInvoiceLine, ...]
-    payments: tuple[tuple[dt.date, Decimal, str], ...]
-    payment_instructions: str | None
-    invoice_inbox: str | None
-
-
-@dataclass(frozen=True)
-class BillingStatus:
-    status: str
-    holds_paused: bool
-    overdue_invoices: int
-    oldest_overdue_days: int
-    overdue_amount: tuple[tuple[Decimal, str], ...]
-    paid_through: dt.date | None
-
-
-def _enum(data: dict[str, Any], key: str, allowed: frozenset[str]) -> str:
+def _int_in(data: dict[str, Any], key: str, low: int, high: int) -> int:
     value = data.get(key)
-    if not isinstance(value, str) or value not in allowed:
-        raise ContractError(f"{key} is unknown")
+    if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
+        raise ContractError(f"{key} is missing or malformed")
     return value
 
 
-def _invoice_summary(value: Any) -> AgencyInvoiceSummary:
-    data = _obj(value, "invoice")
-    overdue = data.get("overdue_days")
-    if not isinstance(overdue, int) or isinstance(overdue, bool) or overdue < 0:
-        raise ContractError("overdue_days is not a count")
-    return AgencyInvoiceSummary(
-        number=_str(data, "number", _INVOICE_NO),
-        invoice_kind=_enum(data, "invoice_kind", INVOICE_KINDS),
-        status=_enum(data, "status", INVOICE_STATUSES),
-        currency=_str(data, "currency", _CURRENCY),
-        total=_decimal(data.get("total"), _INVOICE_AMOUNT, "total"),
-        balance=_decimal(data.get("balance"), _INVOICE_AMOUNT, "balance"),
-        issued_on=_date(data.get("issued_on"), "issued_on"),
-        due_on=_date(data.get("due_date"), "due_date"),
-        overdue_days=min(overdue, 36500),
-    )
+def _payment(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    pay = _obj(value, "payment")
+    scope = pay.get("scope")
+    if scope is not None and scope not in TERMS_SCOPES:
+        raise ContractError("payment.scope is unknown")
+    return {
+        "deposit_pct": _str(pay, "deposit_pct", _PCT_TEXT),
+        "balance_days_before_departure": _int_in(pay, "balance_days_before_departure", 0, 3650),
+        "settlement_due_days": _int_in(pay, "settlement_due_days", 0, 3650),
+        "scope": scope,
+    }
 
 
-def agency_invoice_page(data: Any) -> tuple[list[AgencyInvoiceSummary], int]:
-    """``GET /invoices``: the page's invoices and the total that match (a broken item fails the page)."""
-    page = _obj(data, "invoice page")
-    items = page.get("items")
-    total = page.get("total")
-    if not isinstance(items, list) or not isinstance(total, int) or isinstance(total, bool) or total < 0:
-        raise ContractError("items or total is malformed")
-    return [_invoice_summary(item) for item in items], total
+def _cancellation(value: Any) -> list[dict[str, Any]] | None:
+    """The default policy's fee tiers, the largest ``min_days`` first (None: no approved policy in force)."""
+    if value is None:
+        return None
+    tiers = _obj(value, "cancellation_policy").get("tiers")
+    if not isinstance(tiers, list) or not 1 <= len(tiers) <= MAX_TIERS:
+        raise ContractError("cancellation_policy.tiers is malformed")
+    out = [
+        {"min_days": _int_in(t, "min_days", 0, 730), "fee_pct": _str(t, "fee_pct", _PCT_TEXT)}
+        for t in (_obj(x, "tier") for x in tiers)
+    ]
+    return sorted(out, key=lambda t: t["min_days"], reverse=True)
 
 
-def agency_invoice(data: Any) -> AgencyInvoice:
-    """``GET /invoices/{number}``: the invoice with its lines, approved payments and the issuer's payment text."""
-    body = _obj(data, "invoice")
-    raw_lines, raw_payments = body.get("lines"), body.get("payments")
-    if not isinstance(raw_lines, list) or not isinstance(raw_payments, list):
-        raise ContractError("lines or payments is not a list")
-    lines = []
-    for item in raw_lines:
-        line = _obj(item, "line")
-        number = line.get("line_no")
-        if not isinstance(number, int) or isinstance(number, bool) or number < 1:
-            raise ContractError("line_no is not a count")
-        voided = line.get("voided")
-        if not isinstance(voided, bool):
-            raise ContractError("voided is not a boolean")
-        description = line.get("description")
-        lines.append(
-            AgencyInvoiceLine(
-                line_no=number,
-                line_role=_enum(line, "line_role", LINE_ROLES),
-                description=description[:300] if isinstance(description, str) else "",
-                amount=_decimal(line.get("amount"), _INVOICE_AMOUNT, "amount"),
-                hold_id=_str(line, "hold_id", _ID, optional=True),
-                booking_id=_str(line, "booking_id", _ID, optional=True),
-                voided=voided,
-            )
-        )
-    payments = []
-    for item in raw_payments:
-        pay = _obj(item, "payment")
-        payments.append(
-            (_date(pay.get("received_on"), "received_on"),
-             _decimal(pay.get("amount"), _INVOICE_AMOUNT, "payment.amount"), _str(pay, "currency", _CURRENCY))
-        )  # fmt: skip
-    issuer = body.get("issuer")
-    instructions = inbox = None
-    if isinstance(issuer, dict):
-        text = issuer.get("payment_instructions")
-        instructions = text[:2000] if isinstance(text, str) else None
-        mail = issuer.get("invoice_inbox")
-        inbox = mail[:254] if isinstance(mail, str) else None
-    return AgencyInvoice(_invoice_summary(body), tuple(lines), tuple(payments), instructions, inbox)
+def _clause(value: Any) -> dict[str, Any]:
+    clause = _obj(value, "clause")
+    title, body = clause.get("title"), clause.get("body")
+    if not isinstance(title, str) or not 1 <= len(title) <= 120:
+        raise ContractError("clause.title is malformed")
+    if not isinstance(body, str) or not 1 <= len(body) <= 4000:
+        raise ContractError("clause.body is malformed")
+    free = clause.get("free_cancel_days")
+    if free is not None:
+        free = _int_in(clause, "free_cancel_days", 0, 3650)
+    return {
+        "code": _str(clause, "code", _CLAUSE_CODE),
+        "title": title,
+        "body": body,
+        "free_cancel_days": free,
+        "version": _int_in(clause, "version", 1, 10_000),
+    }
 
 
-def billing_status(data: Any) -> BillingStatus:
-    """``GET /billing-status``: the credit status (holds paused while past_due) and the software fee's paid day."""
-    body = _obj(data, "billing status")
-    paused = body.get("holds_paused")
+def _quote_rules(value: Any) -> dict[str, Any] | None:
+    """1.12: None when absent (a 1.11 Booking) or null (a policy value without an approved version)."""
+    if value is None:
+        return None
+    rules = _obj(value, "quote_rules")
+    bands = _obj(rules.get("age_bands"), "quote_rules.age_bands")
+    child, infant = _int_in(bands, "child_age_max", 2, 17), _int_in(bands, "infant_age_max", 0, 4)
+    if infant >= child:
+        raise ContractError("quote_rules.age_bands: infant_age_max is not below child_age_max")
+    return {
+        "quote_validity_days": _int_in(rules, "quote_validity_days", 1, 365),
+        "group_on_request_min_pax": _int_in(rules, "group_on_request_min_pax", 1, 500),
+        "age_bands": {"child_age_max": child, "infant_age_max": infant},
+    }
+
+
+def partner_terms(data: Any) -> dict[str, Any]:
+    """The agency's terms with AA (``PartnerTerms``) as the CRM shows them: payment terms, the default cancellation
+    fee tiers, AA's approved clauses, the quote rules (1.12) and whether holds are paused for overdue invoices. The
+    credit amounts are not read (the CRM's AA invoices page shows them). A field the CRM shows that breaks the
+    contract fails the whole answer (nothing half-shown)."""
+    body = _obj(data, "terms")
+    credit = _obj(body.get("credit"), "credit")
+    paused = credit.get("holds_paused")
     if not isinstance(paused, bool):
-        raise ContractError("holds_paused is not a boolean")
-    amounts = body.get("overdue_amount")
-    if not isinstance(amounts, list):
-        raise ContractError("overdue_amount is not a list")
-    paid = body.get("paid_through")
-    return BillingStatus(
-        status=_enum(body, "status", CREDIT_STATUSES),
-        holds_paused=paused,
-        overdue_invoices=_count(body, "overdue_invoices", 0),
-        oldest_overdue_days=_count(body, "oldest_overdue_days", 0),
-        overdue_amount=tuple(money(a, "overdue_amount") for a in amounts),
-        paid_through=None if paid is None else _date(paid, "paid_through"),
-    )
+        raise ContractError("credit.holds_paused is not a boolean")
+    clauses = body.get("clauses")
+    if not isinstance(clauses, list) or len(clauses) > MAX_CLAUSES:
+        raise ContractError("clauses is malformed")
+    return {
+        "as_of": _day(body.get("as_of"), "as_of").isoformat(),
+        "payment": _payment(body.get("payment")),
+        "cancellation_tiers": _cancellation(body.get("cancellation_policy")),
+        "clauses": [_clause(c) for c in clauses],
+        "quote_rules": _quote_rules(body.get("quote_rules")),
+        "holds_paused": paused,
+    }

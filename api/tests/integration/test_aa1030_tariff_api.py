@@ -129,3 +129,46 @@ async def test_the_tariff_currencies_route_by_role(app_pool: asyncpg.Pool, migra
     finally:
         await app.state.db.close()
     assert await _events(app_pool, tenant) == [("denied", "role_forbidden", None)]
+
+
+async def test_the_aa_terms_route_for_every_role(app_pool: asyncpg.Pool, migrated_app_dsn: str) -> None:
+    """AA-1188: ``GET /crm/v1/aa/terms`` through the real ``tenant_tx()`` as crm_app: every role reads AA's booking
+    conditions (no price, no margin), ``no-store``; a member of another agency is refused before Booking is asked; an
+    agency Booking does not know is 409 ``aa_partner_not_active``."""
+    tenant, people = await _agency(app_pool, *ROLES)
+    _, outsiders = await _agency(app_pool, "owner")
+    who = {role: people[i][0] for i, role in enumerate(ROLES)}
+    fake = FakeBooking()
+    pools = LocalPools()
+    settings = pools.settings(database_url=migrated_app_dsn)
+    app = create_app(settings, verifier=pools.verifier(settings), keys=object(), booking_client=booking_client(fake))
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://crm.test") as client:
+            for role in ROLES:
+                token = pools.partner_web(sub=who[role].sub)
+                r = await client.get(
+                    "/crm/v1/aa/terms", headers={"Authorization": f"Bearer {token}", "X-AA-Tenant-Id": str(tenant)}
+                )
+                assert r.status_code == 200, (role, r.text)
+                assert r.headers["cache-control"] == "no-store"
+                body = r.json()
+                assert (
+                    body["payment"]["deposit_pct"] == "30.00" and body["quote_rules"]["group_on_request_min_pax"] == 9
+                )
+                assert not [k for k in body if "b2b" in k or "net" in k]
+            assert fake.calls["GET terms"] == 3 and fake.tenants[-1] == str(tenant)
+            # An owner of another agency asking for this one: refused by the membership check, Booking not asked.
+            token = pools.partner_web(sub=outsiders[0][0].sub)
+            r = await client.get(
+                "/crm/v1/aa/terms", headers={"Authorization": f"Bearer {token}", "X-AA-Tenant-Id": str(tenant)}
+            )
+            assert r.status_code in (403, 404) and fake.calls["GET terms"] == 3
+            fake.tariff_refusal = "unknown_partner"
+            token = pools.partner_web(sub=who["owner"].sub)
+            r = await client.get(
+                "/crm/v1/aa/terms", headers={"Authorization": f"Bearer {token}", "X-AA-Tenant-Id": str(tenant)}
+            )
+            assert (r.status_code, r.json()["detail"]) == (409, "aa_partner_not_active")
+    finally:
+        await app.state.db.close()

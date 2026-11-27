@@ -149,7 +149,7 @@ export function TourDetail({ tour, status }: { tour: PoolTour; status: CardStatu
           {duration && <Chip icon={<Clock size={11} aria-hidden />}>{duration}</Chip>}
           {tour.intensity && <Chip icon={<Gauge size={11} aria-hidden />}>{t("intensity", intensityLabel(tour.intensity, lang))}</Chip>}
         </div>
-        {/* AA-1029: AA-Booking's "from" price (price.from.v1); nothing without one. */}
+        {/* AA-1029: AA-Booking's "from" price (price.from.v1); "Price on request" without one (AA-1188). */}
         <FromPriceLine price={tour.from_price} testId="marketplace-drawer-price" />
         {activities.length > 0 && (
           <div data-testid="marketplace-drawer-activities" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>

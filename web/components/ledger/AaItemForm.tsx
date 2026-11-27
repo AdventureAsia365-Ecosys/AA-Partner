@@ -7,12 +7,12 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
+import { AaFromPriceLine } from "@/components/AaFromPriceLine";
 import { DateInput } from "@/components/DateInput";
 import { aaErrorKey, aaLineBody, belowFromPrice, type AaProduct, type CatalogTour } from "@/lib/aa";
 import { bffSend } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, plural, t, type Lang, type MessageKey } from "@/lib/i18n";
-import { formatMoney } from "@/lib/ledger";
 
 const field: React.CSSProperties = {
   font: "inherit",
@@ -222,11 +222,7 @@ export function AaItemForm({
               <input style={field} inputMode="decimal" value={sell} onChange={(e) => setSell(e.target.value)} data-testid="aa-sell" />
             </label>
           )}
-          {product.from_price && (
-            <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>
-              {fmt(tr("aa.fromPrice"), { price: formatMoney(product.from_price.amount, product.from_price.currency, locale) })}
-            </p>
-          )}
+          <AaFromPriceLine fromPrice={product.from_price} lang={lang} locale={locale} />
           {below && (
             <p role="status" style={{ margin: 0 }} data-testid="aa-from-warning">
               <Badge tone="warning">{tr("aa.belowFrom")}</Badge>

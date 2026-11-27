@@ -25,8 +25,6 @@ export interface PoolTour extends ServedFields {
   published_at: string | null;
   country: string | null;
   duration: string | null;
-  /** The source price text: a reference for AA staff only, never shown as a price (root ADR 0005 d7). */
-  price_raw: string | null;
   /** AA-1029: AA-Booking's public "from" price (contract price.from.v1), or null when Booking has none. Optional: an
    *  older CIS answer has no such field. */
   from_price?: FromPrice | null;
@@ -60,8 +58,11 @@ export interface PickedTour {
   name: string;
   country: string | null;
   duration: string | null;
+  /** AA-1188: the whole-dollar amount of `from_price` when it is in USD, else null (CIS v1_marketplace). */
   price_usd: number | null;
   price_available: boolean;
+  /** AA-1188: AA-Booking's public "from" price (price.from.v1), null without one; absent from an older CIS answer. */
+  from_price?: FromPrice | null;
 }
 
 export interface PickedResponse {
