@@ -477,6 +477,10 @@ export const SERVER_ONLY_ROUTES: readonly BffRoute[] = [
   // S270: the currencies the AA prices page offers (owner / agent, API Action.AA_TARIFF_VIEW); the page reads it on the
   // server before the tariff, the browser never asks for it.
   { method: "GET", pattern: /^aa\/tariff\/currencies$/, tenant: true, card: "AA-1029/AA-1030" },
+  // AA-1188: the agency's booking conditions with AA (payment, cancellation fees, clauses, quote rules), read by the AA
+  // prices page on the server next to the tariff; the API checks the membership (Action.TRIP_VIEW). The browser never
+  // asks for it (S296 live check: the page answered 500 while this line was missing).
+  { method: "GET", pattern: /^aa\/terms$/, tenant: true, card: "AA-1188" },
   // AA-1139: the TripPlanner half of the Content studio's Trip planner page (an agency without the CRM), asked by the
   // studio's own route handler (app/api/studio/trip-planner) with the studio's tenant; the API checks the person's
   // Content studio membership with CIS, never crm.member.
