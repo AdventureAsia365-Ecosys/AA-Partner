@@ -119,7 +119,33 @@ function literalPaths(): { file: string; path: string }[] {
   return found;
 }
 
+/**
+ * Calls the literal scan cannot read: a `/api/tenant/...` literal the scan regex does not parse whole (a `${...}` with a
+ * quote or a space inside, such as `${q ? "?x" : ""}`), or a quoted bare base (`"/api/tenant"`, `"/api/tenant/"`) that a
+ * concatenation or a template would extend out of sight. Either would let a new call escape the checks above.
+ */
+function unreadableCalls(): string[] {
+  const parsed = /["'`]\/api\/tenant\/([^"'`\s]*)["'`]/g;
+  const opened = /["'`]\/api\/tenant\//g;
+  const bareBase = /["'`]\/api\/tenant\/?["'`]/g;
+  const out: string[] = [];
+  for (const file of [...sourceFiles(path.join(WEB, "app")), ...sourceFiles(path.join(WEB, "lib"))]) {
+    if (file.includes(`${path.sep}api${path.sep}tenant${path.sep}`)) continue;
+    const text = readFileSync(file, "utf8");
+    const ok = new Set([...text.matchAll(parsed)].map((m) => m.index));
+    for (const m of text.matchAll(opened)) {
+      if (!ok.has(m.index)) out.push(`${path.relative(WEB, file)}: ${text.slice(m.index, m.index + 80).split("\n")[0]}`);
+    }
+    for (const m of text.matchAll(bareBase)) out.push(`${path.relative(WEB, file)}: bare base ${m[0]}`);
+  }
+  return out;
+}
+
 describe("studio BFF allow-list (AA-1188)", () => {
+  it("every /api/tenant/ call in the web sources is a literal the scan reads whole (no hidden path)", () => {
+    expect(unreadableCalls()).toEqual([]);
+  });
+
   it.each(CALLS)("%s %s is forwarded", (method, p) => {
     expect(matchTenantRoute(method, sub(p))).not.toBeNull();
   });
