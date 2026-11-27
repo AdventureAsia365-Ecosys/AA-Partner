@@ -19,6 +19,8 @@
 //     guard is the app's own (lib/writeGuard.ts, the request's public origin).
 //   - AA-1144 (B6, D7): a facts write of a kind that is not the agency's (booking terms) is refused here, before
 //     CIS (lib/studio/facts.ts factWriteRefusal); CIS refuses it too (and the edit of an older fact of another kind).
+//   - AA-1188 (S295 DB-01): only the (method, path) pairs the studio calls are forwarded (lib/studio/tenantRoutes.ts);
+//     any other path is 404 before the studio token is read or CIS is called (e.g. no raw tour row via /v1/tours/{id}/full).
 import { NextRequest, NextResponse } from "next/server";
 import { requestConfig } from "@/lib/config";
 import { jsonInit } from "@/lib/jsonResponse";
@@ -28,6 +30,7 @@ import { proxyPath } from "@/lib/bffPath";
 import { streamUpstream } from "@/lib/proxyResponse";
 import { studioDownloadHeaders } from "@/lib/studio/downloadHeaders";
 import { factWriteRefusal } from "@/lib/studio/facts";
+import { matchTenantRoute } from "@/lib/studio/tenantRoutes";
 
 /** The body sent upstream: multipart as bytes (brand-guide upload), anything else as JSON text; none on a read. */
 async function upstreamBody(
@@ -49,14 +52,19 @@ async function handler(
   // AA-911 — refuse a cross-site write before any cookie or body is read (lib/sameOrigin.ts).
   const refused = refuseForeignWrite(requestConfig(req), req);
   if (refused) return refused;
-  const auth = await requireStudio(req);
-  if (!auth.ok) return auth.response;
 
   const { path } = await params;
   const upstreamPath = proxyPath(path);
   if (upstreamPath === null) {
     return NextResponse.json({ detail: "Invalid path" }, jsonInit({ status: 400 }));
   }
+  // AA-1188: an unlisted call is 404 before the studio token is read (the CIS tenant API is wider than the studio's use).
+  if (!matchTenantRoute(req.method, upstreamPath)) {
+    return NextResponse.json({ detail: "Not found" }, jsonInit({ status: 404 }));
+  }
+
+  const auth = await requireStudio(req);
+  if (!auth.ok) return auth.response;
   const url = `${auth.cfg.cisApiUrl}/${upstreamPath}${req.nextUrl.search}`;
 
   const headers: Record<string, string> = { Authorization: `Bearer ${auth.token}` };
