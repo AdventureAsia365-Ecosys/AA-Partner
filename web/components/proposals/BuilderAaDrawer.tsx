@@ -12,6 +12,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Badge, Button, K, useHydrated } from "@/app/_kit";
+import { AaFromPriceLine } from "@/components/AaFromPriceLine";
 import { BuilderCatalogueTab } from "@/components/catalogue/BuilderCatalogueTab";
 import { AgencyBlockNote } from "@/components/proposals/AgencyBlockNote";
 import { BuilderAddonTab } from "@/components/proposals/BuilderAddonTab";
@@ -23,7 +24,6 @@ import { bffSend } from "@/lib/bffClient";
 import { builderErrorKey, dayOfBlock, moneyInput, TIERS, type BlockType, type BuilderView, type Tier } from "@/lib/builder";
 import type { DateLocale } from "@/lib/dates";
 import { fmt, plural, t, type Lang, type MessageKey } from "@/lib/i18n";
-import { formatMoney } from "@/lib/ledger";
 
 const field: React.CSSProperties = {
   font: "inherit",
@@ -287,11 +287,7 @@ export function BuilderAaDrawer({
                   <input style={field} inputMode="numeric" value={nights} onChange={(e) => setNights(e.target.value)} />
                 </label>
               )}
-              {product.from_price && (
-                <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>
-                  {fmt(tr("aa.fromPrice"), { price: formatMoney(product.from_price.amount, product.from_price.currency, locale) })}
-                </p>
-              )}
+              <AaFromPriceLine fromPrice={product.from_price} lang={lang} locale={locale} />
               <p style={{ margin: 0, fontSize: 12.5, color: K.muted }}>{tr("builder.aa.quoteHint")}</p>
               <p style={{ margin: 0, fontSize: 12.5, color: K.muted }} data-testid="builder-aa-days-hint">{tr("builder.aa.daysHint")}</p>
             </>

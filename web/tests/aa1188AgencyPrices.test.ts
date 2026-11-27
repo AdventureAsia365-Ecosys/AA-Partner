@@ -58,6 +58,7 @@ vi.mock("@/lib/crmApi", () => ({
 
 const { default: AaTariffPage } = await import("@/app/(crm)/aa-tariff/page");
 const { MyCatalog, pickedFromPrice } = await import("@/app/(studio)/portal/_components/marketplace/MyCatalog");
+const { AaFromPriceLine, aaFromPriceText } = await import("@/components/AaFromPriceLine");
 
 async function page(): Promise<string> {
   return renderToString(await AaTariffPage({ searchParams: Promise.resolve({}) }));
@@ -232,5 +233,18 @@ describe("studio: In my catalog", () => {
   it("is a client component export (rendered by the Marketplace page)", () => {
     expect(typeof MyCatalog).toBe("function");
     expect(renderToStaticMarkup(createElement("span", null, "ok"))).toBe("<span>ok</span>");
+  });
+});
+
+describe("CRM builder drawer and ledger AA item: the from price line", () => {
+  it("shows the from price per person, else \"Price on request\" like the studio", () => {
+    const from = { amount: "425.00", currency: "USD" };
+    expect(aaFromPriceText(from, "en", "en-AU")).toContain("per person");
+    expect(aaFromPriceText(from, "en", "en-AU")).toContain("425");
+    expect(aaFromPriceText(null, "en", "en-AU")).toBe("Price on request.");
+    expect(aaFromPriceText(null, "vi", "vi-VN")).toBe("Giá theo yêu cầu.");
+    const html = renderToStaticMarkup(createElement(AaFromPriceLine, { fromPrice: null, lang: "en", locale: "en-AU" }));
+    expect(html).toContain('data-testid="aa-from-price"');
+    expect(html).toContain("Price on request.");
   });
 });
