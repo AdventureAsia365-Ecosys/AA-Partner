@@ -1,8 +1,8 @@
 name: E2E Dev
 
 # AA-936 (card CRM-08 "Playwright E2E"): the slice on Dev, end to end — the inquiry form on the client host, the card
-# on the agency board, the trip workspace (e2e/tests/slice1.spec.ts). workflow_dispatch only: nothing runs on push or
-# PR. Prerequisites (outside this repo): the Dev web + API deployed with crm-005 applied; the client host live
+# on the agency board, the trip workspace (e2e/tests/slice1.spec.ts). Never on push or PR (dispatch, nightly and
+# after a Dev deploy: AA-1196 below). Prerequisites (outside this repo): the Dev web + API deployed with crm-005 applied; the client host live
 # (AA-CIS-Infra feat/aa-936-client-host); the seeded agency and its e2e owner (python -m app.seed --apply, AA-CIS-Infra
 # tools/identity/crm_dev_identity.py e2e-users); GitHub environment `e2e` with secret E2E_MAIL_ROLE_ARN (the
 # read-only e2e mailbox role, whose trust must list this repo's `e2e` environment on refs/heads/main) and variables
@@ -32,6 +32,13 @@ name: E2E Dev
 # Choose later at 390 px with no sideways scroll; the same link on a second device; Re-issue link revokes the old one;
 # the hold box and accept; viewed, the R19 choices and the bell on the agency side). It needs crm-021 applied and the
 # AA-950 API + web; E2ECRMAATOUR (optional) adds an AA item, so the hold set is placed on Booking. Job timeout 60 -> 70.
+# AA-1196 (S296): the suite was dispatched by hand only, so it sat unrun 31/10 -> 11/11 and 11/11 -> 27/11 while the
+# CRM and Booking changed under it (four flows red when it ran again). It now also runs nightly and after every
+# successful Deploy Web Dev / Deploy Dev of main (workflow_run: the default branch's copy of this file, so the
+# environment `e2e` and its main-only OIDC trust hold), and the `report` job opens one issue (label e2e-dev-red) when
+# a run is red, comments on it while it stays red and closes it on the next green run. Who looks at it: the engineer on
+# duty (tech lead) that day; triage = test drift (the spec follows the intended product) or product bug (fix + unit
+# test), one line per failure in the PR. 0 USD: Actions minutes of a public repo.
 on:
   workflow_dispatch:
     inputs:
@@ -39,10 +46,16 @@ on:
         description: "AA-939: also run the timed invite -> active test (one-off; reset the invitee account first)"
         type: boolean
         default: false
+  schedule:
+    # 03:17 UTC nightly (10:17 Asia/Ho_Chi_Minh), off the hour: GitHub delays or drops schedules at busy times.
+    - cron: "17 3 * * *"
+  workflow_run:
+    workflows: ["Deploy Web Dev", "Deploy Dev"]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: e2e-dev
@@ -53,7 +66,15 @@ jobs:
     name: Slice 1 (Playwright, Dev)
     # Pinned (S252, 26/10/2026): ubuntu-latest moved to 26.04 and Playwright does not support Chromium there yet.
     runs-on: ubuntu-24.04
-    if: github.ref == 'refs/heads/main'
+    # workflow_run: only after a deploy of main that succeeded (a failed deploy left the old build: nothing new to test).
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_run' ||
+       (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main'))
+    permissions:
+      contents: read
+      id-token: write
+      actions: read # the wait for a Dev deploy still rolling (gh run list)
     environment: e2e
     timeout-minutes: 70
     defaults:
@@ -73,6 +94,28 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # AA-1196: a merge can deploy the API and the web one after the other. Testing while either still rolls out
+      # meets two builds behind the load balancer (deployment skew, lesson S262), so wait (up to 20 minutes) until no
+      # Deploy Dev / Deploy Web Dev run of main is queued or in progress.
+      - name: Wait for Dev deploys to finish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 40); do
+            busy=0
+            for wf in deploy-dev.yml deploy-web-dev.yml; do
+              for st in queued in_progress; do
+                n=$(gh run list --workflow "$wf" --branch main --status "$st" --limit 5 --json databaseId --jq 'length')
+                busy=$((busy + n))
+              done
+            done
+            if [ "$busy" -eq 0 ]; then echo "no Dev deploy rolling"; exit 0; fi
+            echo "a Dev deploy is still rolling ($busy run(s)); waiting 30 s ($i/40)"
+            sleep 30
+          done
+          echo "::warning::a Dev deploy was still rolling after 20 minutes; testing anyway"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
@@ -109,3 +152,51 @@ jobs:
           path: e2e/results/*.png
           if-no-files-found: warn
           retention-days: 14
+
+  # AA-1196: one issue while the suite is red (opened, then commented), closed by the next green run. Its own job with
+  # issues: write only (the test job keeps id-token for the mailbox role and nothing else). A skipped test job (a failed
+  # deploy, a branch other than main) reports nothing.
+  report:
+    name: Report red / green
+    needs: slice1
+    if: always() && github.ref == 'refs/heads/main' && needs.slice1.result != 'skipped'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RESULT: ${{ needs.slice1.result }}
+      EVENT: ${{ github.event_name }}
+      TRIGGER: ${{ github.event.workflow_run.name || '' }}
+      SHA: ${{ github.sha }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - name: Open, comment on or close the e2e-dev-red issue
+        run: |
+          set -euo pipefail
+          N=$(gh issue list --label e2e-dev-red --state open --limit 1 --json number --jq '.[0].number // empty')
+          WHY="$EVENT${TRIGGER:+ after $TRIGGER}"
+          if [ "$RESULT" = "success" ]; then
+            if [ -n "$N" ]; then
+              gh issue close "$N" --comment "Green again ($WHY, main ${SHA:0:8}): $RUN_URL"
+              echo "- E2E Dev green: closed #$N" >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 0
+          fi
+          BODY="E2E Dev (CRM Playwright suite on Dev) ended **$RESULT** ($WHY, main ${SHA:0:8}): $RUN_URL
+
+          The failing specs are at the end of the Run step's log; screenshots are the run's artifact.
+          The engineer on duty triages each failure: test drift (update the spec to the intended product) or product
+          bug (fix it with a unit test), one line per failure in the PR. The next green run closes this issue."
+          if [ -n "$N" ]; then
+            gh issue comment "$N" --body "$BODY"
+          else
+            gh label create e2e-dev-red --color B60205 --force \
+              --description "The CRM E2E Dev suite is red (e2e-dev.yml)"
+            N=$(gh issue create --title "E2E Dev (CRM) is red" --label e2e-dev-red --body "$BODY" \
+              | sed -nE 's#.*/issues/([0-9]+)$#\1#p')
+          fi
+          echo "::warning::E2E Dev $RESULT: issue #$N (label e2e-dev-red)"
+          echo "- E2E Dev $RESULT: issue #$N (label e2e-dev-red)" >> "$GITHUB_STEP_SUMMARY"

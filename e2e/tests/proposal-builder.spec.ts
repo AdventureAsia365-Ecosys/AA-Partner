@@ -4,8 +4,10 @@
 //   2. Proposal tab > "Start the builder" (USD) -> the builder page: day 0 "Before you go" + 7 days, every Nepal day
 //      in Asia/Kathmandu shown as UTC+05:45 (card E), a Lodging block per night with "Client may swap" on (Fix E1), the
 //      rooms line from the party (Fix B10);
-//   3. "+ Add" -> Agency item, twice on day 1 (sell + net): the first becomes the default; the totals bar shows sell,
-//      net and margin (owner);
+//   3. AA-1144 (crm-080): an agency item sits on an "Other" block only and is a flight, visa, travel insurance or the
+//      agency fee; a Lodging block's drawer offers no "Agency item". So day 1 gets an Other block "Flights" and "+ Add"
+//      -> Agency item (Flight) twice (sell + net): the first becomes the default; the totals bar shows sell, net and
+//      margin (owner);
 //   4. card R: a rule "Homestay excludes <the day 2 default>" through the BFF -> 422 option_conflict, nothing written;
 //   5. §11.2: a write with a stale seq (another editor) -> 409 version_conflict {reason: edited}; the UI banner on a
 //      stale page offers Reload;
@@ -21,7 +23,7 @@
 // Dev prerequisites: crm-019 applied, the AA-949 API + web deployed. Environment: as lifecycle-thin.spec.ts
 // (E2ECRM, E2ECRMCLIENT, E2ECRMPARTNER, E2ECRMFORMKEY, E2ECRMEMAIL, E2ECRMPASSWORD, E2ECRMTOTP); optional
 // E2ECRMAATOUR (the AA-973 seed tour, step 6).
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import fs from "node:fs";
 import { submitIntake } from "../helpers/intake";
 import { landOnPartner, signIn } from "../helpers/signin";
@@ -92,11 +94,25 @@ function inputDate(daysAhead: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-async function addAgencyItem(page: Page, blockIndex: number, title: string, sell: string, net: string) {
-  const block = page.getByTestId("builder-block").nth(blockIndex);
-  await block.getByRole("button", { name: /^\+ add$/i }).click();
+/** AA-1144: an "Other" block on the selected day (the only block type that takes the agency's own items). */
+async function addOtherBlock(page: Page, title: string): Promise<Locator> {
+  const form = page.getByTestId("builder-add-block");
+  await form.locator('input[name="title"]').fill(title);
+  await form.locator('select[name="type"]').selectOption("other", { timeout: 15_000 });
+  const saved = page.waitForResponse((r) => /\/days\/[0-9a-f-]{36}\/blocks$/.test(r.url()) && r.request().method() === "POST", { timeout: 30_000 });
+  await form.getByRole("button", { name: /^add block$/i }).click({ timeout: 15_000 });
+  expect((await saved).status(), "POST days/{id}/blocks").toBe(201);
+  const block = page.locator('[data-testid="builder-block"][data-type="other"]').filter({ hasText: title });
+  await expect(block).toHaveCount(1, { timeout: 15_000 });
+  return block;
+}
+
+async function addAgencyItem(page: Page, block: Locator, category: "flight" | "visa" | "insurance" | "fee", title: string, sell: string, net: string) {
+  await block.getByRole("button", { name: /^\+ add$/i }).click({ timeout: 15_000 });
   const drawer = block.getByTestId("builder-drawer");
-  await drawer.getByRole("button", { name: /^agency item$/i }).click();
+  // Every click and select has its own ceiling (run 45981939192 waited 8 min on a tab that is no longer offered).
+  await drawer.getByRole("button", { name: /^agency item$/i }).click({ timeout: 15_000 });
+  await drawer.getByTestId("builder-agency-category").selectOption(category, { timeout: 15_000 });
   await expect(async () => {
     await drawer.getByTestId("builder-agency-title").fill(title);
     await page.waitForTimeout(250);
@@ -105,7 +121,7 @@ async function addAgencyItem(page: Page, blockIndex: number, title: string, sell
   await drawer.getByTestId("builder-agency-sell").fill(sell);
   await drawer.getByTestId("builder-agency-net").fill(net);
   const saved = page.waitForResponse((r) => r.url().includes("/options") && r.request().method() === "POST", { timeout: 30_000 });
-  await drawer.getByRole("button", { name: /^add item$/i }).click();
+  await drawer.getByRole("button", { name: /^add item$/i }).click({ timeout: 15_000 });
   expect((await saved).status()).toBe(201);
   await expect(block.getByTestId("builder-option").filter({ hasText: title })).toHaveCount(1, { timeout: 15_000 });
 }
@@ -177,29 +193,38 @@ test.describe("CRM-21a proposal builder on Dev", () => {
     await expect(page.getByTestId("builder-rooms-line")).toContainText(/\dA/);
     await shot(page, "1-skeleton");
 
-    // 3. Two agency items on day 1's Lodging block; the first is the default.
-    await addAgencyItem(page, 0, "Thamel boutique", "300", "180");
-    await addAgencyItem(page, 0, "Garden of Dreams suite", "420", "260");
+    // 3. AA-1144: the Lodging block takes AA items only (its drawer has no "Agency item"); two agency flights on day
+    // 1's Other block, the first is the default.
+    const day1Lodging = page.getByTestId("builder-block").first();
+    await day1Lodging.getByRole("button", { name: /^\+ add$/i }).click({ timeout: 15_000 });
+    await expect(day1Lodging.getByTestId("builder-drawer")).toBeVisible({ timeout: 15_000 });
+    await expect(day1Lodging.getByTestId("builder-drawer").getByRole("button", { name: /^agency item$/i })).toHaveCount(0);
+    await day1Lodging.getByTestId("builder-drawer").getByRole("button", { name: /^close$/i }).first().click({ timeout: 15_000 });
+    const flightsBlock = await addOtherBlock(page, "Flights");
+    await addAgencyItem(page, flightsBlock, "flight", "Kathmandu economy flight", "300", "180");
+    await addAgencyItem(page, flightsBlock, "flight", "Kathmandu business flight", "420", "260");
     v = await builder(page, proposalId);
-    const lodging = v.days[1].blocks[0];
-    expect(lodging.options.map((o: any) => o.is_default)).toEqual([true, false]);
-    expect(lodging.options[1].sell_delta).toBe("120.00");
+    const flights = v.days[1].blocks.find((b: any) => b.type === "other" && b.title === "Flights");
+    expect(flights.options.map((o: any) => o.is_default)).toEqual([true, false]);
+    expect(flights.options.map((o: any) => o.category)).toEqual(["flight", "flight"]);
+    expect(flights.options[1].sell_delta).toBe("120.00");
     expect(v.totals.sell_total).toBe("300.00");
     expect(v.totals.net_total).toBe("180.00");
     await expect(page.getByTestId("builder-totals")).toContainText("40.0%");
     // Day 2 gets one item too (the rule below needs a second block with a default).
     await page.getByTestId("builder-day").filter({ hasText: /^Day 2/ }).click();
-    await addAgencyItem(page, 0, "Bhaktapur heritage inn", "250", "150");
+    const visaBlock = await addOtherBlock(page, "Visa");
+    await addAgencyItem(page, visaBlock, "visa", "Nepal tourist visa", "250", "150");
     v = await builder(page, proposalId);
     await shot(page, "2-options");
 
-    // 4. Card R: "Thamel boutique excludes Bhaktapur heritage inn" breaks the defaults -> 422, nothing written.
+    // 4. Card R: "economy flight excludes Nepal tourist visa" breaks the defaults -> 422, nothing written.
     const seqBefore = v.edit_seq;
-    const day2Default = v.days[2].blocks[0].default_option_id;
+    const day2Default = v.days[2].blocks.find((b: any) => b.type === "other" && b.title === "Visa").default_option_id;
     const refused = await bff(page, "POST", `proposals/${proposalId}/rules`, {
       seq: v.edit_seq,
       kind: "excludes",
-      option_id: lodging.options[0].option_id,
+      option_id: flights.options[0].option_id,
       target_option_id: day2Default,
     });
     expect(refused.status).toBe(422);
