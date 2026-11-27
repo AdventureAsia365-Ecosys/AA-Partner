@@ -3,13 +3,15 @@
 //   1. a prospect submits the inquiry form for Nepal (2 adults); the owner takes the trip, fills Stage 2 in from a call
 //      and moves it to Proposal;
 //   2. a day-by-day version through the BFF: day 1 date inside the AA-973 seed contract window (today + 30), a balance
-//      date, two lodging options on night 1 (the first included), a dinner on day 2 that may be chosen later (Fix B9);
+//      date; AA-1144 (crm-080): the agency's own items sit on an "Other" block and are a flight, visa, travel insurance
+//      or the agency fee, so day 1 gets an Other block with two flight options (the first included) and day 2 an Other
+//      block with travel insurance that may be chosen later (Fix B9);
 //      optional (E2ECRMAATOUR): an AA day tour from a live quote, so the hold set is placed on Booking; Publish v1;
 //   3. Proposal tab > "Send to client" -> the link shown once;
 //   4. the client on a phone (390 x 844): the link lands on /c/p with the token gone from the URL and the host-only
 //      httpOnly cookie on the API's proposal path (Fix B11); C-03: the "Before you go" day 0 first (AA-951), day 1 in
 //      Nepal time (UTC+05:45), "Included" / "+120.00 USD"; no sideways scroll;
-//      Swap to the suite -> the total moves by 120; Choose later on the dinner;
+//      Swap to the business flight -> the total moves by 120; Choose later on the insurance;
 //   5. card E: a second device opens the same link and sees the same choice;
 //   6. the agent: "Viewed" on the version, the client's choices (R19), the bell has items;
 //   7. Fix B11: "Re-issue link" -> the old link (and the devices that exchanged it) answer "link does not work";
@@ -42,6 +44,10 @@ const AA_TOUR = env("E2ECRMAATOUR");
 const SHOTS = "results";
 const RUN = Date.now().toString(36);
 const PROSPECT = { name: `E2E ${RUN} Client`, email: `e2e.client.${RUN}@example.invalid` };
+// AA-1144: the agency's own items of this run (an Other block: flights on day 1, travel insurance on day 2).
+const FLIGHT = "Kathmandu economy flight";
+const FLIGHT_UP = "Kathmandu business flight";
+const COVER = "Travel insurance cover";
 const CARD_TOKEN = `E2E ${RUN} `;
 const PHONE = { width: 390, height: 844 };
 
@@ -196,13 +202,17 @@ test.describe("CRM-21b client proposal on Dev", () => {
       return res.body;
     };
     await patch(`proposals/${proposalId}/builder`, { starts_on: inputDate(30), balance_due_on: inputDate(10) }, "PATCH");
-    const night1 = v.days.find((d: any) => d.day_no === 1).blocks[0].option_block_id;
-    await patch(`proposals/${proposalId}/blocks/${night1}/options`, { title: "Garden lodge", sell_amount: "300.00", net_amount: "180.00", tier: "comfort" });
-    await patch(`proposals/${proposalId}/blocks/${night1}/options`, { title: "Riverside suite", sell_amount: "420.00", net_amount: "260.00" });
+    // AA-1144: agency items only on an Other block, typed flight / visa / insurance / fee (a Lodging block answers 422
+    // agency_item_not_allowed: lodging is Adventure Asia's).
+    const day1 = v.days.find((d: any) => d.day_no === 1);
+    await patch(`proposals/${proposalId}/days/${day1.proposal_day_id}/blocks`, { title: "Flights", type: "other", client_may_swap: true });
+    const flights = v.days.find((d: any) => d.day_no === 1).blocks.find((b: any) => b.title === "Flights").option_block_id;
+    await patch(`proposals/${proposalId}/blocks/${flights}/options`, { title: FLIGHT, category: "flight", sell_amount: "300.00", net_amount: "180.00" });
+    await patch(`proposals/${proposalId}/blocks/${flights}/options`, { title: FLIGHT_UP, category: "flight", sell_amount: "420.00", net_amount: "260.00" });
     const day2 = v.days.find((d: any) => d.day_no === 2);
-    await patch(`proposals/${proposalId}/days/${day2.proposal_day_id}/blocks`, { title: "Dinner", type: "meal" });
-    const dinner = v.days.find((d: any) => d.day_no === 2).blocks.find((b: any) => b.title === "Dinner").option_block_id;
-    await patch(`proposals/${proposalId}/blocks/${dinner}/options`, { title: "Cooking class dinner", sell_amount: "60.00", choose_later_allowed: true });
+    await patch(`proposals/${proposalId}/days/${day2.proposal_day_id}/blocks`, { title: "Insurance", type: "other" });
+    const cover = v.days.find((d: any) => d.day_no === 2).blocks.find((b: any) => b.title === "Insurance").option_block_id;
+    await patch(`proposals/${proposalId}/blocks/${cover}/options`, { title: COVER, category: "insurance", sell_amount: "60.00", choose_later_allowed: true });
     let withAa = false;
     if (AA_TOUR) {
       const product = await bff(page, "GET", `aa/products/${encodeURIComponent(AA_TOUR)}?currency=USD`);
@@ -252,9 +262,9 @@ test.describe("CRM-21b client proposal on Dev", () => {
     expect(cookie!.path).toBe("/crm/public/v1/proposal");
     const client = first.page;
     await expect(client.getByTestId("client-proposal")).toHaveAttribute("data-kind", "builder", { timeout: 15_000 });
-    const lodging = client.getByTestId("client-block").filter({ has: client.locator('[data-title="Garden lodge"]') });
-    await expect(await option(lodging, "Garden lodge")).toHaveAttribute("data-chosen", "true");
-    await expect((await option(lodging, "Riverside suite")).getByTestId("client-delta")).toHaveText("+120.00 USD");
+    const flightBlock = client.getByTestId("client-block").filter({ has: client.locator(`[data-title="${FLIGHT}"]`) });
+    await expect(await option(flightBlock, FLIGHT)).toHaveAttribute("data-chosen", "true");
+    await expect((await option(flightBlock, FLIGHT_UP)).getByTestId("client-delta")).toHaveText("+120.00 USD");
     // AA-951 (R38): the page opens with the "Before you go" day 0 (the insurance reminder is always there), so the
     // zone is read on day 1 itself, never on the first day section.
     await expect(client.getByTestId("client-day").first()).toHaveAttribute("data-day", "0");
@@ -262,12 +272,12 @@ test.describe("CRM-21b client proposal on Dev", () => {
     await expect(client.locator('[data-testid="client-day"][data-day="1"]')).toContainText("UTC+05:45");
     await noSidewaysScroll(client);
     await shot(client, "1-c03-phone");
-    await (await option(lodging, "Riverside suite")).getByTestId("client-swap").click();
-    await expect(await option(lodging, "Riverside suite")).toHaveAttribute("data-chosen", "true", { timeout: 15_000 });
+    await (await option(flightBlock, FLIGHT_UP)).getByTestId("client-swap").click();
+    await expect(await option(flightBlock, FLIGHT_UP)).toHaveAttribute("data-chosen", "true", { timeout: 15_000 });
     await expect(client.getByTestId("client-total")).toContainText((included + 120).toLocaleString("en-AU", { minimumFractionDigits: 2 }));
-    const dinnerBlock = client.getByTestId("client-block").filter({ hasText: "Cooking class dinner" });
-    await dinnerBlock.getByTestId("client-later").click();
-    await expect(dinnerBlock.getByTestId("client-later-badge")).toBeVisible({ timeout: 15_000 });
+    const coverBlock = client.getByTestId("client-block").filter({ hasText: COVER });
+    await coverBlock.getByTestId("client-later").click();
+    await expect(coverBlock.getByTestId("client-later-badge")).toBeVisible({ timeout: 15_000 });
     await noSidewaysScroll(client);
     await shot(client, "2-swapped");
 
@@ -275,15 +285,15 @@ test.describe("CRM-21b client proposal on Dev", () => {
     const second = await phone(browser);
     await second.page.goto(link);
     await expect(second.page).toHaveURL(new RegExp(`^${CLIENT}/c/p$`), { timeout: 15_000 });
-    const lodging2 = second.page.getByTestId("client-block").filter({ has: second.page.locator('[data-title="Garden lodge"]') });
-    await expect(await option(lodging2, "Riverside suite")).toHaveAttribute("data-chosen", "true", { timeout: 15_000 });
+    const flightBlock2 = second.page.getByTestId("client-block").filter({ has: second.page.locator(`[data-title="${FLIGHT}"]`) });
+    await expect(await option(flightBlock2, FLIGHT_UP)).toHaveAttribute("data-chosen", "true", { timeout: 15_000 });
 
     // 6. The agent: viewed, the client's choices (R19), the bell.
     await page.goto(tripUrl);
     await hydrated(page, "crm-trip");
     await expect(tab.getByTestId("builder-viewed")).toContainText(/viewed/i, { timeout: 15_000 });
     await tab.getByTestId("builder-activity").getByRole("button").click();
-    await expect(tab.getByTestId("builder-choices")).toContainText("Riverside suite", { timeout: 15_000 });
+    await expect(tab.getByTestId("builder-choices")).toContainText(FLIGHT_UP, { timeout: 15_000 });
     await expect(tab.getByTestId("builder-choices")).toContainText(/to choose later/);
     const bell = await bff(page, "GET", "bell");
     expect(bell.status).toBe(200);

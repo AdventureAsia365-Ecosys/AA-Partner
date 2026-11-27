@@ -1,6 +1,6 @@
 // e2e/tests/ledger.spec.ts — AA-944, card CRM-16 on Dev (the web half of the plan's verify step 5):
-//   1. Suppliers (A-13): Adventure Asia is listed once and built in; the owner adds a run-unique own supplier (and
-//      deletes it at the end).
+//   1. Suppliers (A-13): Adventure Asia is listed once and built in; the owner adds a run-unique own flight supplier
+//      (AA-1144: own suppliers are flight, visa, insurance or other) and deletes it at the end.
 //   2. Bookings (A-11): the ledger page renders, with the totals panel for the owner.
 //   3. Settings > Payments: the owner's form and the exchange-rate overrides render.
 // The R / E checks of the card run against the API in the integration tests (api/tests/integration/test_ledger_api.py)
@@ -41,12 +41,15 @@ test.describe("CRM-16 ledger and suppliers on Dev", () => {
     await expect(page.getByTestId("suppliers-view")).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId("supplier-aa")).toHaveCount(1);
 
-    const name = `E2E ${RUN} Hotel`;
-    await page.getByRole("button", { name: /add supplier/i }).click();
+    // AA-1144 (crm-080): an own supplier provides a flight, visa or travel insurance (or other); hotels, transfers,
+    // guides and the like are Adventure Asia's suppliers, so "accommodation" is no longer offered.
+    const name = `E2E ${RUN} Air`;
+    await page.getByRole("button", { name: /add supplier/i }).click({ timeout: 15_000 });
     const form = page.getByTestId("supplier-add-form");
     await form.locator('input[name="name"]').fill(name);
-    await form.locator('select[name="category"]').selectOption("accommodation");
-    await form.getByRole("button", { name: /save/i }).click();
+    await expect(form.locator('select[name="category"] option[value="accommodation"]')).toHaveCount(0);
+    await form.locator('select[name="category"]').selectOption("flight", { timeout: 15_000 });
+    await form.getByRole("button", { name: /save/i }).click({ timeout: 15_000 });
     await expect(page.getByText(name)).toBeVisible({ timeout: 15_000 });
     await shot(page, "01-suppliers");
 
@@ -62,7 +65,7 @@ test.describe("CRM-16 ledger and suppliers on Dev", () => {
 
     // Leave nothing behind: the run's supplier names no line, so it goes to the trash.
     await page.goto(`${PARTNER}/suppliers`);
-    await page.getByRole("row", { name: new RegExp(name) }).getByRole("button", { name: /delete/i }).click();
+    await page.getByRole("row", { name: new RegExp(name) }).getByRole("button", { name: /delete/i }).click({ timeout: 15_000 });
     await expect(page.getByText(name)).toHaveCount(0, { timeout: 15_000 });
   });
 });

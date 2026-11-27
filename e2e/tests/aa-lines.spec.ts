@@ -16,7 +16,8 @@
 //
 // Dev prerequisites (outside this repo; the orchestrator's one-off setup in the PR body): crm-017 applied and the AA-947
 // API + web deployed; the AA-973 synthetic supply on Booking (AA-CIS-Infra db/scripts/aa973_b2b_seed.py: the tour, its
-// components, a USD contract with rates in force on the chosen date); a booking.b2b_partners row for the synthetic agency
+// components with a room on every night, a USD contract with rates in force on the chosen date; since Booking's
+// can-operate check a tailor-made quote of a tour with a night without a room is refused 422, AA-1196); a booking.b2b_partners row for the synthetic agency
 // (tenant = the CRM agency id, client = the CRM M2M client) and a per-person price hint on the seed plan (else no "from"
 // price exists to warn against). The spec checks both first and fails with what is missing.
 //
@@ -65,6 +66,8 @@ interface AaView {
   booking_id: string | null;
   from_price: { amount: string; currency: string } | null;
   below_from_price: boolean | null;
+  /** Booking's last answer code for the line (e.g. "invalid" when a quote was refused 422). */
+  result_code: string | null;
   pending: { kind: string; attempts: number; last_error_class: string | null } | null;
   actions: string[];
 }
@@ -117,16 +120,34 @@ async function line(page: Page, tripId: string, lineId: string): Promise<LineVie
 }
 
 /** "<sub_status>/<pending kind or ->" of the AA line: what the sync has made of it so far. */
-async function aaState(page: Page, tripId: string, lineId: string): Promise<string> {
-  const aa = (await line(page, tripId, lineId)).aa;
-  return `${aa?.sub_status ?? "-"}/${aa?.pending?.kind ?? "-"}`;
+function aaState(found: LineView): string {
+  return `${found.aa?.sub_status ?? "-"}/${found.aa?.pending?.kind ?? "-"}`;
 }
 
+// A sub-status Booking will not move on its own (a final refusal): waiting longer only hides the cause.
+const FINAL_SUB = new Set(["failed", "not_served", "declined", "sold_out", "expired"]);
+
+/** Polls the line until it reads ``expected``. Fails at once, with Booking's result code, when the line settles on a
+ *  final refusal instead (run 45981939192 waited 150 s on "failed/-": a tailor-made quote refused 422 "invalid" by
+ *  Booking's can-operate check, because the AA-973 seed plan had a room on day 1 only). */
 async function waitForAa(page: Page, tripId: string, lineId: string, expected: string): Promise<LineView> {
-  await expect
-    .poll(() => aaState(page, tripId, lineId), { timeout: SYNC_TIMEOUT_MS, intervals: [3_000, 5_000, 10_000] })
-    .toBe(expected);
-  return line(page, tripId, lineId);
+  const deadline = Date.now() + SYNC_TIMEOUT_MS;
+  const intervals = [3_000, 5_000, 10_000];
+  for (let i = 0; ; i++) {
+    const found = await line(page, tripId, lineId);
+    const state = aaState(found);
+    if (state === expected) return found;
+    const sub = found.aa?.sub_status ?? "";
+    if (FINAL_SUB.has(sub) && !found.aa?.pending && !expected.startsWith(`${sub}/`)) {
+      throw new Error(
+        `AA line reads ${state} (Booking result_code=${found.aa?.result_code ?? "-"}) while waiting for ${expected}. ` +
+          `"invalid" on a quote of our own date = Booking's can-operate check refused the seed tour ` +
+          `(AA-CIS-Infra db/scripts/aa973_b2b_seed.py: a room on every night, an active supplier, rates in force).`,
+      );
+    }
+    if (Date.now() > deadline) throw new Error(`AA line still reads ${state} after ${SYNC_TIMEOUT_MS / 1000} s, expected ${expected}`);
+    await page.waitForTimeout(intervals[Math.min(i, intervals.length - 1)]);
+  }
 }
 
 async function openTrip(page: Page, url: string) {

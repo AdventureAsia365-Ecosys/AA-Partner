@@ -1043,7 +1043,10 @@ original CIS commit). P2a moves the code only:
 - **Not in Slice 1** (later cards): the prospect's confirmation mail and the agent alert (traveller mail leaves the
   agency's own mailbox, CRM-17), system tags from the catalog (R29), conditional forms and the Stage 2 gate (CRM-15),
   F2 views and reader grants (CRM-09), the `form_submission` 90-day redaction job (CRM-14, done in AA-942).
-- **E2E** (`e2e/`, workflow `E2E Dev`, dispatch on main): form -> card on the board within about a minute -> trip.
+- **E2E** (`e2e/`, workflow `E2E Dev` on main: dispatch, nightly at 03:17 UTC and after every successful Deploy Web Dev
+  / Deploy Dev, AA-1196): form -> card on the board within about a minute -> trip. A red run opens one GitHub issue
+  (label `e2e-dev-red`), comments on it while red and closes it on the next green run; the engineer on duty triages each
+  failure as test drift (the spec follows the intended product) or a product bug (fix + unit test).
   AA-943 adds `e2e/tests/slice2-m1m2.spec.ts` (call slot, auto-send + Undo, the client planning page, the gates, fill
   in from call, bulk preview, cancel dry run and run).
 
