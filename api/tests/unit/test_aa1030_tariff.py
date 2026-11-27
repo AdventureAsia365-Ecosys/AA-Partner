@@ -329,7 +329,14 @@ def test_the_view_renames_the_b2b_prices_and_the_serializer_strips_them_without_
         assert filter_body(body, role) == (body, set())
     for role in ("assistant", None):
         cleaned, removed = filter_body(body, role)
-        assert removed == {"b2b_price", "b2b_price_per_person"}
+        # AA-1188: the child, infant and single prices are B2B prices too.
+        assert removed == {
+            "b2b_price",
+            "b2b_price_per_person",
+            "b2b_child_price_per_person",
+            "b2b_infant_price",
+            "b2b_single_supplement_per_person",
+        }
         assert all(not {"b2b_price", "b2b_price_per_person"} & set(i) for i in json.loads(cleaned)["items"])
     assert strip_margin(view)["items"][0]["title"] == "Invented River Ramble"
 

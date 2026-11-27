@@ -81,16 +81,22 @@ export function CoverImage({ src, large = null, sizes, alt, eager = false, radiu
   );
 }
 
-/** AA-1029 — "From $235 per person" and the caveat line under it (the TripPlanner tour page's wording), from the
- *  tour's price.from.v1 row; nothing at all without a usable price (never the source price text). `compact` = the card
- *  footer (smaller type). */
+/** AA-1029 — "From $235 per person" and the caveat line under it (D10, AA-1188: "Suggested retail (RRP) …"), from
+ *  the tour's price.from.v1 row; never the source price text. Without a usable price: "Price on request" (AA-1188),
+ *  the line an agency sees wherever a tour has no price yet. `compact` = the card footer (smaller type). */
 export function FromPriceLine({ price, compact = false, testId = "marketplace-from-price" }: {
   price: FromPrice | null | undefined; compact?: boolean; testId?: string;
 }) {
   const t = useT(MARKET_MESSAGES);
   const lang = useLang();
   const amount = fmtFromPrice(price);
-  if (!amount || !price) return null;
+  if (!amount || !price) {
+    return (
+      <div data-testid={testId} data-price="on-request" style={{ minWidth: 0, fontFamily: sans }}>
+        <div style={{ fontSize: compact ? 13 : 14, fontWeight: 600, color: K.ink3 }}>{t("priceOnRequest")}</div>
+      </div>
+    );
+  }
   return (
     <div data-testid={testId} style={{ minWidth: 0, fontFamily: sans }}>
       <div style={{ fontSize: compact ? 13 : 14, color: K.ink3, overflowWrap: "anywhere" }}>

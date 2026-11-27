@@ -228,6 +228,11 @@ class FakeBooking:
                                     {"content-type": "text/csv; charset=utf-8",
                                      "content-disposition": f'attachment; filename="{name}"'})  # fmt: skip
             return _resp(200, tariff_body(currency, tier=self.tier_code, source_id=query.get("source_id")))
+        if method == "GET" and path == "/terms":  # AA-1188 (contract 1.3 + 1.12 quote_rules)
+            if self.tariff_refusal:
+                status = {"unknown_partner": 403, "forbidden": 403}.get(self.tariff_refusal, 409)
+                return _resp(status, {"error": self.tariff_refusal, "message": "booking-side detail"})
+            return _resp(200, terms_body())
         if method == "GET" and path == "/invoices":
             limit, offset = int(query.get("limit", "50")), int(query.get("offset", "0"))
             items = self.agency_invoices[offset : offset + limit]
@@ -591,3 +596,24 @@ def invoice_line(n: int, role: str, amount: str, booking_id: str | None, voided:
     return {"line_no": n, "line_role": role, "description": f"{role} of {booking_id}", "quantity": "1.00",
             "unit_price": amount, "amount": amount, "hold_id": None, "booking_id": booking_id,
             "voided": voided}  # fmt: skip
+
+
+def terms_body(**over: Any) -> dict[str, Any]:
+    """A ``PartnerTerms`` answer (contract 1.3, 1.7 scope, 1.12 quote_rules) with an invented clause."""
+    body: dict[str, Any] = {
+        "as_of": "2031-01-05",
+        "payment": {"deposit_pct": "30.00", "balance_days_before_departure": 45, "settlement_due_days": 14,
+                    "scope": "default"},
+        "credit": {"status": "ok", "holds_paused": False, "overdue_invoices": 0, "oldest_overdue_days": 0,
+                   "overdue_amount": [], "warn_after_days": 7, "suspend_after_days": 30},
+        "cancellation_policy": {"policy_id": "pol-1", "basis": "in_force_today",
+                                "tiers": [{"min_days": 30, "fee_pct": "50.00"}, {"min_days": 60, "fee_pct": "10.00"},
+                                          {"min_days": 0, "fee_pct": "100.00"}]},
+        "clauses": [{"code": "price_error", "title": "Invented price correction",
+                     "body": "AA corrects an invented price.", "free_cancel_days": 3, "version": 2,
+                     "approved_at": "2031-01-01T00:00:00Z"}],
+        "quote_rules": {"quote_validity_days": 14, "group_on_request_min_pax": 9,
+                        "age_bands": {"child_age_max": 11, "infant_age_max": 1}},
+    }  # fmt: skip
+    body.update(over)
+    return body

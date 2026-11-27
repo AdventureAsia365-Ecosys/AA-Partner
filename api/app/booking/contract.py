@@ -522,6 +522,14 @@ class TariffItem:
     agency_discount_pct: Decimal
     rrp_per_person: Decimal | None
     rrp_currency: str | None
+    # 1.7 (AA-1075): sell prices by age band and room, in the tariff currency (None = Booking did not price it).
+    child_price_per_person: Decimal | None = None
+    infant_price: Decimal | None = None
+    single_supplement_per_person: Decimal | None = None
+    # 1.12 (AA-1188): available | on_request (a band that reaches AA's group size); True when a departure inside the
+    # row's dates carries a price adjustment. A 1.11 answer has neither: available, False.
+    availability: str = "available"
+    departure_adjusted: bool = False
 
 
 @dataclass(frozen=True)
@@ -534,6 +542,25 @@ class Tariff:
     rate_date: dt.date
     truncated: bool
     items: tuple[TariffItem, ...]
+    # 1.12 (AA-1188): AA's group size quoted on request, its early-booking days, the tours with a priced row and the
+    # tours AA serves (None when the answer has no such field: a 1.11 Booking, or a one-tour read for catalog_tours).
+    group_on_request_min_pax: int | None = None
+    early_booking_days: int | None = None
+    tours_priced: int | None = None
+    catalog_tours: int | None = None
+
+
+TARIFF_AVAILABILITY = frozenset({"available", "on_request"})
+
+
+def _price_or_none(item: dict[str, Any], key: str, currency: str) -> Decimal | None:
+    """A 1.7 sell price of a tariff row: None when absent or null, else a non-negative amount in the tariff currency."""
+    if item.get(key) is None:
+        return None
+    amount, cur = money(item.get(key), key)
+    if cur != currency or amount < 0:
+        raise ContractError(f"{key} is not a non-negative amount in the tariff currency")
+    return amount
 
 
 def _tariff_item(value: Any, currency: str) -> TariffItem:
@@ -577,7 +604,26 @@ def _tariff_item(value: Any, currency: str) -> TariffItem:
         agency_discount_pct=discount,
         rrp_per_person=rrp_amount,
         rrp_currency=rrp_currency,
+        child_price_per_person=_price_or_none(item, "child_price_per_person", currency),
+        infant_price=_price_or_none(item, "infant_price", currency),
+        single_supplement_per_person=_price_or_none(item, "single_supplement_per_person", currency),
+        availability=_availability(item),
+        departure_adjusted=_flag(item, "departure_adjusted"),
     )
+
+
+def _availability(item: dict[str, Any]) -> str:
+    value = item.get("availability", "available")
+    if value not in TARIFF_AVAILABILITY:
+        raise ContractError("availability is unknown")
+    return value
+
+
+def _flag(item: dict[str, Any], key: str) -> bool:
+    value = item.get(key, False)
+    if not isinstance(value, bool):
+        raise ContractError(f"{key} is not a boolean")
+    return value
 
 
 def tariff(data: Any, currency: str | None = None) -> Tariff:
@@ -611,6 +657,10 @@ def tariff(data: Any, currency: str | None = None) -> Tariff:
         rate_date=_date(fx.get("rate_date"), "fx.rate_date"),
         truncated=truncated,
         items=tuple(_tariff_item(x, tariff_currency) for x in items),
+        group_on_request_min_pax=_count_or_none(body, "group_on_request_min_pax"),
+        early_booking_days=_count_or_none(body, "early_booking_days", minimum=0),
+        tours_priced=_count_or_none(body, "tours_priced", minimum=0),
+        catalog_tours=_count_or_none(body, "catalog_tours", minimum=0),
     )
 
 
@@ -793,3 +843,105 @@ def billing_status(data: Any) -> BillingStatus:
         overdue_amount=tuple(money(a, "overdue_amount") for a in amounts),
         paid_through=None if paid is None else _date(paid, "paid_through"),
     )
+
+
+# ── AA-1188: GET /terms (contract 1.3, 1.7 PaymentTerms.scope, 1.12 quote_rules) ─────────────────────────────────────
+_PCT_TEXT = re.compile(r"^\d+(\.\d{1,2})?$")
+_CLAUSE_CODE = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
+TERMS_SCOPES = frozenset({"agency_tour", "tour", "agency", "default"})
+MAX_CLAUSES = 50  # technical-constant: a bound on what the reader accepts from Booking, not a business rule
+MAX_TIERS = 20  # technical-constant: booking.b2b.v1 CancellationPolicy.tiers maxItems
+
+
+def _int_in(data: dict[str, Any], key: str, low: int, high: int) -> int:
+    value = data.get(key)
+    if not isinstance(value, int) or isinstance(value, bool) or not low <= value <= high:
+        raise ContractError(f"{key} is missing or malformed")
+    return value
+
+
+def _payment(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    pay = _obj(value, "payment")
+    scope = pay.get("scope")
+    if scope is not None and scope not in TERMS_SCOPES:
+        raise ContractError("payment.scope is unknown")
+    return {
+        "deposit_pct": _str(pay, "deposit_pct", _PCT_TEXT),
+        "balance_days_before_departure": _int_in(pay, "balance_days_before_departure", 0, 3650),
+        "settlement_due_days": _int_in(pay, "settlement_due_days", 0, 3650),
+        "scope": scope,
+    }
+
+
+def _cancellation(value: Any) -> list[dict[str, Any]] | None:
+    """The default policy's fee tiers, the largest ``min_days`` first (None: no approved policy in force)."""
+    if value is None:
+        return None
+    tiers = _obj(value, "cancellation_policy").get("tiers")
+    if not isinstance(tiers, list) or not 1 <= len(tiers) <= MAX_TIERS:
+        raise ContractError("cancellation_policy.tiers is malformed")
+    out = [
+        {"min_days": _int_in(t, "min_days", 0, 730), "fee_pct": _str(t, "fee_pct", _PCT_TEXT)}
+        for t in (_obj(x, "tier") for x in tiers)
+    ]
+    return sorted(out, key=lambda t: t["min_days"], reverse=True)
+
+
+def _clause(value: Any) -> dict[str, Any]:
+    clause = _obj(value, "clause")
+    title, body = clause.get("title"), clause.get("body")
+    if not isinstance(title, str) or not 1 <= len(title) <= 120:
+        raise ContractError("clause.title is malformed")
+    if not isinstance(body, str) or not 1 <= len(body) <= 4000:
+        raise ContractError("clause.body is malformed")
+    free = clause.get("free_cancel_days")
+    if free is not None:
+        free = _int_in(clause, "free_cancel_days", 0, 3650)
+    return {
+        "code": _str(clause, "code", _CLAUSE_CODE),
+        "title": title,
+        "body": body,
+        "free_cancel_days": free,
+        "version": _int_in(clause, "version", 1, 10_000),
+    }
+
+
+def _quote_rules(value: Any) -> dict[str, Any] | None:
+    """1.12: None when absent (a 1.11 Booking) or null (a policy value without an approved version)."""
+    if value is None:
+        return None
+    rules = _obj(value, "quote_rules")
+    bands = _obj(rules.get("age_bands"), "quote_rules.age_bands")
+    child, infant = _int_in(bands, "child_age_max", 2, 17), _int_in(bands, "infant_age_max", 0, 4)
+    if infant >= child:
+        raise ContractError("quote_rules.age_bands: infant_age_max is not below child_age_max")
+    return {
+        "quote_validity_days": _int_in(rules, "quote_validity_days", 1, 365),
+        "group_on_request_min_pax": _int_in(rules, "group_on_request_min_pax", 1, 500),
+        "age_bands": {"child_age_max": child, "infant_age_max": infant},
+    }
+
+
+def partner_terms(data: Any) -> dict[str, Any]:
+    """The agency's terms with AA (``PartnerTerms``) as the CRM shows them: payment terms, the default cancellation
+    fee tiers, AA's approved clauses, the quote rules (1.12) and whether holds are paused for overdue invoices. The
+    credit amounts are not read (the CRM's AA invoices page shows them). A field the CRM shows that breaks the
+    contract fails the whole answer (nothing half-shown)."""
+    body = _obj(data, "terms")
+    credit = _obj(body.get("credit"), "credit")
+    paused = credit.get("holds_paused")
+    if not isinstance(paused, bool):
+        raise ContractError("credit.holds_paused is not a boolean")
+    clauses = body.get("clauses")
+    if not isinstance(clauses, list) or len(clauses) > MAX_CLAUSES:
+        raise ContractError("clauses is malformed")
+    return {
+        "as_of": _day(body.get("as_of"), "as_of").isoformat(),
+        "payment": _payment(body.get("payment")),
+        "cancellation_tiers": _cancellation(body.get("cancellation_policy")),
+        "clauses": [_clause(c) for c in clauses],
+        "quote_rules": _quote_rules(body.get("quote_rules")),
+        "holds_paused": paused,
+    }

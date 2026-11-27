@@ -5,7 +5,7 @@
 // prices are indicative: a quote is the binding price. Pure helpers, unit-tested.
 
 import type { Me } from "./crmApi";
-import type { Lang } from "./i18n";
+import type { Lang, MessageKey } from "./i18n";
 import { fmt, t } from "./i18n";
 
 export const AA_TARIFF_PATH = "/aa-tariff";
@@ -37,6 +37,15 @@ export interface TariffItem {
   b2b_price_per_person?: TariffMoney;
   agency_discount_pct: string;
   rrp_per_person: TariffMoney | null;
+  /** AA-1188 (booking.b2b.v1 1.7 / 1.12): the sell prices by age band and room (null: AA did not price it; absent
+   * while the API is older). The price per person above is the twin share; the single supplement is on top. */
+  b2b_child_price_per_person?: TariffMoney | null;
+  b2b_infant_price?: TariffMoney | null;
+  b2b_single_supplement_per_person?: TariffMoney | null;
+  /** "on_request": the band reaches the group size AA quotes on request (absent = available). */
+  availability?: "available" | "on_request";
+  /** A departure inside the row's dates has its own price adjustment. */
+  departure_adjusted?: boolean;
 }
 
 export interface TariffView {
@@ -47,6 +56,46 @@ export interface TariffView {
   rate_date: string;
   truncated: boolean;
   items: TariffItem[];
+  /** AA-1188 (1.12): null / absent while AA answers an older contract (the page then leaves the line out). */
+  group_on_request_min_pax?: number | null;
+  early_booking_days?: number | null;
+  tours_priced?: number | null;
+  catalog_tours?: number | null;
+}
+
+/** AA-1188 (decision D5): the row's price is shown as "On request" (AA quotes that group size on request). */
+export function isOnRequest(item: Pick<TariffItem, "availability">): boolean {
+  return item.availability === "on_request";
+}
+
+/** "Priced tours: 2 of 844" — null when the API did not count (an older AA answer, or a one-tour read). */
+export function coverageText(view: Pick<TariffView, "tours_priced" | "catalog_tours">, lang: Lang): string | null {
+  const priced = view.tours_priced;
+  const total = view.catalog_tours;
+  if (typeof priced !== "number" || typeof total !== "number" || total < 1) return null;
+  return fmt(t(lang, "tariff.coverage"), { n: priced, m: total });
+}
+
+/** The notes under the table: twin share + single supplement, the group size on request, early booking, and that a
+ * departure may carry its own price. Only the parts the answer supports. */
+export function tariffNotes(view: Pick<TariffView, "group_on_request_min_pax" | "early_booking_days">, lang: Lang): string[] {
+  const out = [t(lang, "tariff.note.twin")];
+  if (typeof view.group_on_request_min_pax === "number") {
+    out.push(fmt(t(lang, "tariff.note.group"), { n: view.group_on_request_min_pax }));
+  }
+  if (typeof view.early_booking_days === "number" && view.early_booking_days > 0) {
+    out.push(fmt(t(lang, "tariff.note.early"), { days: view.early_booking_days }));
+  }
+  out.push(t(lang, "tariff.note.departure"));
+  return out;
+}
+
+const SEASON_CODES = new Set(["low", "high", "peak", "festive"]);
+
+/** AA's season calendar codes as words ("high" -> "High season"); a matrix label is shown as AA wrote it; none "—". */
+export function seasonText(season: string | null, lang: Lang): string {
+  if (!season) return "—";
+  return SEASON_CODES.has(season) ? t(lang, `tariff.season.${season}` as MessageKey) : season;
 }
 
 /** Whether this member sees the AA prices page and its links: the API's matrix answer from /me, else (an older API)

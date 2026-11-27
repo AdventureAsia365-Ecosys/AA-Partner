@@ -1,7 +1,9 @@
 "use client";
 // web/app/(studio)/portal/_components/marketplace/MyCatalog.tsx
 // AA-671 — Marketplace, view "In my catalog": the tours this tenant picked, one card per tour (its latest version),
-// with the estimated price and the status. Was the "Tour overview" page (MarketplaceTab.tsx, AA-444 / AA-760), now a
+// with AA's "from" price and the status. AA-1188: the price is the price.from.v1 "from" price CIS reads from
+// AA-Booking (the same line as the catalog view: "From $X per person", suggested retail), "Price on request" without
+// one; never a number parsed from the source price text. Was the "Tour overview" page (MarketplaceTab.tsx, AA-444 / AA-760), now a
 // view of the same page as the catalog. A card opens the tour in My Tours, where the work on it happens.
 //
 // API: GET /api/tenant/v1/marketplace (api/routers/v1_marketplace.py: a read-only rollup of the tenant's
@@ -17,10 +19,10 @@ import { Badge, EmptyState, ErrorState, K, sans, useLang, useT } from "@/app/_ki
 import { fmtCount } from "@/lib/studio/format";
 import { MARKET_MESSAGES } from "./marketplace.messages";
 import { useCatalog } from "@/app/_kit/local/studio/useShellData";
-import { fmtDuration, fmtUsdWhole } from "@/lib/studio/tours";
+import { fmtDuration, type FromPrice } from "@/lib/studio/tours";
 import { WorkStatusBadge, tourWorkStatus, type WorkStatus } from "../workStatus";
-import { PICKED_KEY, fetchPicked } from "./marketplaceApi";
-import { CardGridSkeleton, GRID_STYLE, TourCard } from "./TourCard";
+import { PICKED_KEY, fetchPicked, type PickedTour } from "./marketplaceApi";
+import { CardGridSkeleton, FromPriceLine, GRID_STYLE, TourCard } from "./TourCard";
 import { LinkButton, myToursHref } from "./TourDrawer";
 
 /** The rollup's coarse state in work-status words, for a version not in ["my-versions"] yet. */
@@ -28,6 +30,14 @@ function fromRollupState(s: string): WorkStatus {
   if (s === "writing") return "writing";
   if (s === "failed") return "failed";
   return "done";
+}
+
+/** AA-1188: the tour's price.from.v1 row; an older CIS answer without `from_price` but with a USD amount reads as a
+ *  USD "from" price for 2 travellers (the same row CIS turned into `price_usd`). */
+export function pickedFromPrice(tour: Pick<PickedTour, "from_price" | "price_usd" | "price_available">): FromPrice | null {
+  if (tour.from_price !== undefined) return tour.from_price ?? null;
+  if (!tour.price_available || tour.price_usd == null) return null;
+  return { amount: String(tour.price_usd), currency: "USD", basis: "per_person", pax: 2, season: null, valid_to: null };
 }
 
 export function MyCatalog() {
@@ -61,14 +71,12 @@ export function MyCatalog() {
         {data.tours.map((tour) => {
           const v = byVersion.get(tour.version_id);
           const status = v ? tourWorkStatus(v) : fromRollupState(tour.status);
-          const priced = tour.price_available && tour.price_usd != null;
           return (
             <TourCard key={tour.published_tour_id} testId="marketplace-mine-card"
               name={tour.name}
               country={tour.country}
               duration={fmtDuration(tour.duration, lang)}
-              price={priced ? fmtUsdWhole(tour.price_usd as number) : null}
-              priceSub={priced ? t("estimated") : undefined}
+              priceBlock={<FromPriceLine price={pickedFromPrice(tour)} compact testId="marketplace-mine-price" />}
               // Every tour here is in My Tours: show the work status itself ("Ready", "Writing"), not "In My Tours".
               status={null}
               extraBadge={<><Badge tone="info" dot={false}>v{tour.version_number}</Badge><WorkStatusBadge status={status} /></>}

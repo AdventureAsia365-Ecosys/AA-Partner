@@ -55,7 +55,7 @@ const PRICED_TOUR = 'Okinawa from Naha';
 const EXPECTED_PRICE = { currency: 'USD', pax: 2 };
 /** FromPriceLine's text for a whole-dollar row (TourCard.tsx; marketplace.messages.ts + lib.messages.ts, English). */
 const priceLine = (row: PoolRow) => `From $${Number(row.from_price!.amount)} per person`;
-const PRICE_NOTE = 'Suggested price for 2 travellers. Your advisor confirms the final price.';
+const PRICE_NOTE = "Suggested retail (RRP) for 2 travellers, not your agency's price.";
 
 type PoolRow = {
   id: string;

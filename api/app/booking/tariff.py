@@ -5,9 +5,12 @@ tour, season and pax band, with its tier or contract rate card discount, read li
   The tariff is the B2B price, and the margin serializer neither matches Booking's key names (``price``,
   ``price_per_person``) nor sees the CSV bytes, so the action gate is the guard.
 - **JSON** (:func:`view`): Booking's rows read with :func:`app.booking.contract.tariff` (a row that breaks the contract
-  fails the whole answer: 503, nothing half-shown), the price keys renamed ``b2b_price`` / ``b2b_price_per_person`` so
-  the serializer strips them for a role without ``view_margin`` too (defence in depth). ``agency_discount_pct`` and AA's
-  public ``rrp_per_person`` keep their names.
+  fails the whole answer: 503, nothing half-shown), the price keys renamed ``b2b_price`` / ``b2b_price_per_person``
+  (AA-1188: and ``b2b_child_price_per_person``, ``b2b_infant_price``, ``b2b_single_supplement_per_person``) so the
+  serializer strips them for a role without ``view_margin`` too (defence in depth). ``agency_discount_pct`` and AA's
+  public ``rrp_per_person`` keep their names. AA-1188 (1.12): each row's ``availability`` (``on_request`` for a band
+  that reaches AA's group size) and ``departure_adjusted``, and the answer's ``group_on_request_min_pax``,
+  ``early_booking_days``, ``tours_priced`` and ``catalog_tours`` (None while Booking answers 1.11).
 - **CSV**: Booking's own file (its ``tariff.CSV_COLUMNS``), passed on unchanged with Booking's file name; the CRM never
   builds a second file shape.
 - **Errors** (:func:`booking_error`): ``unknown_partner`` / ``forbidden`` (no B2B partner row for the agency, or AA
@@ -87,6 +90,10 @@ def _money(amount: Decimal, currency: str) -> dict[str, str]:
     return {"amount": str(amount), "currency": currency}
 
 
+def _money_or_none(amount: Decimal | None, currency: str) -> dict[str, str] | None:
+    return None if amount is None else _money(amount, currency)
+
+
 def view(tariff: contract.Tariff) -> dict[str, Any]:
     """The CRM's JSON of a read tariff (B2B prices under ``b2b_*`` names)."""
     return {
@@ -96,6 +103,11 @@ def view(tariff: contract.Tariff) -> dict[str, Any]:
         "basis": tariff.basis,
         "rate_date": tariff.rate_date.isoformat(),
         "truncated": tariff.truncated,
+        # AA-1188 (1.12): what the page says around the rows (None while Booking answers 1.11).
+        "group_on_request_min_pax": tariff.group_on_request_min_pax,
+        "early_booking_days": tariff.early_booking_days,
+        "tours_priced": tariff.tours_priced,
+        "catalog_tours": tariff.catalog_tours,
         "items": [
             {
                 "source_id": item.source_id,
@@ -116,6 +128,13 @@ def view(tariff: contract.Tariff) -> dict[str, Any]:
                     if item.rrp_per_person is None or item.rrp_currency is None
                     else _money(item.rrp_per_person, item.rrp_currency)
                 ),
+                # AA-1188: the 1.7 sell prices by age band and room, under b2b_* names like the adult price (the
+                # margin serializer strips them for a role without view_margin too).
+                "b2b_child_price_per_person": _money_or_none(item.child_price_per_person, tariff.currency),
+                "b2b_infant_price": _money_or_none(item.infant_price, tariff.currency),
+                "b2b_single_supplement_per_person": _money_or_none(item.single_supplement_per_person, tariff.currency),
+                "availability": item.availability,
+                "departure_adjusted": item.departure_adjusted,
             }
             for item in tariff.items
         ],

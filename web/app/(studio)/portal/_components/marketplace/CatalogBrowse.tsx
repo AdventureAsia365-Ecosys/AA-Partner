@@ -211,8 +211,9 @@ export function CatalogBrowse({ externalSearch = "", meter }: { externalSearch?:
               tags={cardTags(tour.activities, themeTags(tour.seo_keywords_used, 3, [tour.country]), 3, lang)}
               cover={tour.cover_image_url ?? null}
               coverLarge={tour.cover_image_large_url ?? null}
-              // AA-1029: AA-Booking's "from" price (price.from.v1) or no price column; never the source price text.
-              priceBlock={tour.from_price ? <FromPriceLine price={tour.from_price} compact /> : null}
+              // AA-1029: AA-Booking's "from" price (price.from.v1), else "Price on request" (AA-1188); never the
+              // source price text.
+              priceBlock={<FromPriceLine price={tour.from_price} compact />}
               status={statusOf(tour)}
               // AA-986 L3: a tour AA paused or retired is refused (409): no select box, its badge says why.
               extraBadge={tour.served_notice ? <ServedBadge fields={tour} /> : undefined}

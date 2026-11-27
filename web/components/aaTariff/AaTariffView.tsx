@@ -4,20 +4,31 @@
 // download names the seconds of the BFF's Retry-After) and the table on the kit DataTable (a card per row on a
 // phone, every row on one page so Print prints them all; its search box narrows the rows, and Print then prints those,
 // the box itself hidden by the print rules). The prices are AA's B2B price for this agency; the page and
-// the API serve them to the owner and the agent only.
+// the API serve them to the owner and the agent only. AA-1188 (D5): the price per person is the twin share, with the
+// single supplement, child and infant prices beside it; a band AA quotes on request reads "On request" (the computed
+// amount kept as a guide); a row with a departure that has its own price says so under its dates.
 import type { ColumnDef } from "@tanstack/react-table";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Button, DataTable, K, Select } from "@/app/_kit";
-import { AA_TARIFF_PATH, discountText, paxBand, tariffFilename, tariffPath, type TariffItem } from "@/lib/aaTariff";
+import { Badge, Button, DataTable, K, Select } from "@/app/_kit";
+import {
+  AA_TARIFF_PATH,
+  discountText,
+  isOnRequest,
+  paxBand,
+  seasonText,
+  tariffFilename,
+  tariffPath,
+  type TariffItem,
+} from "@/lib/aaTariff";
 import { bffDownload } from "@/lib/bffClient";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, plural, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { formatAmount } from "@/lib/proposals";
 
-/** The seven columns' width: on a desktop narrower than this the table scrolls inside its own frame (never the page);
+/** The eleven columns' width: on a desktop narrower than this the table scrolls inside its own frame (never the page);
  * below 768 px the kit shows a card per row. */
-export const TARIFF_TABLE_MIN_WIDTH = 680;
+export const TARIFF_TABLE_MIN_WIDTH = 980;
 
 const small: React.CSSProperties = { display: "block", fontSize: 12, color: K.muted, overflowWrap: "anywhere" };
 
@@ -75,6 +86,7 @@ export function AaTariffToolbar({ currency, currencies, lang }: { currency: stri
 export function AaTariffTable({ items, lang, locale }: { items: TariffItem[]; lang: Lang; locale: DateLocale }) {
   const tr = (key: string) => t(lang, key as MessageKey);
   const money = (m: { amount: string; currency: string } | null | undefined) => (m ? formatAmount(m.amount, m.currency, locale) : "—");
+  const amountOf = (m: { amount: string } | null | undefined) => Number(m?.amount ?? 0);
   const columns: ColumnDef<TariffItem, unknown>[] = [
     {
       id: "tour",
@@ -94,24 +106,70 @@ export function AaTariffTable({ items, lang, locale }: { items: TariffItem[]; la
         </span>
       ),
     },
-    { id: "season", header: tr("tariff.col.season"), accessorFn: (i) => i.season ?? "", cell: ({ row }) => row.original.season ?? "—" },
+    {
+      id: "season",
+      header: tr("tariff.col.season"),
+      accessorFn: (i) => seasonText(i.season, lang),
+      cell: ({ row }) => seasonText(row.original.season, lang),
+    },
     {
       id: "dates",
       header: tr("tariff.col.dates"),
       accessorFn: (i) => i.valid_from,
       cell: ({ row }) => (
-        <span style={{ whiteSpace: "nowrap" }}>
-          {fmt(tr("tariff.dates"), { from: formatDate(row.original.valid_from, locale), to: formatDate(row.original.valid_to, locale) })}
+        <span style={{ display: "block" }}>
+          <span style={{ whiteSpace: "nowrap" }}>
+            {fmt(tr("tariff.dates"), { from: formatDate(row.original.valid_from, locale), to: formatDate(row.original.valid_to, locale) })}
+          </span>
+          {row.original.departure_adjusted && (
+            <span style={small} data-testid="tariff-departure-adjusted">
+              {tr("tariff.departureAdjusted")}
+            </span>
+          )}
         </span>
       ),
     },
     { id: "pax", header: tr("tariff.col.pax"), accessorFn: (i) => i.pax_min, cell: ({ row }) => paxBand(row.original, lang) },
     {
       id: "perPerson",
-      header: tr("tariff.col.perPerson"),
+      header: tr("tariff.col.perPersonTwin"),
       meta: { align: "right" },
-      accessorFn: (i) => Number(i.b2b_price_per_person?.amount ?? 0),
-      cell: ({ row }) => <strong data-testid="tariff-price">{money(row.original.b2b_price_per_person)}</strong>,
+      accessorFn: (i) => amountOf(i.b2b_price_per_person),
+      // D5: a band AA quotes on request shows "On request"; the computed amount stays visible as a guide.
+      cell: ({ row }) =>
+        isOnRequest(row.original) ? (
+          <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+            <span data-testid="tariff-on-request">
+              <Badge tone="warning">{tr("tariff.onRequest")}</Badge>
+            </span>
+            {row.original.b2b_price_per_person && (
+              <span style={small}>{fmt(tr("tariff.guide"), { amount: money(row.original.b2b_price_per_person) })}</span>
+            )}
+          </span>
+        ) : (
+          <strong data-testid="tariff-price">{money(row.original.b2b_price_per_person)}</strong>
+        ),
+    },
+    {
+      id: "single",
+      header: tr("tariff.col.single"),
+      meta: { align: "right" },
+      accessorFn: (i) => amountOf(i.b2b_single_supplement_per_person),
+      cell: ({ row }) => <span data-testid="tariff-single">{money(row.original.b2b_single_supplement_per_person)}</span>,
+    },
+    {
+      id: "child",
+      header: tr("tariff.col.child"),
+      meta: { align: "right" },
+      accessorFn: (i) => amountOf(i.b2b_child_price_per_person),
+      cell: ({ row }) => <span data-testid="tariff-child">{money(row.original.b2b_child_price_per_person)}</span>,
+    },
+    {
+      id: "infant",
+      header: tr("tariff.col.infant"),
+      meta: { align: "right" },
+      accessorFn: (i) => amountOf(i.b2b_infant_price),
+      cell: ({ row }) => <span data-testid="tariff-infant">{money(row.original.b2b_infant_price)}</span>,
     },
     {
       id: "discount",

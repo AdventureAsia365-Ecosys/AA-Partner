@@ -141,7 +141,7 @@ test("from price: whole units, US$ for USD, the code otherwise, null for an unus
 
 test("from price note: the TripPlanner caveat with the contract's party size", () => {
   const p = (pax: number) => ({ amount: "1", currency: "USD", basis: "per_person", pax, season: null, valid_to: null });
-  assert.equal(fromPriceNote(p(2)), "Suggested price for 2 travellers. Your advisor confirms the final price.");
-  assert.equal(fromPriceNote(p(1)), "Suggested price for 1 traveller. Your advisor confirms the final price.");
-  assert.equal(fromPriceNote(p(0)), "Suggested price for 2 travellers. Your advisor confirms the final price.");
+  assert.equal(fromPriceNote(p(2)), "Suggested retail (RRP) for 2 travellers, not your agency's price.");
+  assert.equal(fromPriceNote(p(1)), "Suggested retail (RRP) for 1 traveller, not your agency's price.");
+  assert.equal(fromPriceNote(p(0)), "Suggested retail (RRP) for 2 travellers, not your agency's price.");
 });

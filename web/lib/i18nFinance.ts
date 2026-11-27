@@ -5,6 +5,7 @@
 
 export const financeEn = {
   "nav.aaBookings": "Bookings with AA",
+  "nav.aaTariff": "AA prices",
   "finance.money.title": "Money",
   "finance.money.subtitle": "Profit of this trip in {currency}, from issued invoices and booked costs.",
   "finance.revenue": "Revenue",
@@ -181,6 +182,7 @@ export const financeEn = {
 
 export const financeVi: Record<keyof typeof financeEn, string> = {
   "nav.aaBookings": "Đặt chỗ với AA",
+  "nav.aaTariff": "Giá AA",
   "finance.money.title": "Tiền",
   "finance.money.subtitle": "Lợi nhuận của chuyến này bằng {currency}, từ hoá đơn đã phát hành và chi phí đã đặt.",
   "finance.revenue": "Doanh thu",
