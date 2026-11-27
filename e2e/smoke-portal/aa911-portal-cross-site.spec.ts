@@ -9,10 +9,11 @@ import { baseUrl } from './smoke-helpers';
 const REFUSED = 'Cross-site request refused';
 const SIBLING = 'https://booking-preview.lumiguides.it.com';
 
+// AA-1188: real studio write routes (web/lib/studio/tenantRoutes.ts); an unlisted path is 404 before requireTenant.
 const WRITE_ROUTES: { method: 'POST' | 'PATCH' | 'DELETE'; path: string }[] = [
-  { method: 'POST', path: '/api/tenant/v1/webhooks' },
-  { method: 'PATCH', path: '/api/tenant/v1/tenant/settings' },
-  { method: 'DELETE', path: '/api/tenant/v1/webhooks/00000000-0000-0000-0000-000000000000' },
+  { method: 'POST', path: '/api/tenant/v1/facts' },
+  { method: 'PATCH', path: '/api/tenant/v1/account/tour-retirement' },
+  { method: 'DELETE', path: '/api/tenant/v1/publish-log/00000000-0000-0000-0000-000000000000' },
 ];
 
 async function apiContext(extra: Record<string, string>): Promise<APIRequestContext> {

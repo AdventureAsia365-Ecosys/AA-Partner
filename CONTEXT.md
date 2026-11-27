@@ -775,6 +775,14 @@ studio rules. Deploy Web Dev verifies the studio paths and runs the studio smoke
   `app/_kit/local/studio/`, helpers under `lib/studio/`. One kit copy (`web/app/_kit/core`). The studio stylesheet
   (`app/(studio)/studio.css`: Tailwind 4 preflight with `source(none)`, no utility, plus the studio rules) loads only
   under the group; links between the studio and the CRM are plain `<a>` (full page loads).
+- **Studio BFF allow-list** (AA-1188, S295 data-boundary audit DB-01; `web/lib/studio/tenantRoutes.ts`): the proxy
+  `app/api/tenant/[...path]` forwards to CIS only the (method, path) pairs the studio pages call; any other path is 404
+  after the cross-site write check and before the studio token is read or CIS is called. Internal AA data (supplier
+  identity, source price text, pipeline / review state) never reaches an agency, so CIS tenant routes the studio does
+  not use (for example `GET /v1/tours/{id}` and `/v1/tours/{id}/full`, the raw source row) are not reachable from the
+  browser. Adding a studio call to CIS = adding one line there and one row to the method table of
+  `web/tests/studio/tenantRoutes.test.ts`, which also scans `web/app` and `web/lib` for every `/api/tenant/...` literal
+  and fails on an unlisted one or a dead line. The CI standalone smoke checks one 404 and one 401.
 - **No tenant API keys (R3 slice 3)**: CIS answers `POST /auth/tenant-login` with 410 Gone and has no
   `GET /v1/account/api-key`; the studio has no API page (`/portal/api` and `/portal/account/api` answer 308 to
   `/portal/account/settings`), no API key card on Integrations, no API playground or its BFF, and the smoke signs in
