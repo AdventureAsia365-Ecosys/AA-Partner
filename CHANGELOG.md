@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.15.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.14.0...v0.15.0) (2026-11-28)
+
+
+### Features
+
+* AA add-on drawer, rounded agency prices and the planner price publish ([#385](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/385)) ([28b1c4f](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/28b1c4f695970213a00ed15060151af347a5e474))
+* AA prices in twin share with single, child and infant columns, booking conditions with AA, studio price on request ([#405](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/405)) ([f1e781c](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/f1e781cf5607efe85a7b56cf4f10b564372ceb73))
+* capped AI red-team runner for the CRM draft reply ([#400](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/400)) ([68464e3](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/68464e304c5ec8693c377a604bc2bf122bf4829a))
+* CRM JSON responses name their charset, and a page of the CRM input checks and sign-in protections ([#402](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/402)) ([10d1f13](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/10d1f134cc845cf1c9ee565efa391467f4589040))
+* CRM web smoke-red rollback and a CRM API Sentry test event ([#388](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/388)) ([9d7d2b7](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/9d7d2b7a1b5028081cd2f2cefc1581661fdfbebb))
+* crm-086 the agency's price rounding step per currency and its show-prices-on-my-planner switch ([#384](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/384)) ([4ee25a8](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/4ee25a8ee9035143b7b01288159fb74af17cb53d))
+* crm-089 calendar connection table and calendar credential providers ([#394](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/394)) ([5fad2b9](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/5fad2b95042ac80561b777a011b7c3c627d096e9))
+* crm.ops.v1 1.18 privacy evidence, campaign sends to opted-in contacts and consent capture as counts ([#379](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/379)) ([3d20ef1](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/3d20ef122fc5367da742a7d4550bc2c926349010))
+* Dev-only E2E owner is a cis-admin reader in the CRM, refused outside dev ([#381](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/381)) ([6dce1f2](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/6dce1f2c8de16433877cd30550a073ab319a0682))
+* nosniff and HSTS on every CRM API response ([#396](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/396)) ([c3a7965](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/c3a7965f5d28cc6ba5e7c48767f0416a0243972c))
+* one-way push of departures and tasks into a member's own Google or Microsoft 365 calendar ([#395](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/395)) ([05f53e2](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/05f53e2bfc58bdaf442d9dee7e1eb623d16c2181))
+* proposal builder map on the shared map engine ([#397](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/397)) ([ac49e02](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/ac49e02ff89b38c67946e04b3e50aeb8c244aa64))
+* roll back the api when the post-deploy verify is red ([#409](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/409)) ([30b65cb](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/30b65cb3ec0435e2119a41db9685d26204409b50))
+* security.txt (RFC 9116) with the vulnerability contact on the public host ([#406](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/406)) ([4d55e82](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/4d55e82959758dedf3833db37a94538979e88ade))
+* the AA add-on drawer also offers the add-ons at the tour day's overnight place ([#391](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/391)) ([1f7c013](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/1f7c0136cdd1f232501769854179c78c83e162ba))
+* the CRM client-host cookies use the __Secure- name prefix ([#403](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/403)) ([e9e3977](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/e9e3977e13f37076f5d5f62b2b3125ecf53dba45))
+* the CRM shows and accepts the platform's enabled currencies only (USD by default) ([#411](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/411)) ([1e49ce1](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/1e49ce19faf0d85872aeb3991bc32a3718028082))
+* Trip planner module says the CRM is not set up yet when leads take the agency's own route ([#382](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/382)) ([e0cf2cd](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/e0cf2cd9df8ecb5dc800a9f6e1a396adab0ef37d))
+
+
+### Bug Fixes
+
+* AA prices page reads booking conditions through a listed server route ([#407](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/407)) ([b27b68a](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/b27b68aec45235d9f340597fb7881cf5f77ce11e))
+* clear the CodeQL alerts in four test files ([#393](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/393)) ([d66e9d7](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/d66e9d77a37f416453f7df156b477a8ccfe8fd9b))
+* CRM E2E Dev specs follow the agency item rules, the AA line wait shows Booking's code, the suite runs nightly and after Dev deploys ([#408](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/408)) ([99b1af7](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/99b1af7a047a86e65d1ff09d39a3155a842848b9))
+* crm entitlement pull skips tenants CIS no longer lists ([#386](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/386)) ([1591609](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/1591609ae0fdfefdb718a9286651094e25e523a0))
+* cut the CRM job worker's database load (proposal re-check, run-scoped status reuse, prune cadence, stable savepoints) ([#389](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/389)) ([0280d87](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/0280d877547940d0a18c48a36e835c0c8b44b6e2))
+* pin ENVIRONMENT=test for every test run so a bare pytest matches CI ([#398](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/398)) ([f110d8b](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/f110d8b9b064c1c26ea7d96d19b825c3c069c353))
+* studio calendar card answers through the studio handler, not the CRM BFF ([#401](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/401)) ([3c00509](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/3c00509f3c6655c4809f9a6c29404c03bd2f29c2))
+* the AA add-on drawer offers and adds only the add-ons of the AA tour's places on that day ([#390](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/390)) ([4471854](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/4471854c328e7b8ac8faedee5e66b5943c81d93c))
+* the studio proxy forwards only the CIS calls the studio makes ([#404](https://github.com/AdventureAsia365-Ecosys/AA-Partner/issues/404)) ([7a97226](https://github.com/AdventureAsia365-Ecosys/AA-Partner/commit/7a972268bfd5c2d1b075e3018e2e3bb0a752f113))
+
 ## [0.14.0](https://github.com/AdventureAsia365-Ecosys/AA-Partner/compare/v0.13.0...v0.14.0) (2026-11-21)
 
 
