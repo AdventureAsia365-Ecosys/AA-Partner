@@ -102,8 +102,10 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   currencies; default USD only, USD always enabled), read over `catalog.http.v1` **1.5** `GET /catalog/v1/currencies`
   (`app/catalog/currencies.py`: one process cache kept for the `cache_s` CIS sends; CIS down = the last answer, before
   any answer or without `CIS_API_URL` = USD only; never a CRM copy of the value). `GET /crm/v1/currencies` serves it to
-  the web. Refused with 422 `currency_not_enabled`: a new builder working copy (`POST /trips/{id}/builder`), a text
-  proposal created in it or moved to it (the stored currency sent back is accepted), a new base currency (Settings ›
+  the web. Refused with 422 `currency_not_enabled`: a new builder version (`POST /trips/{id}/builder`: a skeleton in
+  the currency picked, or a working copy of a version in that currency, whose prices are never re-priced; the trip
+  page then offers a new skeleton in USD), a text proposal created in it or moved to it (the stored currency sent back
+  on a draft PATCH is accepted; "New version" of such a proposal starts in USD with empty amounts), a new base currency (Settings ›
   Payments; the stored one stays), a planner price step and an AA prices read (`GET /aa/tariff?currency=`). Listed
   without the other currencies: the AA prices currencies (`GET /aa/tariff/currencies`, the web falls back to USD
   only), the planner price steps and the pickers (proposal and builder currency, base currency: hidden while USD is the

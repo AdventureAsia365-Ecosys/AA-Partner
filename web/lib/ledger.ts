@@ -190,6 +190,7 @@ const ERRORS = new Set([
   "supplier_in_use",
   "aa_supplier_builtin",
   "role_forbidden",
+  "currency_not_enabled", // AA-1191: Settings > Payments base currency
 ]);
 
 export function errorKey(detail: string): string {

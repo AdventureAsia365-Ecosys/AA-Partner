@@ -379,6 +379,7 @@ const ERROR_CODES = new Set([
   "balance_due_on_required",
   "balance_due_on_not_allowed",
   "invalid_currency",
+  "currency_not_enabled", // AA-1191
   "invalid_amount",
   "body_required",
   "schedule_not_due",

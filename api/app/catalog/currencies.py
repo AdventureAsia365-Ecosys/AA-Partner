@@ -20,10 +20,13 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable, Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.catalog.client import CatalogClient, CatalogConfig, CatalogUnavailable
 from app.errors import Invalid
+
+if TYPE_CHECKING:
+    from app.tenancy import TenantContext
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +62,17 @@ def refuse_unless_enabled(code: str | None, allowed: Iterable[str], field: str =
     why = problem(code, allowed, field)
     if why:
         raise Invalid(CODE, why)
+
+
+# The currency of a proposal of the caller's agency (RLS on crm.proposal keeps it to the tenant of the transaction).
+PROPOSAL_CURRENCY_SQL = "SELECT currency FROM crm.proposal WHERE proposal_id = $1"
+
+
+async def refuse_copy_unless_enabled(ctx: TenantContext, source_id: Any, allowed: Iterable[str]) -> None:
+    """A builder working copy of a version in a currency that is not enabled is refused (422): the copy keeps the
+    source's prices and is never re-priced. ``ctx`` = the route's tenant transaction. A missing source is left to the
+    builder (its own 404)."""
+    refuse_unless_enabled(await ctx.conn.fetchval(PROPOSAL_CURRENCY_SQL, source_id), allowed)
 
 
 class EnabledCurrencies:

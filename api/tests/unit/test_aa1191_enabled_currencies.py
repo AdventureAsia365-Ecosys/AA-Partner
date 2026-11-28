@@ -21,6 +21,7 @@ from app.ledger import fx
 from app.main import create_app
 from app.proposals import service
 from app.routers import aa as aa_router
+from app.routers import builder as builder_router
 from app.routers import ledger as ledger_router
 from tests.aa_fakes import FakeCis, catalog_config
 from tests.tokens import LocalPools
@@ -154,6 +155,23 @@ async def test_a_text_proposal_in_a_disabled_currency_is_refused() -> None:
     assert e.value.code == "currency_not_enabled"
 
 
+SOURCE = uuid.UUID("a0000000-0000-4000-8000-000000011910")
+
+
+@pytest.mark.asyncio
+async def test_a_working_copy_of_a_version_in_a_disabled_currency_is_refused() -> None:
+    """The builder's "New version" of a VND version while only USD is enabled: refused (its prices are in VND; nothing
+    is converted). The agent starts a new skeleton in USD instead. A USD source and a missing one pass."""
+    vnd = ScriptedConn().on("SELECT currency FROM crm.proposal", "VND")
+    with pytest.raises(Invalid) as e:
+        await currencies.refuse_copy_unless_enabled(tenant_ctx(vnd), SOURCE, ("USD",))
+    assert e.value.code == "currency_not_enabled" and vnd.sql("FROM crm.proposal")[0] == (SOURCE,)
+    await currencies.refuse_copy_unless_enabled(tenant_ctx(vnd), SOURCE, ("USD", "VND"))
+    usd = ScriptedConn().on("SELECT currency FROM crm.proposal", "USD")
+    await currencies.refuse_copy_unless_enabled(tenant_ctx(usd), SOURCE, ("USD",))
+    await currencies.refuse_copy_unless_enabled(tenant_ctx(ScriptedConn()), SOURCE, ("USD",))
+
+
 # ── routes ───────────────────────────────────────────────────────────────────────────────────────────────────────
 
 
@@ -187,6 +205,24 @@ def test_a_new_working_copy_in_vnd_is_refused(pools: LocalPools, monkeypatch: py
     client, headers = _client(pools, monkeypatch)
     r = client.post(f"/crm/v1/trips/{TRIP}/builder", json={"currency": "VND"}, headers=headers)
     assert r.status_code == 422 and r.json()["detail"] == "currency_not_enabled"
+
+
+def test_a_working_copy_is_checked_against_the_enabled_currencies(
+    pools: LocalPools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    checked: list[Any] = []
+
+    async def _refuse(ctx: Any, source_id: uuid.UUID, allowed: tuple[str, ...]) -> None:
+        checked.append((source_id, allowed))
+
+    async def _create(ctx: Any, vault: Any, trip_id: uuid.UUID, **kw: Any) -> dict[str, Any]:
+        return {"proposal_id": str(SOURCE)}
+
+    monkeypatch.setattr(builder_router.currencies, "refuse_copy_unless_enabled", _refuse)
+    monkeypatch.setattr(builder_router.builder, "create", _create)
+    client, headers = _client(pools, monkeypatch, builder_router)
+    r = client.post(f"/crm/v1/trips/{TRIP}/builder", json={"from_proposal_id": str(SOURCE)}, headers=headers)
+    assert r.status_code == 201 and checked == [(SOURCE, ("USD",))]
 
 
 def test_aa_prices_list_and_read_only_enabled_currencies(pools: LocalPools, monkeypatch: pytest.MonkeyPatch) -> None:
