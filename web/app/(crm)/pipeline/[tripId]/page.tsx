@@ -45,6 +45,7 @@ import type { AiSettings } from "@/lib/ai";
 import type { DocumentRow } from "@/lib/clients";
 import type { TripIncident } from "@/lib/duty";
 import { crmCall } from "@/lib/crmApi";
+import { CURRENCIES_PATH, enabledFrom, type CurrenciesView } from "@/lib/currencies";
 import type { PartnerList } from "@/lib/partners";
 import { isTextChannel } from "@/lib/messaging";
 import { crmContext } from "@/lib/crmContext";
@@ -69,7 +70,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
   const { session } = await serverContext();
   if (!session) return null;
   const tripQuery = new URLSearchParams({ trip_id: tripId });
-  const [trip, members, docs, stage2, lines, suppliers, convs, replies, lifecycle, agreements, invoices, signed, incidents, ops, ai, partners] = await Promise.all([
+  const [trip, members, docs, stage2, lines, suppliers, convs, replies, lifecycle, agreements, invoices, signed, incidents, ops, ai, partners, currencies] = await Promise.all([
     crmCall<TripView>(ctx.cfg, session, "GET", `trips/${tripId}`),
     crmCall<{ members: Member[] }>(ctx.cfg, session, "GET", "members"),
     crmCall<{ documents: DocumentRow[] }>(ctx.cfg, session, "GET", `trips/${tripId}/documents`),
@@ -86,6 +87,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
     crmCall<OpsReleaseView>(ctx.cfg, session, "GET", `trips/${tripId}/ops-release`),
     crmCall<AiSettings>(ctx.cfg, session, "GET", "settings/ai"),
     crmCall<PartnerList>(ctx.cfg, session, "GET", "sales-partners"), // AA-1071: the trip's partner picker
+    crmCall<CurrenciesView>(ctx.cfg, session, "GET", CURRENCIES_PATH), // AA-1191: the enabled currencies
   ]);
   // AA-1068: the Money card's reads only for a role that sees money (the API refuses the assistant anyway).
   const money = canSeeMoney(ctx.role)
@@ -138,6 +140,7 @@ export default async function TripPage({ params }: { params: Promise<{ tripId: s
         clientOrigin={clientHost ? `https://${clientHost}` : null}
         timeZone={agencyZone}
         closed={closed}
+        currencies={enabledFrom(currencies)}
       />
     )}
     {invoices.ok && (

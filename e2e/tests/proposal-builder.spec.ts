@@ -175,7 +175,9 @@ test.describe("CRM-21a proposal builder on Dev", () => {
     // 2. Start the builder from the Proposal tab.
     const section = page.getByTestId("proposal-builder");
     await expect(section).toBeVisible({ timeout: 15_000 });
-    await section.getByTestId("builder-currency").fill("USD");
+    // AA-1191: the currency picker shows only when the platform enables more than USD (USD by default)
+    const picker = section.getByTestId("builder-currency");
+    if (await picker.count()) await picker.selectOption("USD");
     await section.getByRole("button", { name: /^start the builder$/i }).click();
     await page.waitForURL(/\/proposal\/[0-9a-f-]{36}$/, { timeout: 30_000 });
     await hydrated(page, "builder");

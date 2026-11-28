@@ -244,8 +244,14 @@ async def test_ledger_totals_never_add_two_base_currencies(app_pool: asyncpg.Poo
             await lines.confirm(ctx, line_id)
 
     await confirmed_line("USD-1", "100", "130")
+    # AA-1191: by default (USD only) the base cannot switch to VND
+    with pytest.raises(Invalid) as refused:
+        async with tenant_tx(app_pool, owner, s["tenant"]) as ctx:
+            await fx.update_payment_settings(ctx, {"base_currency": "VND"})
+    assert refused.value.code == "currency_not_enabled"
     async with tenant_tx(app_pool, owner, s["tenant"]) as ctx:
-        await fx.update_payment_settings(ctx, {"base_currency": "VND"})
+        # AA-1191: the platform enabled VND for this case (the CIS setting), so the base may switch to it
+        await fx.update_payment_settings(ctx, {"base_currency": "VND"}, allowed=("USD", "VND"))
     await confirmed_line("VND-1", "10", "20")
     async with tenant_tx(app_pool, owner, s["tenant"]) as ctx:
         totals = (await lines.ledger(ctx, status=None, date_from=None, date_to=None))["totals"]

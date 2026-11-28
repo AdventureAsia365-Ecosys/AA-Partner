@@ -9,6 +9,9 @@ offered"). Any other failure is :class:`CatalogUnavailable` with a code (the hou
 AA-951 (contract 1.2, AA-977): ``GET /aa-content?kind=`` lists the latest published version of each AA-authored item
 that is not retired (one locale per item, EN / VI paired by ``group_key``); ``GET /aa-content/{id}/versions/{n}``
 serves one published version (also after a newer one or the item's retirement). Read by :mod:`app.catalog.content`.
+
+AA-1191 (contract 1.5): ``GET /currencies`` serves the enabled currencies of the platform (the CIS setting
+``cis.billing.enabled_currencies``) with the cache window the CRM keeps them for. Read by :mod:`app.catalog.currencies`.
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ PAGE_LIMIT = 50
 _REASON = re.compile(r"^[a-z][a-z_]{0,63}$")
 _SOURCE_ID = re.compile(r"^[^\x00-\x1f]{1,128}$")
 _COUNTRY = re.compile(r"^[A-Z]{2}$")
+_CURRENCY = re.compile(r"^[A-Z]{3}$")
 _GROUP_KEY = re.compile(r"^[a-z0-9][a-z0-9-]{1,79}$")
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 CONTENT_KINDS = ("prep_pack", "starter_template", "campaign_block")
@@ -164,6 +168,26 @@ class CatalogClient:
         summary(body)  # the fields the cache keeps are valid
         tag = {k.lower(): v for k, v in resp.headers.items()}.get("etag")
         return TourAnswer("served", body=body, etag=tag if isinstance(tag, str) and len(tag) <= 100 else None)
+
+    async def get_currencies(self) -> tuple[tuple[str, ...], int]:
+        """AA-1191 (contract 1.5): ``(enabled, cache_s)`` from ``GET /currencies``; USD first, every code ISO-shaped."""
+        resp = await self._get("/currencies")
+        if resp.status != 200:
+            raise self._failed(resp.status)
+        data = _json(resp.body)
+        enabled = data.get("enabled") if isinstance(data, dict) else None
+        cache_s = data.get("cache_s") if isinstance(data, dict) else None
+        if (
+            not isinstance(enabled, list)
+            or not enabled
+            or enabled[0] != "USD"
+            or not all(isinstance(c, str) and _CURRENCY.match(c) for c in enabled)
+            or isinstance(cache_s, bool)
+            or not isinstance(cache_s, int)
+            or cache_s < 1
+        ):
+            raise CatalogUnavailable("cis_contract")
+        return tuple(dict.fromkeys(enabled)), cache_s
 
 
 @dataclass(frozen=True)

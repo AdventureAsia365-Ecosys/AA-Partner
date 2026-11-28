@@ -41,6 +41,7 @@ from app.booking.tariff import TariffCurrencies, TariffReader
 from app.calendar.oauth_sync import build_clients as build_calendar_clients
 from app.campaigns.audience import links_from
 from app.catalog.client import CatalogConfig
+from app.catalog.currencies import EnabledCurrencies
 from app.cis.activation import ActivationConfig
 from app.cis.m2m import TokenProvider
 from app.cis.membership_feed import FeedConfig
@@ -305,6 +306,9 @@ def create_app(
     # AA-979 P2b: CIS activateInvitation for accepted Content studio invitations (None without CIS_API_URL /
     # M2M_CLIENT: the accept answers "accepted" and the crm_studio_activation job waits).
     app.state.studio_activation = build_studio_activation(settings, tokens)
+    # AA-1191: the platform's enabled currencies from CIS catalog.http.v1 1.5 (USD only without CIS_API_URL /
+    # M2M_CLIENT, or until CIS answers); every agency shares the process cache.
+    app.state.enabled_currencies = EnabledCurrencies(build_catalog(settings, tokens))
     # AA-1139: TripPlanner's planner routes for the module page (the lead pull's origin and M2M client; None without
     # TRIPPLANNER_API_URL / M2M_CLIENT: the page shows usage, leads and the key as not available).
     app.state.tp_planner = build_tp_leads(settings, tokens)

@@ -207,6 +207,7 @@ export function builderErrorKey(detail: string): MessageKey {
     proposal_not_draft: "builder.err.proposal_not_draft",
     trip_cancelled: "builder.closed", // S262 round 3: a cancelled trip's builder is read-only
     builder_draft_exists: "builder.err.builder_draft_exists",
+    currency_not_enabled: "builder.err.currency_not_enabled", // AA-1191
     not_publishable: "builder.err.not_publishable",
     aa_sold_out: "builder.err.aa_sold_out",
     booking_unavailable: "builder.err.booking_unavailable",

@@ -481,6 +481,9 @@ export const SERVER_ONLY_ROUTES: readonly BffRoute[] = [
   // prices page on the server next to the tariff; the API checks the membership (Action.TRIP_VIEW). The browser never
   // asks for it (S296 live check: the page answered 500 while this line was missing).
   { method: "GET", pattern: /^aa\/terms$/, tenant: true, card: "AA-1188" },
+  // AA-1191: the platform's enabled currencies (USD only by default), read by the trip page on the server for the
+  // proposal currency pickers; the API checks the membership (Action.TRIP_VIEW). The browser never asks for it.
+  { method: "GET", pattern: /^currencies$/, tenant: true, card: "AA-1191" },
   // AA-1139: the TripPlanner half of the Content studio's Trip planner page (an agency without the CRM), asked by the
   // studio's own route handler (app/api/studio/trip-planner) with the studio's tenant; the API checks the person's
   // Content studio membership with CIS, never crm.member.

@@ -131,6 +131,8 @@ export interface PaymentSettings {
   fx_mode: "automatic" | "manual";
   /** AA-1096 S280: an agent approves a refund up to this amount in the base currency (an older API omits it). */
   refund_owner_threshold_base?: string;
+  /** AA-1191: the platform's enabled currencies (USD first); an older API omits it (USD only). */
+  enabled_currencies?: string[];
   levels: Level[];
   fx_modes: string[];
   attribution: { text: string; url: string };
@@ -188,6 +190,7 @@ const ERRORS = new Set([
   "supplier_in_use",
   "aa_supplier_builtin",
   "role_forbidden",
+  "currency_not_enabled", // AA-1191: Settings > Payments base currency
 ]);
 
 export function errorKey(detail: string): string {

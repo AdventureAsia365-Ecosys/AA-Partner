@@ -62,6 +62,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
+from app.catalog import currencies
 from app.db import request_pool
 from app.errors import ServiceError, Unavailable
 from app.permissions import Action, require
@@ -283,9 +284,17 @@ def _changes(body: BaseModel) -> dict[str, Any]:
 async def post_builder(
     request: Request, caller: CallerDep, tenant_id: TenantDep, trip_id: uuid.UUID, body: CreateIn
 ) -> dict[str, Any]:
+    # AA-1191: a new version is in an enabled currency only: a skeleton in the currency picked, a working copy of a
+    # version whose currency is enabled (the copy keeps the source's prices; it is never re-priced). The enabled list
+    # is read before the transaction (a CIS read on a cache miss).
+    allowed = await currencies.enabled(request.app.state)
+    if body.from_proposal_id is None:
+        currencies.refuse_unless_enabled(body.currency, allowed)
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
+        if body.from_proposal_id is not None:
+            await currencies.refuse_copy_unless_enabled(ctx, body.from_proposal_id, allowed)
         return await builder.create(
             ctx, Vault(keys, ctx), trip_id, currency=body.currency, from_proposal_id=body.from_proposal_id
         )

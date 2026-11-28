@@ -529,7 +529,9 @@ async def test_payment_settings_default_and_update() -> None:
     ctx = tenant_ctx(conn)
     got = await fx.payment_settings(ctx)
     assert (got["base_currency"], got["booking_validation_level"], got["fx_mode"]) == ("USD", "basic", "automatic")
-    await fx.update_payment_settings(ctx, {"booking_validation_level": "strict", "base_currency": "VND"})
+    await fx.update_payment_settings(
+        ctx, {"booking_validation_level": "strict", "base_currency": "VND"}, allowed=("USD", "VND")
+    )
     assert conn.sql("INSERT INTO crm.tenant_settings") == [("VND", "strict", "automatic")]
     for bad in ({"base_currency": "vnd"}, {"booking_validation_level": "loose"}, {"fx_mode": "auto"}):
         with pytest.raises(Invalid):
