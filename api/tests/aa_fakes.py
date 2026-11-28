@@ -16,6 +16,7 @@ from typing import Any
 
 from app.booking.client import BookingClient, BookingConfig
 from app.catalog.client import CatalogConfig
+from app.catalog.currencies import EnabledCurrencies
 from app.cis.http import HttpError, HttpResponse
 from app.cis.m2m import M2mCredentials, TokenProvider
 
@@ -550,6 +551,17 @@ def booking_client(fake: FakeBooking) -> BookingClient:
 
 def catalog_config(fake: FakeCis) -> CatalogConfig:
     return CatalogConfig(base_url=CIS_URL, tokens=tokens(fake), transport=fake)
+
+
+def platform_enables(app: Any, *codes: str) -> FakeCis:
+    """AA-1191: the CIS setting ``cis.billing.enabled_currencies`` allows ``codes`` (USD always) for this test's app.
+
+    The app reads it the way it does in prod: its real :class:`EnabledCurrencies` reader over ``catalog.http.v1``
+    (``GET /catalog/v1/currencies``), here answered by a :class:`FakeCis`. Without this call the app has no
+    ``CIS_API_URL`` and serves USD only, the setting's default. Returns the fake (its ``calls`` count the reads)."""
+    cis = FakeCis(currencies={"enabled": ["USD", *codes], "base": "USD", "cache_s": 600})
+    app.state.enabled_currencies = EnabledCurrencies(catalog_config(cis))
+    return cis
 
 
 def new_id() -> uuid.UUID:

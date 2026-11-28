@@ -7,6 +7,9 @@ margin route class, the audit table), against the in-memory Booking of ``tests/a
   ``denied`` one that survives the rollback;
 - ``/crm/v1/me`` answers ``permissions.aa_tariff_view`` per role (the web hides the AA prices links by it);
 - an agency Booking does not know (or suspended) is 409 ``aa_partner_not_active``.
+
+AA-1191: the CRM is USD only by default (CIS Enabled currencies); the tests about EUR and the other currencies enable
+them for their own app with :func:`tests.aa_fakes.platform_enables`, as the platform setting would.
 """
 
 from __future__ import annotations
@@ -18,7 +21,7 @@ import httpx
 import pytest
 
 from app.main import create_app
-from tests.aa_fakes import FakeBooking, booking_client, tariff_csv
+from tests.aa_fakes import FakeBooking, booking_client, platform_enables, tariff_csv
 from tests.integration.test_crm005_intake import _agency
 from tests.tokens import LocalPools
 
@@ -52,6 +55,12 @@ async def test_the_aa_tariff_route_by_role_with_its_audit(app_pool: asyncpg.Pool
             def headers(role: str) -> dict[str, str]:
                 token = pools.partner_web(sub=who[role].sub)
                 return {"Authorization": f"Bearer {token}", "X-AA-Tenant-Id": str(tenant)}
+
+            # AA-1191: by default (USD only) EUR is refused before the transaction: no audit row, no Booking call
+            r = await client.get("/crm/v1/aa/tariff?currency=EUR", headers=headers("owner"))
+            assert (r.status_code, r.json()["detail"]) == (422, "currency_not_enabled")
+            assert fake.calls["GET tariff"] == 0
+            platform_enables(app, "EUR")  # AA-1191: the platform setting allows EUR for this case
 
             for role in ("owner", "agent"):
                 r = await client.get("/crm/v1/aa/tariff?currency=EUR", headers=headers(role))
@@ -106,6 +115,8 @@ async def test_the_tariff_currencies_route_by_role(app_pool: asyncpg.Pool, migra
     pools = LocalPools()
     settings = pools.settings(database_url=migrated_app_dsn)
     app = create_app(settings, verifier=pools.verifier(settings), keys=object(), booking_client=booking_client(fake))
+    # AA-1191: the platform setting allows every currency AA prices are offered in (AUD too: Booking has no rate for it)
+    platform_enables(app, "EUR", "GBP", "AUD", "SGD", "VND")
     try:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://crm.test") as client:
