@@ -97,6 +97,18 @@ admin at `/admin/docs?path=docs/architecture/diagrams/README.md`.
   "AA prices"); AA-1152: **1.11** `GET /add-ons` (the "AA add-on" drawer and the planner prices, section "CRM-19");
   AA-1188: **1.12** (the tariff's twin share, availability and coverage fields, `GET /terms` `quote_rules`; "AA prices"
   and "Booking conditions with AA").
+  **Currency rule: USD only** (AA-1191, tech lead S295): which currencies the CRM shows and accepts for what an agency
+  sells and is billed is the CIS setting `cis.billing.enabled_currencies` (CIS Platform › Settings › Enabled
+  currencies; default USD only, USD always enabled), read over `catalog.http.v1` **1.5** `GET /catalog/v1/currencies`
+  (`app/catalog/currencies.py`: one process cache kept for the `cache_s` CIS sends; CIS down = the last answer, before
+  any answer or without `CIS_API_URL` = USD only; never a CRM copy of the value). `GET /crm/v1/currencies` serves it to
+  the web. Refused with 422 `currency_not_enabled`: a new builder working copy (`POST /trips/{id}/builder`), a text
+  proposal created in it or moved to it (the stored currency sent back is accepted), a new base currency (Settings ›
+  Payments; the stored one stays), a planner price step and an AA prices read (`GET /aa/tariff?currency=`). Listed
+  without the other currencies: the AA prices currencies (`GET /aa/tariff/currencies`, the web falls back to USD
+  only), the planner price steps and the pickers (proposal and builder currency, base currency: hidden while USD is the
+  only one). Stored VND values stay (no conversion). Outside the rule: supplier cost currencies (an agency line's cost,
+  supplier bills, commissions, FX overrides, services) and the money formatting helpers.
   AA-1093 stage 2: `tenant.erasure.v1` 1.0 (AA-CIS-App, byte copy in `docs/contracts/`): the CIS tenant offboarding
   erasure saga's requests (`GET /tenant/v1/erasure-requests`) and the CRM's reports (`POST .../reports`), scope
   `cis.tenant/erasure` (section "CIS tenant erasure saga, stage 2" below).
@@ -949,7 +961,8 @@ original CIS commit). P2a moves the code only:
   overage so far from `GET /v1/billing`) and an invoices empty state (CIS stores no invoices yet). AA-1116 (option B,
   contract 1.9): the plan prices, the amount due (the CIS `quote.monthly_total`) and the Dashboard spend tiles are shown
   in the agency's `billing_currency` (`web/lib/studio/billingMoney.ts`: VND whole with ₫, USD with $, never a literal
-  "$"); the rewrite overage stays USD (a VND agency sees it apart); Activity = kit
+  "$"); the rewrite overage stays USD (a VND agency sees it apart). AA-1191: CIS serves the currency the agency is
+  billed in now, USD while VND is not enabled, so the studio shows no VND then; Activity = kit
   DataTable with server paging over CIS `GET /v1/account/activity` (type and UTC-date filters) and a CSV export of the
   whole filtered set (`GET /v1/account/activity/export`); Integrations = each channel's health and test (Publish only
   shows a summary that links here; the API key card went with the tenant API keys, AA-1036). Pure helpers in `portal/lib/account.ts`, tested by `npm test` (node --test, in Portal Build).

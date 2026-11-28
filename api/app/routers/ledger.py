@@ -76,6 +76,7 @@ from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.booking import extra_nights
 from app.cancel_policy import service as cancel_policy
+from app.catalog import currencies
 from app.db import request_pool
 from app.ledger import fx, lines, requests, suppliers
 from app.lifecycle import trash
@@ -542,19 +543,21 @@ async def get_bookings(
 
 @router.get("/settings/payments")
 async def get_payment_settings(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
+    allowed = await currencies.enabled(request.app.state)  # AA-1191: before the transaction (a CIS read on a miss)
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
-        return await fx.payment_settings(ctx)
+        return await fx.payment_settings(ctx, allowed)
 
 
 @router.put("/settings/payments")
 async def put_payment_settings(
     request: Request, caller: CallerDep, tenant_id: TenantDep, body: PaymentSettings
 ) -> dict[str, Any]:
+    allowed = await currencies.enabled(request.app.state)  # AA-1191
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
         _payments_owner(ctx)
-        return await fx.update_payment_settings(ctx, body.model_dump(exclude_unset=True))
+        return await fx.update_payment_settings(ctx, body.model_dump(exclude_unset=True), allowed)
 
 
 # AA-1030 (crm-046, root ADR 0019 b15): the default retail markup the builder suggests a new AA option's sell from.
@@ -580,21 +583,30 @@ async def put_retail_markup(
 # AA-1152 (crm-086, S285 B2 option C): the rounding step of every suggested price and the planner prices switch.
 @router.get("/settings/planner-prices")
 async def get_planner_prices(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
+    allowed = await currencies.enabled(request.app.state)  # AA-1191: only the enabled currencies are listed
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
-        return await rounding.read(ctx)
+        return _enabled_steps(await rounding.read(ctx), allowed)
+
+
+def _enabled_steps(out: dict[str, Any], allowed: tuple[str, ...]) -> dict[str, Any]:
+    """AA-1191: the planner price panel without the currencies that are not enabled (their stored steps stay)."""
+    return {**out, "currencies": [c for c in out["currencies"] if c["currency"] in allowed]}
 
 
 @router.put("/settings/planner-prices")
 async def put_planner_prices(
     request: Request, caller: CallerDep, tenant_id: TenantDep, body: PlannerPrices
 ) -> dict[str, Any]:
+    allowed = await currencies.enabled(request.app.state)
+    for code in body.steps:  # AA-1191: a step is set for an enabled currency only
+        currencies.refuse_unless_enabled(code, allowed, "steps")
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PAYMENT_SETTINGS) as ctx:
         _payments_owner(ctx)
         out = await rounding.update(ctx, body.model_dump(exclude_unset=True))
         await prices.enqueue_agency(ctx.conn, ctx.tenant_id)
-        return out
+        return _enabled_steps(out, allowed)
 
 
 # AA-1066 (crm-048): Settings > Pricing, owner only like Settings > Payments.

@@ -62,6 +62,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
+from app.catalog import currencies
 from app.db import request_pool
 from app.errors import ServiceError, Unavailable
 from app.permissions import Action, require
@@ -283,6 +284,8 @@ def _changes(body: BaseModel) -> dict[str, Any]:
 async def post_builder(
     request: Request, caller: CallerDep, tenant_id: TenantDep, trip_id: uuid.UUID, body: CreateIn
 ) -> dict[str, Any]:
+    if body.from_proposal_id is None:  # AA-1191: a new working copy is priced in an enabled currency only
+        currencies.refuse_unless_enabled(body.currency, await currencies.enabled(request.app.state))
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:

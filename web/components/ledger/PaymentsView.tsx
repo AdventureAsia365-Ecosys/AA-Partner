@@ -9,6 +9,7 @@ import { Button, K, useHydrated } from "@/app/_kit";
 import { DateInput } from "@/components/DateInput";
 import { Panel } from "@/components/PageTitle";
 import { bffSend } from "@/lib/bffClient";
+import { enabledCurrencies, hasCurrencyChoice } from "@/lib/currencies";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
 import { CURRENCY, errorKey, thresholdInput, type FxOverride, type PaymentSettings } from "@/lib/ledger";
@@ -84,11 +85,19 @@ export function PaymentsView({
           }}
           style={{ display: "grid", gap: 10, maxWidth: 520 }}
         >
-          <label style={{ display: "grid", gap: 2, fontSize: 12.5 }}>
-            {tr("payments.baseCurrency")}
-            <input name="base_currency" style={field} maxLength={3} defaultValue={settings.base_currency} />
-            <span style={{ color: K.muted, fontSize: 12 }}>{tr("payments.baseHelp")}</span>
-          </label>
+          {/* AA-1191: the base currency is picked from the enabled currencies only (USD only: no picker); a saved base
+              currency that is not enabled is kept as it is */}
+          {hasCurrencyChoice(settings.enabled_currencies) && enabledCurrencies(settings.enabled_currencies).includes(settings.base_currency) ? (
+            <label style={{ display: "grid", gap: 2, fontSize: 12.5 }}>
+              {tr("payments.baseCurrency")}
+              <select name="base_currency" style={field} defaultValue={settings.base_currency}>
+                {enabledCurrencies(settings.enabled_currencies).map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <span style={{ color: K.muted, fontSize: 12 }}>{tr("payments.baseHelp")}</span>
+            </label>
+          ) : (
+            <input type="hidden" name="base_currency" value={settings.base_currency} />
+          )}
           {settings.refund_owner_threshold_base !== undefined && (
             <label style={{ display: "grid", gap: 2, fontSize: 12.5 }}>
               {fmt(tr("payments.threshold"), { currency: settings.base_currency })}
@@ -165,7 +174,7 @@ export function PaymentsView({
             </label>
             <label style={{ display: "grid", gap: 2, fontSize: 12 }}>
               {tr("payments.quote")}
-              <input name="quote" style={{ ...field, width: 70 }} maxLength={3} defaultValue="VND" />
+              <input name="quote" style={{ ...field, width: 70 }} maxLength={3} placeholder="EUR" required />
             </label>
             <label style={{ display: "grid", gap: 2, fontSize: 12 }}>
               {tr("payments.rate")}

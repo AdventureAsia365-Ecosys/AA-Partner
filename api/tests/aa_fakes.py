@@ -429,6 +429,8 @@ class FakeCis:
     paused: set[str] = field(default_factory=set)
     down: bool = False
     calls: Counter[str] = field(default_factory=Counter)
+    # AA-1191 (contract 1.5): the body of GET /currencies (enabled, base, cache_s)
+    currencies: dict[str, Any] = field(default_factory=lambda: {"enabled": ["USD"], "base": "USD", "cache_s": 60})
 
     async def __call__(
         self, method: str, url: str, headers: Mapping[str, str], body: bytes | None, timeout_s: float
@@ -440,6 +442,9 @@ class FakeCis:
         parsed = urllib.parse.urlsplit(url)
         path = parsed.path.removeprefix("/catalog/v1")
         query = dict(urllib.parse.parse_qsl(parsed.query))
+        if path == "/currencies":
+            self.calls["currencies"] += 1
+            return _resp(200, self.currencies)
         if path == "/aa-content":
             self.calls["content_list"] += 1
             keys = sorted(k for k, v in self.content.items() if v["kind"] == query.get("kind"))

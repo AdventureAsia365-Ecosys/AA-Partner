@@ -41,6 +41,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
+from app.catalog import currencies
 from app.db import request_pool
 from app.permissions import Action, require
 from app.pipeline import trip_owner
@@ -114,6 +115,7 @@ async def get_lifecycle(
 async def post_proposal(
     request: Request, caller: CallerDep, tenant_id: TenantDep, trip_id: uuid.UUID, body: ProposalIn
 ) -> dict[str, Any]:
+    allowed = await currencies.enabled(request.app.state)  # AA-1191: before the transaction (a CIS read on a miss)
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
@@ -127,6 +129,7 @@ async def post_proposal(
             deposit=body.deposit_amount,
             balance_due_on=body.balance_due_on,
             terms_doc_id=body.terms_doc_id,
+            allowed=allowed,
         )
 
 
@@ -134,10 +137,17 @@ async def post_proposal(
 async def patch_proposal(
     request: Request, caller: CallerDep, tenant_id: TenantDep, proposal_id: uuid.UUID, body: ProposalChange
 ) -> dict[str, Any]:
+    allowed = await currencies.enabled(request.app.state)  # AA-1191: before the transaction (a CIS read on a miss)
     pool = await request_pool(request)
     keys = require_keys(request.app.state.keys)
     async with tenant_tx(pool, caller, tenant_id, action=Action.PROPOSAL_DRAFT) as ctx:
-        return await service.update_draft(ctx, Vault(keys, ctx), proposal_id, body.model_dump(exclude_unset=True))
+        return await service.update_draft(
+            ctx,
+            Vault(keys, ctx),
+            proposal_id,
+            body.model_dump(exclude_unset=True),
+            allowed=allowed,
+        )
 
 
 @router.post("/proposals/{proposal_id}/send")

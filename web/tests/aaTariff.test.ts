@@ -286,13 +286,14 @@ describe("CSV download through the BFF", () => {
 });
 
 describe("the currencies AA prices in today (S270)", () => {
-  it("offers USD plus the API's currencies in the select's order, else every quote currency", () => {
+  it("offers USD plus the API's currencies in the select's order, else USD only (AA-1191)", () => {
     const ok = (currencies: string[]) => ({ ok: true as const, data: { currencies, rate_date: "2031-01-05", checked: true } });
     expect(offeredCurrencies(ok(["VND", "EUR"]))).toEqual(["USD", "EUR", "VND"]);
     expect(offeredCurrencies(ok(["EUR", "XYZ", "THB"]))).toEqual(["USD", "EUR"]); // unknown codes dropped, USD always
-    expect(offeredCurrencies({ ok: false })).toEqual([...TARIFF_CURRENCIES]);
-    expect(offeredCurrencies(null)).toEqual([...TARIFF_CURRENCIES]);
-    expect(offeredCurrencies({ ok: true, data: {} as TariffCurrencies })).toEqual([...TARIFF_CURRENCIES]);
+    expect(offeredCurrencies(ok([]))).toEqual(["USD"]);
+    expect(offeredCurrencies({ ok: false })).toEqual(["USD"]);
+    expect(offeredCurrencies(null)).toEqual(["USD"]);
+    expect(offeredCurrencies({ ok: true, data: {} as TariffCurrencies })).toEqual(["USD"]);
   });
 
   it("keeps an offered currency and falls back to USD for one that is not, naming only a plain code", () => {
@@ -319,11 +320,11 @@ describe("the currencies AA prices in today (S270)", () => {
     expect(html).toContain("388.00 USD");
   });
 
-  it("offers every quote currency when the currencies read fails", async () => {
+  it("offers USD only when the currencies read fails (AA-1191)", async () => {
     state.currencies = { ok: false, status: 502, detail: "api_unreachable" };
     const html = await page("AUD");
-    expect([...html.matchAll(/<option[^>]*value="([A-Z]{3})"/g)].map((m) => m[1])).toEqual([...TARIFF_CURRENCIES]);
-    expect(state.calls[1].query).toBe("currency=AUD");
+    expect([...html.matchAll(/<option[^>]*value="([A-Z]{3})"/g)].map((m) => m[1])).toEqual(["USD"]);
+    expect(state.calls[1].query).toBe("currency=USD");
   });
 
   it("says pick another currency when AA refuses the currency (422 aa_tariff_invalid), not AA is down", async () => {

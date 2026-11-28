@@ -28,6 +28,7 @@ from app.booking.client import (
     BookingUnavailable,
     _attachment_name,
 )
+from app.catalog import currencies
 from app.cis import http
 from app.cis.http import HttpError, HttpResponse
 from app.cis.m2m import M2mCredentials, TokenProvider
@@ -49,6 +50,17 @@ from tests.aa_fakes import (
 from tests.tokens import LocalPools
 from tests.unit.fakes import ScriptedConn
 from tests.unit.slice_fakes import TENANT, fake_tx, tenant_ctx
+
+
+@pytest.fixture(autouse=True)
+def _every_currency_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AA-1191: these tests are about the tariff, not the enabled currencies (test_aa1191_enabled_currencies.py)."""
+
+    async def _all(state: object) -> tuple[str, ...]:
+        return ("USD", "EUR", "GBP", "AUD", "SGD", "VND")
+
+    monkeypatch.setattr(currencies, "enabled", _all)
+
 
 TODAY = dt.date(2031, 1, 5)
 

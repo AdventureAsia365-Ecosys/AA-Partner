@@ -20,6 +20,7 @@ from app import margin
 from app.booking import contract
 from app.booking import tariff as aa_tariff
 from app.booking.client import BookingRefusal
+from app.catalog import currencies
 from app.errors import Invalid
 from app.main import create_app
 from app.permissions import Action
@@ -29,6 +30,17 @@ from tests.tokens import LocalPools
 from tests.unit.fakes import ScriptedConn
 from tests.unit.slice_fakes import TENANT, fake_tx, tenant_ctx
 from tests.unit.test_aa1030_tariff import Raw, _client
+
+
+@pytest.fixture(autouse=True)
+def _every_currency_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AA-1191: these tests are about the tariff, not the enabled currencies (test_aa1191_enabled_currencies.py)."""
+
+    async def _all(state: object) -> tuple[str, ...]:
+        return ("USD", "EUR", "GBP", "AUD", "SGD", "VND")
+
+    monkeypatch.setattr(currencies, "enabled", _all)
+
 
 TODAY = dt.date(2031, 1, 5)
 OTHER_AGENCY = uuid.UUID("c0000000-0000-4000-8000-000000001029")

@@ -20,6 +20,8 @@ import { Panel } from "@/components/PageTitle";
 import { useTripClosed, useTripUpdating } from "@/components/pipeline/TripClosed";
 import { BuilderClientRow } from "@/components/proposals/BuilderClientRow";
 import { bffSend } from "@/lib/bffClient";
+import { BASE_CURRENCY } from "@/lib/currencies";
+import { BuilderCurrencyPicker, ProposalCurrencyField } from "./CurrencyFields";
 import { builderErrorKey } from "@/lib/builder";
 import { formatDate, type DateLocale } from "@/lib/dates";
 import { fmt, t, type Lang, type MessageKey } from "@/lib/i18n";
@@ -69,6 +71,7 @@ export function ProposalPanel({
   clientOrigin,
   timeZone = "UTC",
   closed: closedProp = false,
+  currencies = null,
 }: {
   view: LifecycleView;
   /** Every booking terms version of the agency (Settings > Agreements, any status; the select lists the published one
@@ -84,6 +87,8 @@ export function ProposalPanel({
   timeZone?: string;
   /** S262 (C12 §2.7): the trip is cancelled (or its cancellation waits for AA): read-only, nothing billed again. */
   closed?: boolean;
+  /** AA-1191: the enabled currencies (GET /currencies); null = USD only. A picker shows only when there is a choice. */
+  currencies?: string[] | null;
 }) {
   const router = useRouter();
   const hydrated = useHydrated();
@@ -94,7 +99,7 @@ export function ProposalPanel({
   const textProposals = view.proposals.filter((p) => (p.kind ?? "text") === "text");
   const builderVersions = view.proposals.filter((p) => p.kind === "builder");
   const current = currentProposal(textProposals);
-  const [builderCurrency, setBuilderCurrency] = useState("USD");
+  const [builderCurrency, setBuilderCurrency] = useState(BASE_CURRENCY);
   const canSend = (role === "owner" || role === "agent") && !closed;
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "danger" | "success"; text: string } | null>(null);
@@ -356,10 +361,8 @@ export function ProposalPanel({
             {!closed && !builderVersions.some((p) => p.status === "draft") && (
               <div style={{ display: "flex", gap: 8, alignItems: "end", flexWrap: "wrap" }}>
                 {builderVersions.length === 0 && (
-                  <label style={{ display: "grid", gap: 2, fontSize: 12.5 }}>
-                    {tr("proposal.currency")}
-                    <input value={builderCurrency} maxLength={3} onChange={(e) => setBuilderCurrency(e.target.value.toUpperCase())} style={{ ...field, width: 72 }} data-testid="builder-currency" />
-                  </label>
+                  <BuilderCurrencyPicker label={tr("proposal.currency")} value={builderCurrency} currencies={currencies}
+                    onChange={setBuilderCurrency} style={field} />
                 )}
                 {builderVersions.length === 0 && (
                   <Button size="sm" disabled={!hydrated || busy || !/^[A-Z]{3}$/.test(builderCurrency)} onClick={startBuilder}>
@@ -378,10 +381,8 @@ export function ProposalPanel({
               <textarea name="body" rows={6} required defaultValue={seed?.body ?? ""} style={{ ...field, width: "100%", resize: "vertical" }} />
             </label>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <label style={{ display: "grid", gap: 2, fontSize: 12.5 }}>
-                {tr("proposal.currency")}
-                <input name="currency" defaultValue={seed?.currency ?? "USD"} maxLength={3} style={{ ...field, width: 72 }} />
-              </label>
+              {/* AA-1191: the enabled currencies only; a saved currency that is not enabled stays as it is */}
+              <ProposalCurrencyField label={tr("proposal.currency")} saved={seed?.currency} currencies={currencies} style={field} />
               <label style={{ display: "grid", gap: 2, fontSize: 12.5 }}>
                 {tr("proposal.total")}
                 <input name="total" inputMode="decimal" defaultValue={seed?.total_amount ?? ""} style={{ ...field, width: 130 }} />

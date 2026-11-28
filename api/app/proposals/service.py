@@ -35,6 +35,7 @@ import asyncpg
 
 from app import cancellation, stages
 from app.cancel_policy import service as cancel_policy
+from app.catalog import currencies
 from app.dispatch import queue as dispatch
 from app.errors import Conflict, Invalid, NotFound
 from app.esign import terms as esign_terms
@@ -349,7 +350,10 @@ async def create_draft(
     deposit: Decimal,
     balance_due_on: dt.date | None,
     terms_doc_id: uuid.UUID | None,
+    allowed: tuple[str, ...] = (currencies.BASE,),
 ) -> dict[str, Any]:
+    """``allowed`` = the enabled currencies (AA-1191): a proposal in another currency is refused (422)."""
+    currencies.refuse_unless_enabled(currency, allowed)
     trip = await ctx.conn.fetchrow(TRIP_SQL, trip_id)
     if trip is None:
         raise NotFound("trip_not_found")
@@ -382,8 +386,13 @@ async def create_draft(
 
 
 async def update_draft(
-    ctx: TenantContext, vault: Vault, proposal_id: uuid.UUID, changes: dict[str, Any]
+    ctx: TenantContext,
+    vault: Vault,
+    proposal_id: uuid.UUID,
+    changes: dict[str, Any],
+    allowed: tuple[str, ...] = (currencies.BASE,),
 ) -> dict[str, Any]:
+    """AA-1191: a move to a currency that is not enabled is refused; the stored currency sent back is accepted."""
     row = await ctx.conn.fetchrow(ONE_SQL, proposal_id)
     if row is None:
         raise NotFound("proposal_not_found")
@@ -397,6 +406,8 @@ async def update_draft(
         else await vault.decrypt("proposal", "body_enc", proposal_id, row["body_enc"])
     )
     currency = changes.get("currency", row["currency"])
+    if currency.strip() != row["currency"].strip():
+        currencies.refuse_unless_enabled(currency, allowed)
     total = Decimal(changes.get("total_amount", row["total_amount"]))
     deposit = Decimal(changes.get("deposit_amount", row["deposit_amount"]))
     balance = changes["balance_due_on"] if "balance_due_on" in changes else row["balance_due_on"]

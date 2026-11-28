@@ -119,11 +119,12 @@ export interface TariffCurrencies {
   checked: boolean;
 }
 
-/** The currencies the select offers, in the order of TARIFF_CURRENCIES, USD always first: the API's answer, else
- * (the read failed or answered nothing usable) every quote currency. A currency the web does not know is dropped. */
+/** The currencies the select offers, in the order of TARIFF_CURRENCIES, USD always first: the API's answer (only the
+ * platform's enabled currencies, AA-1191), else (the read failed or answered nothing usable) USD only. A currency the
+ * web does not know is dropped. */
 export function offeredCurrencies(answer: { ok: true; data: TariffCurrencies } | { ok: false } | null): TariffCurrency[] {
   const listed = answer?.ok && Array.isArray(answer.data?.currencies) ? new Set(answer.data.currencies) : null;
-  if (!listed) return [...TARIFF_CURRENCIES];
+  if (!listed) return ["USD"];
   return TARIFF_CURRENCIES.filter((c) => c === "USD" || listed.has(c));
 }
 

@@ -51,6 +51,7 @@ from app.auth.identity_config import AGENCY
 from app.auth.route_guard import Caller, class_router, current_caller
 from app.booking import aa_lines, aa_terms, products
 from app.booking import tariff as aa_tariff
+from app.catalog import currencies
 from app.catalog import store as catalog
 from app.db import request_pool
 from app.errors import Unavailable
@@ -182,6 +183,8 @@ async def get_tariff(
     source_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
 ) -> Response:
     """AA-1030: the agency's own AA price per tour, season and pax band (B2B prices: owner and agent only)."""
+    # AA-1191: AA prices are read in an enabled currency only (CIS Enabled currencies; USD only by default)
+    currencies.refuse_unless_enabled(currency, await currencies.enabled(request.app.state))
     reader = _tariff_reader(request)
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.AA_TARIFF_VIEW) as ctx:
@@ -206,11 +209,21 @@ async def get_tariff_currencies(request: Request, caller: CallerDep, tenant_id: 
     pool = await request_pool(request)
     async with tenant_tx(pool, caller, tenant_id, action=Action.AA_TARIFF_VIEW):
         pass  # the membership and the role; nothing is read here
+    allowed = await currencies.enabled(request.app.state)
     offer = getattr(request.app.state, "aa_tariff_currencies", None)
-    if offer is None:
-        return aa_tariff.static_currencies()
     # Booking is asked after the membership check, outside the transaction (no connection held while it answers).
-    return await offer.get(tenant_id, dt.datetime.now(dt.UTC).date())
+    out = aa_tariff.static_currencies() if offer is None else await offer.get(tenant_id, dt.datetime.now(dt.UTC).date())
+    # AA-1191: only the currencies the platform enables (USD always)
+    return {**out, "currencies": [c for c in out["currencies"] if c in allowed]}
+
+
+@router.get("/currencies")
+async def get_currencies(request: Request, caller: CallerDep, tenant_id: TenantDep) -> dict[str, Any]:
+    """AA-1191: the currencies the platform enables (CIS Enabled currencies, USD first); the web hides the others."""
+    pool = await request_pool(request)
+    async with tenant_tx(pool, caller, tenant_id, action=Action.TRIP_VIEW):
+        pass  # the membership; nothing is read here
+    return {"enabled": list(await currencies.enabled(request.app.state)), "base": currencies.BASE}
 
 
 @router.get("/aa/terms")

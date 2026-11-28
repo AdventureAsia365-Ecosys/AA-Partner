@@ -24,6 +24,7 @@ from typing import Any
 import asyncpg
 
 from app import platform_settings as ps
+from app.catalog import currencies
 from app.errors import Invalid
 from app.tenancy import AnyContext, TenantContext
 
@@ -141,9 +142,11 @@ async def refund_threshold(ctx: AnyContext) -> Decimal:
     return ps.decimal(ps.REFUND_THRESHOLD_DEFAULT) if stored is None else Decimal(stored)
 
 
-async def payment_settings(ctx: TenantContext) -> dict[str, Any]:
+async def payment_settings(ctx: TenantContext, allowed: tuple[str, ...] | None = None) -> dict[str, Any]:
+    """The payment settings; AA-1191: ``enabled_currencies`` (from CIS) feeds the base currency picker."""
     return {
         **await settings(ctx),
+        "enabled_currencies": list(allowed or (currencies.BASE,)),
         # AA-1096 S280: the owner sees and sets the refund threshold (in the base currency above)
         "refund_owner_threshold_base": format(Decimal(await refund_threshold(ctx)).quantize(Decimal("0.01")), "f"),
         "levels": list(LEVELS),
@@ -152,9 +155,14 @@ async def payment_settings(ctx: TenantContext) -> dict[str, Any]:
     }
 
 
-async def update_payment_settings(ctx: TenantContext, changes: dict[str, Any]) -> dict[str, Any]:
-    merged = {**await settings(ctx), **{k: v for k, v in changes.items() if k in DEFAULTS and v is not None}}
+async def update_payment_settings(
+    ctx: TenantContext, changes: dict[str, Any], allowed: tuple[str, ...] = ("USD",)
+) -> dict[str, Any]:
+    stored = await settings(ctx)
+    merged = {**stored, **{k: v for k, v in changes.items() if k in DEFAULTS and v is not None}}
     currency(merged["base_currency"], "base_currency")
+    if merged["base_currency"] != stored["base_currency"]:  # AA-1191: only an enabled currency (the stored one stays)
+        currencies.refuse_unless_enabled(merged["base_currency"], allowed, "base_currency")
     if merged["booking_validation_level"] not in LEVELS:
         raise Invalid("invalid_booking_validation_level", ", ".join(LEVELS))
     if merged["fx_mode"] not in FX_MODES:
@@ -166,7 +174,7 @@ async def update_payment_settings(ctx: TenantContext, changes: dict[str, Any]) -
     if threshold is not None:  # the row exists now (the upsert above); the route bounds it to the column CHECK
         await ctx.conn.execute(SET_THRESHOLD_SQL, Decimal(str(threshold)).quantize(Decimal("0.01")))
     ctx.audit("update", "allowed", "tenant_settings", str(ctx.tenant_id), fields=tuple(sorted(changes)))
-    return await payment_settings(ctx)
+    return await payment_settings(ctx, allowed)
 
 
 def _override_view(row: Any) -> dict[str, Any]:
